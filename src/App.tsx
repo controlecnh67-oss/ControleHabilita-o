@@ -1,0 +1,112 @@
+import React, { useState } from "react";
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import { Navbar } from "./components/layout/Navbar";
+import { Sidebar } from "./components/layout/Sidebar";
+import { LoginPage } from "./pages/LoginPage";
+import { DashboardPage } from "./pages/DashboardPage";
+import { GeralPage } from "./pages/GeralPage";
+import { MemorandosPage } from "./pages/MemorandosPage";
+import { ResponsaveisPage } from "./pages/ResponsaveisPage";
+import { HistoricoPage } from "./pages/HistoricoPage";
+import { AuditoriaPage } from "./pages/AuditoriaPage";
+import { MapeamentoPage } from "./pages/MapeamentoPage";
+import { UsuariosPage } from "./pages/UsuariosPage";
+
+const MainLayout: React.FC = () => {
+  const { isAuthenticated, isLoading, timeRemaining } = useAuth();
+  const [activeTabState, setActiveTabState] = useState(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("detran_active_tab") || "dashboard";
+    }
+    return "dashboard";
+  });
+
+  const setActiveTab = (tab: any) => {
+    setActiveTabState(tab);
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("detran_active_tab", tab);
+    }
+  };
+
+  const activeTab = activeTabState as any;
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    return typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
+  });
+
+  const formatCountdown = (secs: number = 0) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
+  };
+
+  if (isLoading && !isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center text-slate-500">
+        <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4" />
+        <p className="text-xs font-semibold tracking-wide uppercase">Carregando Sistema DETRAN CNH...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  return (
+    <div className="flex h-screen w-full bg-slate-100 dark:bg-slate-950 font-sans overflow-hidden text-slate-900 dark:text-slate-100 transition-colors duration-200">
+      <Sidebar
+        activeTab={activeTab}
+        onSelectTab={(tab) => {
+          setActiveTab(tab);
+          if (typeof window !== "undefined" && window.innerWidth < 1024) {
+            setIsSidebarOpen(false);
+          }
+        }}
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+      />
+
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <Navbar 
+          onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} 
+          isSidebarOpen={isSidebarOpen}
+        />
+
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-100 dark:bg-slate-950 flex flex-col gap-6">
+          <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col">
+            {activeTab === "dashboard" && <DashboardPage onNavigate={(tab) => setActiveTab(tab)} />}
+            {activeTab === "geral" && <GeralPage />}
+            {activeTab === "memorandos" && <MemorandosPage onNavigateToGeral={() => setActiveTab("geral")} />}
+            {activeTab === "responsaveis" && <ResponsaveisPage />}
+            {activeTab === "historico" && <HistoricoPage />}
+            {activeTab === "auditoria" && <AuditoriaPage />}
+            {activeTab === "mapeamento" && <MapeamentoPage />}
+            {activeTab === "usuarios" && <UsuariosPage />}
+          </div>
+        </main>
+
+        <footer className="h-8 bg-slate-800 dark:bg-slate-900 text-slate-400 px-4 flex items-center justify-between text-[10px] shrink-0 border-t border-slate-700 dark:border-slate-800">
+          <div className="flex gap-4">
+            <span className="flex items-center gap-1.5 font-medium">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Sistema Online
+            </span>
+            <span>Sessão expira em: <strong className="font-mono text-slate-300">{formatCountdown(timeRemaining)}</strong></span>
+          </div>
+          <div className="flex gap-4 font-mono">
+            <span>v2.4.0-stable</span>
+            <span>© 2026 DETRAN-PROT</span>
+          </div>
+        </footer>
+      </div>
+    </div>
+  );
+};
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <MainLayout />
+    </AuthProvider>
+  );
+}
