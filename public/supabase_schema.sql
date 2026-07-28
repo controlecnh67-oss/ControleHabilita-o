@@ -234,5 +234,51 @@ INSERT INTO auditoria (id, tabela, registro_id, acao, usuario_id, usuario_nome, 
 ('aud-03', 'geral', 'Ordem #5', 'Entrega', '33333333-3333-3333-3333-333333333333', 'Roberto Alves', NOW() - INTERVAL '1 day', '10.0.1.15', NULL, '{"situacao": "Entregue", "responsavel": "Proprietário"}'::jsonb);
 
 -- ============================================================================
+-- HABILITAR REALTIME (SUPABASE REALTIME) PARA TODAS AS TABELAS
+-- ============================================================================
+
+DO $$
+DECLARE
+  t text;
+  tabelas text[] := ARRAY[
+    'usuarios', 
+    'responsaveis', 
+    'mapeamento_localizacao', 
+    'memorandos', 
+    'candidatos', 
+    'geral_cnhs', 
+    'historico_movimentacoes', 
+    'auditoria'
+  ];
+BEGIN
+  -- Garante que a publicação do Supabase Realtime existe
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime'
+  ) THEN
+    CREATE PUBLICATION supabase_realtime;
+  END IF;
+
+  -- Para cada tabela que de fato existir no banco de dados
+  FOREACH t IN ARRAY tabelas LOOP
+    IF EXISTS (
+      SELECT 1 FROM information_schema.tables 
+      WHERE table_schema = 'public' AND table_name = t
+    ) THEN
+      -- Configura Replica Identity FULL para transmitir alterações completas em UPDATE/DELETE
+      EXECUTE format('ALTER TABLE %I REPLICA IDENTITY FULL;', t);
+
+      -- Adiciona a tabela à publicação do Supabase Realtime se ainda não estiver
+      BEGIN
+        EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE %I;', t);
+      EXCEPTION 
+        WHEN duplicate_object THEN
+          -- Tabela já adicionada previamente na publicação
+          NULL;
+      END;
+    END IF;
+  END LOOP;
+END $$;
+
+-- ============================================================================
 -- FIM DO SCRIPT
 -- ============================================================================

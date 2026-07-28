@@ -8,6 +8,7 @@ import {
   History, 
   ShieldAlert, 
   UserCog, 
+  Database,
   X,
   LogOut,
   ShieldCheck
@@ -23,7 +24,8 @@ export type NavTab =
   | "mapeamento" 
   | "historico" 
   | "auditoria" 
-  | "usuarios";
+  | "usuarios"
+  | "backup";
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -49,6 +51,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "historico" as NavTab, label: "Histórico de Movimento", icon: History, requiredProfile: null },
     { id: "auditoria" as NavTab, label: "Auditoria do Sistema", icon: ShieldAlert, requiredProfile: null },
     { id: "usuarios" as NavTab, label: "Gerenciar Usuários", icon: UserCog, requiredProfile: null },
+    { id: "backup" as NavTab, label: "Backup e Sincronização", icon: Database, requiredProfile: null },
   ];
 
   const handleNavClick = (tab: NavTab) => {

@@ -11,6 +11,7 @@ import { HistoricoPage } from "./pages/HistoricoPage";
 import { AuditoriaPage } from "./pages/AuditoriaPage";
 import { MapeamentoPage } from "./pages/MapeamentoPage";
 import { UsuariosPage } from "./pages/UsuariosPage";
+import { BackupSyncPage } from "./pages/BackupSyncPage";
 
 const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading, timeRemaining } = useAuth();
@@ -83,6 +84,7 @@ const MainLayout: React.FC = () => {
             {activeTab === "auditoria" && <AuditoriaPage />}
             {activeTab === "mapeamento" && <MapeamentoPage />}
             {activeTab === "usuarios" && <UsuariosPage />}
+            {activeTab === "backup" && <BackupSyncPage />}
           </div>
         </main>
 

@@ -9,7 +9,7 @@
 -- 4. Clique em "Run" para criar as tabelas, políticas RLS e popular os dados iniciais.
 -- ============================================================================
 
--- 1. REMOÇÃO DE TABELAS ANTIGAS (SE EXISTIREM) PARA GARANTIR INSTALAÇÃO LIMPA
+-- 1. REMOÇÃO DE TABELAS ANTIGAS (SE EXISTIREM) PARA GARANTIR INSTALAÇÃO LIMPA E SEM CONFLITOS DE TIPOS
 DROP TABLE IF EXISTS auditoria CASCADE;
 DROP TABLE IF EXISTS historico_movimentacoes CASCADE;
 DROP TABLE IF EXISTS geral_cnhs CASCADE;
@@ -19,11 +19,11 @@ DROP TABLE IF EXISTS mapeamento_localizacao CASCADE;
 DROP TABLE IF EXISTS responsaveis CASCADE;
 DROP TABLE IF EXISTS usuarios CASCADE;
 
--- 2. CRIAÇÃO DAS TABELAS
+-- 2. CRIAÇÃO DAS TABELAS (TODAS AS CHAVES PRIMÁRIAS E ESTRANGEIRAS EM TEXT PARA TOTAL COMPATIBILIDADE)
 
 -- Tabela de Usuários / Operadores do Sistema
 CREATE TABLE usuarios (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id TEXT PRIMARY KEY,
   nome TEXT NOT NULL,
   nome_curto TEXT NOT NULL,
   fone TEXT,
@@ -40,7 +40,7 @@ CREATE TABLE usuarios (
 
 -- Tabela de Responsáveis / Procuradores / Titulares
 CREATE TABLE responsaveis (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id TEXT PRIMARY KEY,
   nome TEXT NOT NULL,
   cpf TEXT NOT NULL,
   telefone TEXT,
@@ -62,7 +62,7 @@ CREATE TABLE mapeamento_localizacao (
 CREATE TABLE memorandos (
   id TEXT PRIMARY KEY,
   numero TEXT UNIQUE NOT NULL,
-  usuario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+  usuario_id TEXT REFERENCES usuarios(id) ON DELETE SET NULL,
   usuario_nome TEXT,
   remessa TEXT,
   status TEXT NOT NULL DEFAULT 'Em elaboração' CHECK (status IN ('Em elaboração', 'Remetido')),
@@ -93,10 +93,10 @@ CREATE TABLE geral_cnhs (
   gaveta TEXT,
   reparticao TEXT,
   situacao TEXT NOT NULL DEFAULT 'Recebida' CHECK (situacao IN ('Remetida', 'Recebida', 'Pendente', 'Entregue')),
-  responsavel_id UUID REFERENCES responsaveis(id) ON DELETE SET NULL,
+  responsavel_id TEXT REFERENCES responsaveis(id) ON DELETE SET NULL,
   responsavel_nome TEXT,
   data_movimento TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()),
-  usuario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+  usuario_id TEXT REFERENCES usuarios(id) ON DELETE SET NULL,
   usuario_nome TEXT,
   memorando_numero TEXT,
   remessa TEXT,
@@ -112,9 +112,9 @@ CREATE TABLE historico_movimentacoes (
   geral_nome TEXT,
   situacao_anterior TEXT CHECK (situacao_anterior IN ('Remetida', 'Recebida', 'Pendente', 'Entregue') OR situacao_anterior IS NULL),
   situacao_nova TEXT NOT NULL CHECK (situacao_nova IN ('Remetida', 'Recebida', 'Pendente', 'Entregue')),
-  responsavel_id UUID REFERENCES responsaveis(id) ON DELETE SET NULL,
+  responsavel_id TEXT REFERENCES responsaveis(id) ON DELETE SET NULL,
   responsavel_nome TEXT,
-  usuario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+  usuario_id TEXT REFERENCES usuarios(id) ON DELETE SET NULL,
   usuario_nome TEXT,
   observacao TEXT,
   data_hora TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
@@ -126,7 +126,7 @@ CREATE TABLE auditoria (
   tabela TEXT NOT NULL,
   registro_id TEXT NOT NULL,
   acao TEXT NOT NULL,
-  usuario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+  usuario_id TEXT REFERENCES usuarios(id) ON DELETE SET NULL,
   usuario_nome TEXT,
   data_hora TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()),
   ip TEXT,
@@ -232,6 +232,52 @@ INSERT INTO auditoria (id, tabela, registro_id, acao, usuario_id, usuario_nome, 
 ('aud-01', 'memorandos', 'MEMO-2026/042', 'Remessa', '33333333-3333-3333-3333-333333333333', 'Roberto Alves', NOW() - INTERVAL '5 days', '10.0.1.15', NULL, '{"status": "Remetido", "total_cnhs": 2}'::jsonb),
 ('aud-02', 'geral', 'Ordem #3', 'Recebimento', '22222222-2222-2222-2222-222222222222', 'Fernanda Souza', NOW() - INTERVAL '2 days', '10.0.1.20', NULL, '{"situacao": "Recebida", "gaveta": "Gaveta 1", "reparticao": "Repartição 3"}'::jsonb),
 ('aud-03', 'geral', 'Ordem #5', 'Entrega', '33333333-3333-3333-3333-333333333333', 'Roberto Alves', NOW() - INTERVAL '1 day', '10.0.1.15', NULL, '{"situacao": "Entregue", "responsavel": "Proprietário"}'::jsonb);
+
+-- ============================================================================
+-- HABILITAR REALTIME (SUPABASE REALTIME) PARA TODAS AS TABELAS
+-- ============================================================================
+
+DO $$
+DECLARE
+  t text;
+  tabelas text[] := ARRAY[
+    'usuarios', 
+    'responsaveis', 
+    'mapeamento_localizacao', 
+    'memorandos', 
+    'candidatos', 
+    'geral_cnhs', 
+    'historico_movimentacoes', 
+    'auditoria'
+  ];
+BEGIN
+  -- Garante que a publicação do Supabase Realtime existe
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime'
+  ) THEN
+    CREATE PUBLICATION supabase_realtime;
+  END IF;
+
+  -- Para cada tabela que de fato existir no banco de dados
+  FOREACH t IN ARRAY tabelas LOOP
+    IF EXISTS (
+      SELECT 1 FROM information_schema.tables 
+      WHERE table_schema = 'public' AND table_name = t
+    ) THEN
+      -- Configura Replica Identity FULL para transmitir alterações completas em UPDATE/DELETE
+      EXECUTE format('ALTER TABLE %I REPLICA IDENTITY FULL;', t);
+
+      -- Adiciona a tabela à publicação do Supabase Realtime se ainda não estiver
+      BEGIN
+        EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE %I;', t);
+      EXCEPTION 
+        WHEN duplicate_object THEN
+          -- Tabela já adicionada previamente na publicação
+          NULL;
+      END;
+    END IF;
+  END LOOP;
+END $$;
 
 -- ============================================================================
 -- FIM DO SCRIPT

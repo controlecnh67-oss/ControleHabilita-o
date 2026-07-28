@@ -12,11 +12,36 @@ import {
   getPermissoesPadrao
 } from "../types";
 import { getInitialChar, formatDateTime } from "../lib/utils";
+import { supabase, isSupabaseConfigured } from "./supabase";
+import * as XLSX from "xlsx";
 
-// Verificação de credenciais Supabase reais via variáveis de ambiente VITE_
-const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL;
-const SUPABASE_KEY = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
-export const isSupabaseConnected = Boolean(SUPABASE_URL && SUPABASE_KEY);
+// Verificação de credenciais Supabase reais via variáveis de ambiente VITE_ ou utilitário
+export function isSupabaseConnected(): boolean {
+  return isSupabaseConfigured();
+}
+
+function toValidUUID(id?: string | null): string | null {
+  if (!id || typeof id !== "string" || id.trim() === "") return null;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const cleanId = id.trim();
+  if (uuidRegex.test(cleanId)) return cleanId;
+
+  if (cleanId === "admin") return "11111111-1111-1111-1111-111111111111";
+  if (cleanId === "supervisor") return "22222222-2222-2222-2222-222222222222";
+  if (cleanId === "operador") return "33333333-3333-3333-3333-333333333333";
+  if (cleanId === "consulta") return "44444444-4444-4444-4444-444444444444";
+  if (cleanId === "proprietario") return "00000000-0000-0000-0000-000000000001";
+
+  // Gerar um UUID v4 determinístico a partir de qualquer string (ex: "usr-01", "resp-02")
+  let hash = 0;
+  for (let i = 0; i < cleanId.length; i++) {
+    hash = ((hash << 5) - hash) + cleanId.charCodeAt(i);
+    hash |= 0;
+  }
+  const hexHash = Math.abs(hash).toString(16).padStart(8, "0");
+  const safeStr = cleanId.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(24, "0").substring(0, 24);
+  return `${hexHash}-${safeStr.substring(0, 4)}-4${safeStr.substring(4, 7)}-8${safeStr.substring(7, 10)}-${safeStr.substring(10, 22)}`;
+}
 
 // ============================================================================
 // DADOS DE SEMENTE (SEED DATA) PARA MODO LOCAL / DEMO IMEDIATO
@@ -411,6 +436,17 @@ export async function logAuditoria(
     valores_novos: valores_novos || null
   };
   saveStoredList("auditoria", [nova, ...list]);
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("auditoria").insert([{
+        ...nova,
+        usuario_id: toValidUUID(usuario_id)
+      }]);
+    } catch (e) {
+      console.warn("Aviso ao salvar auditoria no Supabase:", e);
+    }
+  }
 }
 
 export async function logHistorico(
@@ -441,6 +477,18 @@ export async function logHistorico(
     data_hora: new Date().toISOString()
   };
   saveStoredList("historico", [novo, ...list]);
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("historico_movimentacoes").insert([{
+        ...novo,
+        usuario_id: toValidUUID(usuario_id),
+        responsavel_id: toValidUUID(responsavel_id)
+      }]);
+    } catch (e) {
+      console.warn("Aviso ao salvar histórico no Supabase:", e);
+    }
+  }
 }
 
 // ============================================================================
@@ -448,6 +496,17 @@ export async function logHistorico(
 // ============================================================================
 
 export async function getMapeamentos(): Promise<MapeamentoLocalizacao[]> {
+  if (isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase.from("mapeamento_localizacao").select("*").order("inicial", { ascending: true });
+      if (!error && data && data.length > 0) {
+        saveStoredList("mapeamento", data as MapeamentoLocalizacao[]);
+        return data as MapeamentoLocalizacao[];
+      }
+    } catch (err) {
+      console.warn("Aviso ao buscar mapeamentos no Supabase:", err);
+    }
+  }
   return getStoredList<MapeamentoLocalizacao>("mapeamento", SEED_MAPEAMENTO).sort((a, b) =>
     a.inicial.localeCompare(b.inicial)
   );
@@ -473,6 +532,21 @@ export async function createMapeamento(
     reparticao: reparticao.trim(),
     ativo: true,
   };
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { data: inserted, error } = await supabase.from("mapeamento_localizacao").insert([novo]).select().single();
+      if (!error && inserted) {
+        const updatedList = [...list, inserted].sort((a, b) => a.inicial.localeCompare(b.inicial));
+        saveStoredList("mapeamento", updatedList);
+        await logAuditoria("mapeamento", inserted.id, "Inclusão", userId, userNome, null, inserted);
+        return inserted as MapeamentoLocalizacao;
+      }
+    } catch (e) {
+      console.warn("Aviso ao criar mapeamento no Supabase:", e);
+    }
+  }
+
   const updatedList = [...list, novo].sort((a, b) => a.inicial.localeCompare(b.inicial));
   saveStoredList("mapeamento", updatedList);
   await logAuditoria("mapeamento", novo.id, "Inclusão", userId, userNome, null, novo);
@@ -490,6 +564,15 @@ export async function updateMapeamento(
   const target = list.find((m) => m.id === id);
   if (!target) return;
   const atualizado = { ...target, gaveta, reparticao };
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("mapeamento_localizacao").update({ gaveta, reparticao }).eq("id", id);
+    } catch (e) {
+      console.warn("Aviso ao atualizar mapeamento no Supabase:", e);
+    }
+  }
+
   const updated = list.map((m) => (m.id === id ? atualizado : m));
   saveStoredList("mapeamento", updated);
   await logAuditoria("mapeamento", target.id, "Alteração", userId, userNome, target, atualizado);
@@ -503,6 +586,15 @@ export async function deleteMapeamento(
   const list = getStoredList<MapeamentoLocalizacao>("mapeamento", SEED_MAPEAMENTO);
   const target = list.find((m) => m.id === id);
   if (!target) return;
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("mapeamento_localizacao").delete().eq("id", id);
+    } catch (e) {
+      console.warn("Aviso ao deletar mapeamento no Supabase:", e);
+    }
+  }
+
   const updated = list.filter((m) => m.id !== id);
   saveStoredList("mapeamento", updated);
   await logAuditoria("mapeamento", target.id, "Exclusão", userId, userNome, target, null);
@@ -523,6 +615,17 @@ export async function findLocalizacaoPorNome(nome: string): Promise<{ gaveta: st
 // ============================================================================
 
 export async function getUsuarios(): Promise<Usuario[]> {
+  if (isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase.from("usuarios").select("*").order("created_at", { ascending: false });
+      if (!error && data && data.length > 0) {
+        saveStoredList("usuarios", data as Usuario[]);
+        return data as Usuario[];
+      }
+    } catch (err) {
+      console.warn("Aviso ao buscar usuários do Supabase, caindo para local:", err);
+    }
+  }
   return getStoredList<Usuario>("usuarios", SEED_USUARIOS);
 }
 
@@ -534,15 +637,56 @@ export async function createUsuario(data: Omit<Usuario, "id" | "created_at">, ad
   if (list.some((u) => u.login.toLowerCase() === data.login.toLowerCase())) {
     throw new Error("Já existe um usuário com este login.");
   }
+
+  const newUuid = crypto.randomUUID();
   const novo: Usuario = {
     ...data,
-    id: `usr-${Date.now()}`,
+    id: newUuid,
     senha: data.senha || "detran@123",
     permissoes: data.permissoes || getPermissoesPadrao(data.perfil),
     created_at: new Date().toISOString(),
-    ativo: true
+    ativo: data.ativo !== false
   };
-  saveStoredList("usuarios", [...list, novo]);
+
+  if (isSupabaseConfigured()) {
+    try {
+      const userPayload = {
+        id: novo.id,
+        nome: novo.nome,
+        nome_curto: novo.nome_curto,
+        fone: novo.fone || null,
+        email: novo.email,
+        funcao: novo.funcao || null,
+        setor: novo.setor || "Protocolo",
+        login: novo.login,
+        senha: novo.senha,
+        permissoes: novo.permissoes,
+        perfil: novo.perfil,
+        ativo: novo.ativo,
+        created_at: novo.created_at
+      };
+
+      const { data: inserted, error } = await supabase.from("usuarios").insert([userPayload]).select().single();
+      if (error) {
+        console.error("Erro do Supabase ao cadastrar usuário:", error);
+        throw new Error(`Erro no Supabase: ${error.message}`);
+      }
+      if (inserted) {
+        const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+        saveStoredList("usuarios", [inserted as Usuario, ...localList.filter(u => u.id !== inserted.id)]);
+        await logAuditoria("usuarios", inserted.login, "Inclusão", adminId, adminNome, null, { nome: inserted.nome, perfil: inserted.perfil });
+        return inserted as Usuario;
+      }
+    } catch (err: any) {
+      console.error("Falha ao salvar usuário no Supabase:", err);
+      if (err.message && err.message.startsWith("Erro no Supabase")) {
+        throw err;
+      }
+    }
+  }
+
+  const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+  saveStoredList("usuarios", [...localList, novo]);
   await logAuditoria("usuarios", novo.login, "Inclusão", adminId, adminNome, null, { nome: novo.nome, perfil: novo.perfil });
   return novo;
 }
@@ -553,8 +697,34 @@ export async function updateUsuario(id: string, data: Partial<Usuario>, adminId:
   if (index === -1) throw new Error("Usuário não encontrado");
   const ant = list[index];
   const atualizado = { ...ant, ...data };
-  list[index] = atualizado;
-  saveStoredList("usuarios", list);
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { data: updatedSup, error } = await supabase.from("usuarios").update(data).eq("id", id).select().single();
+      if (error) {
+        console.error("Erro no Supabase ao editar usuário:", error);
+        throw new Error(`Erro no Supabase: ${error.message}`);
+      }
+      if (updatedSup) {
+        const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+        const lIndex = localList.findIndex((u) => u.id === id);
+        if (lIndex !== -1) localList[lIndex] = updatedSup as Usuario;
+        saveStoredList("usuarios", localList);
+        await logAuditoria("usuarios", ant.login, "Alteração", adminId, adminNome, ant, updatedSup);
+        return updatedSup as Usuario;
+      }
+    } catch (err: any) {
+      console.error("Falha ao editar usuário no Supabase:", err);
+      if (err.message && err.message.startsWith("Erro no Supabase")) {
+        throw err;
+      }
+    }
+  }
+
+  const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+  const lIndex = localList.findIndex((u) => u.id === id);
+  if (lIndex !== -1) localList[lIndex] = atualizado;
+  saveStoredList("usuarios", localList);
   await logAuditoria("usuarios", ant.login, "Alteração", adminId, adminNome, ant, atualizado);
   return atualizado;
 }
@@ -566,7 +736,24 @@ export async function deleteUsuario(id: string, adminId: string, adminNome: stri
   if (target.login === "admin") {
     throw new Error("O Administrador principal não pode ser excluído.");
   }
-  const filtrados = list.filter((u) => u.id !== id);
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { error } = await supabase.from("usuarios").delete().eq("id", id);
+      if (error) {
+        console.error("Erro no Supabase ao deletar usuário:", error);
+        throw new Error(`Erro no Supabase: ${error.message}`);
+      }
+    } catch (err: any) {
+      console.error("Falha ao deletar no Supabase:", err);
+      if (err.message && err.message.startsWith("Erro no Supabase")) {
+        throw err;
+      }
+    }
+  }
+
+  const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+  const filtrados = localList.filter((u) => u.id !== id);
   saveStoredList("usuarios", filtrados);
   await logAuditoria("usuarios", target.login, "Exclusão", adminId, adminNome, target, null);
 }
@@ -576,6 +763,17 @@ export async function deleteUsuario(id: string, adminId: string, adminNome: stri
 // ============================================================================
 
 export async function getResponsaveis(): Promise<Responsavel[]> {
+  if (isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase.from("responsaveis").select("*").order("nome", { ascending: true });
+      if (!error && data && data.length > 0) {
+        saveStoredList("responsaveis", data as Responsavel[]);
+        return data as Responsavel[];
+      }
+    } catch (err) {
+      console.warn("Aviso ao buscar responsáveis no Supabase:", err);
+    }
+  }
   return getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS).sort((a, b) =>
     a.nome.localeCompare(b.nome)
   );
@@ -591,12 +789,34 @@ export async function createResponsavel(
   if (list.some((r) => r.cpf.replace(/\D/g, "") === cleanNewCpf)) {
     throw new Error("Impedir CPF duplicado: Este CPF já está cadastrado como responsável.");
   }
+
+  const newUuid = crypto.randomUUID();
   const novo: Responsavel = {
     ...data,
-    id: `resp-${Date.now()}`,
+    id: newUuid,
     created_at: new Date().toISOString()
   };
-  saveStoredList("responsaveis", [...list, novo]);
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { data: inserted, error } = await supabase.from("responsaveis").insert([novo]).select().single();
+      if (error) {
+        console.error("Erro no Supabase ao criar responsável:", error);
+        throw new Error(`Erro no Supabase: ${error.message}`);
+      }
+      if (inserted) {
+        const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+        saveStoredList("responsaveis", [inserted as Responsavel, ...localList]);
+        await logAuditoria("responsaveis", inserted.nome, "Inclusão", userId, userNome, null, inserted);
+        return inserted as Responsavel;
+      }
+    } catch (err: any) {
+      if (err.message && err.message.startsWith("Erro no Supabase")) throw err;
+    }
+  }
+
+  const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+  saveStoredList("responsaveis", [...localList, novo]);
   await logAuditoria("responsaveis", novo.nome, "Inclusão", userId, userNome, null, novo);
   return novo;
 }
@@ -615,8 +835,27 @@ export async function updateResponsavel(
     throw new Error("O registro Padrão 'Proprietário' não pode ser modificado no nome ou CPF.");
   }
   const atualizado = { ...ant, ...data };
-  list[index] = atualizado;
-  saveStoredList("responsaveis", list);
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { data: updatedSup, error } = await supabase.from("responsaveis").update(data).eq("id", id).select().single();
+      if (!error && updatedSup) {
+        const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+        const lIndex = localList.findIndex((r) => r.id === id);
+        if (lIndex !== -1) localList[lIndex] = updatedSup as Responsavel;
+        saveStoredList("responsaveis", localList);
+        await logAuditoria("responsaveis", ant.nome, "Alteração", userId, userNome, ant, updatedSup);
+        return updatedSup as Responsavel;
+      }
+    } catch (e) {
+      console.warn("Aviso ao atualizar responsável no Supabase:", e);
+    }
+  }
+
+  const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+  const lIndex = localList.findIndex((r) => r.id === id);
+  if (lIndex !== -1) localList[lIndex] = atualizado;
+  saveStoredList("responsaveis", localList);
   await logAuditoria("responsaveis", ant.nome, "Alteração", userId, userNome, ant, atualizado);
   return atualizado;
 }
@@ -628,7 +867,17 @@ export async function deleteResponsavel(id: string, userId: string, userNome: st
   if (target.nome === "Proprietário" || target.cpf === "000.000.000-00") {
     throw new Error("O registro Padrão 'Proprietário' não poderá ser excluído.");
   }
-  const filtrados = list.filter((r) => r.id !== id);
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("responsaveis").delete().eq("id", id);
+    } catch (e) {
+      console.warn("Aviso ao deletar responsável no Supabase:", e);
+    }
+  }
+
+  const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+  const filtrados = localList.filter((r) => r.id !== id);
   saveStoredList("responsaveis", filtrados);
   await logAuditoria("responsaveis", target.nome, "Exclusão", userId, userNome, target, null);
 }
@@ -1144,3 +1393,563 @@ export async function getDashboardStats() {
     chartMensal
   };
 }
+
+// ============================================================================
+// SERVIÇOS DE BACKUP, RESTAURAÇÃO E SINCRONIZAÇÃO COM SUPABASE
+// ============================================================================
+
+export function exportDatabaseJSON(): string {
+  const data = {
+    app: "DETRAN-PA Protocolo CNH",
+    version: "2.4.0",
+    exported_at: new Date().toISOString(),
+    usuarios: getStoredList("usuarios", SEED_USUARIOS),
+    responsaveis: getStoredList("responsaveis", SEED_RESPONSAVEIS),
+    memorandos: getStoredList("memorandos", SEED_MEMORANDOS),
+    candidatos: getStoredList("candidatos", SEED_CANDIDATOS),
+    geral: getStoredList("geral", SEED_GERAL),
+    historico: getStoredList("historico", SEED_HISTORICO),
+    auditoria: getStoredList("auditoria", SEED_AUDITORIA),
+    mapeamento: getStoredList("mapeamento", SEED_MAPEAMENTO)
+  };
+  return JSON.stringify(data, null, 2);
+}
+
+export function exportDatabaseExcel(): void {
+  const wb = XLSX.utils.book_new();
+
+  const collections = [
+    { name: "Usuários", key: "usuarios", seed: SEED_USUARIOS },
+    { name: "Responsáveis e CFCs", key: "responsaveis", seed: SEED_RESPONSAVEIS },
+    { name: "Mapeamento A-Z", key: "mapeamento", seed: SEED_MAPEAMENTO },
+    { name: "Memorandos", key: "memorandos", seed: SEED_MEMORANDOS },
+    { name: "Candidatos", key: "candidatos", seed: SEED_CANDIDATOS },
+    { name: "Protocolo Geral CNHs", key: "geral", seed: SEED_GERAL },
+    { name: "Histórico Movimentos", key: "historico", seed: SEED_HISTORICO },
+    { name: "Auditoria Sistema", key: "auditoria", seed: SEED_AUDITORIA }
+  ];
+
+  for (const col of collections) {
+    const list = getStoredList<any>(col.key, col.seed);
+    const formattedData = list.map((item: any) => {
+      const copy: Record<string, any> = {};
+      for (const k in item) {
+        if (typeof item[k] === "object" && item[k] !== null) {
+          copy[k] = JSON.stringify(item[k]);
+        } else {
+          copy[k] = item[k];
+        }
+      }
+      return copy;
+    });
+
+    const ws = XLSX.utils.json_to_sheet(formattedData.length > 0 ? formattedData : [{}]);
+    XLSX.utils.book_append_sheet(wb, ws, col.name.substring(0, 31));
+  }
+
+  const dateStr = new Date().toISOString().split("T")[0];
+  XLSX.writeFile(wb, `backup_detran_protocolo_${dateStr}.xlsx`);
+}
+
+export function exportTableExcel(tableName: string, label: string): void {
+  const seedsMap: Record<string, any[]> = {
+    usuarios: SEED_USUARIOS,
+    responsaveis: SEED_RESPONSAVEIS,
+    mapeamento: SEED_MAPEAMENTO,
+    memorandos: SEED_MEMORANDOS,
+    candidatos: SEED_CANDIDATOS,
+    geral: SEED_GERAL,
+    historico: SEED_HISTORICO,
+    auditoria: SEED_AUDITORIA
+  };
+
+  const list = getStoredList<any>(tableName, seedsMap[tableName] || []);
+  const formattedData = list.map((item: any) => {
+    const copy: Record<string, any> = {};
+    for (const k in item) {
+      if (typeof item[k] === "object" && item[k] !== null) {
+        copy[k] = JSON.stringify(item[k]);
+      } else {
+        copy[k] = item[k];
+      }
+    }
+    return copy;
+  });
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(formattedData.length > 0 ? formattedData : [{}]);
+  XLSX.utils.book_append_sheet(wb, ws, label.substring(0, 31));
+
+  const dateStr = new Date().toISOString().split("T")[0];
+  XLSX.writeFile(wb, `${tableName}_detran_${dateStr}.xlsx`);
+}
+
+export function importDatabaseJSON(jsonContent: string): { success: boolean; message: string; counts: Record<string, number> } {
+  try {
+    const data = JSON.parse(jsonContent);
+    if (!data || typeof data !== "object") {
+      throw new Error("Formato de arquivo JSON inválido.");
+    }
+
+    const counts: Record<string, number> = {};
+
+    if (Array.isArray(data.usuarios)) {
+      saveStoredList("usuarios", data.usuarios);
+      counts.usuarios = data.usuarios.length;
+    }
+    if (Array.isArray(data.responsaveis)) {
+      saveStoredList("responsaveis", data.responsaveis);
+      counts.responsaveis = data.responsaveis.length;
+    }
+    if (Array.isArray(data.memorandos)) {
+      saveStoredList("memorandos", data.memorandos);
+      counts.memorandos = data.memorandos.length;
+    }
+    if (Array.isArray(data.candidatos)) {
+      saveStoredList("candidatos", data.candidatos);
+      counts.candidatos = data.candidatos.length;
+    }
+    if (Array.isArray(data.geral)) {
+      saveStoredList("geral", data.geral);
+      counts.geral = data.geral.length;
+    }
+    if (Array.isArray(data.historico)) {
+      saveStoredList("historico", data.historico);
+      counts.historico = data.historico.length;
+    }
+    if (Array.isArray(data.auditoria)) {
+      saveStoredList("auditoria", data.auditoria);
+      counts.auditoria = data.auditoria.length;
+    }
+    if (Array.isArray(data.mapeamento)) {
+      saveStoredList("mapeamento", data.mapeamento);
+      counts.mapeamento = data.mapeamento.length;
+    }
+
+    return {
+      success: true,
+      message: "Backup restaurado com sucesso para o armazenamento local!",
+      counts
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err.message || "Erro desconhecido ao restaurar arquivo JSON.",
+      counts: {}
+    };
+  }
+}
+
+export interface SyncStatusItem {
+  key: string;
+  label: string;
+  tableName: string;
+  localCount: number;
+  supabaseCount: number | null;
+  status: 'synced' | 'pending' | 'error' | 'not_configured';
+  lastError?: string;
+}
+
+export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
+  const collections = [
+    { key: "usuarios", label: "Usuários do Sistema", tableName: "usuarios" },
+    { key: "responsaveis", label: "Responsáveis e CFCs", tableName: "responsaveis" },
+    { key: "mapeamento", label: "Mapeamento (A-Z)", tableName: "mapeamento_localizacao" },
+    { key: "memorandos", label: "Memorandos e Remessas", tableName: "memorandos" },
+    { key: "candidatos", label: "Candidatos Vinculados", tableName: "candidatos" },
+    { key: "geral", label: "Protocolo Geral CNHs", tableName: "geral_cnhs" },
+    { key: "historico", label: "Histórico de Movimento", tableName: "historico_movimentacoes" },
+    { key: "auditoria", label: "Auditoria do Sistema", tableName: "auditoria" }
+  ];
+
+  const results: SyncStatusItem[] = [];
+
+  for (const item of collections) {
+    const localList = getStoredList(item.key, []);
+    let supCount: number | null = null;
+    let status: 'synced' | 'pending' | 'error' | 'not_configured' = 'not_configured';
+    let lastError: string | undefined = undefined;
+
+    if (isSupabaseConfigured()) {
+      try {
+        const { count, error } = await supabase
+          .from(item.tableName)
+          .select("*", { count: "exact", head: true });
+        if (!error && count !== null) {
+          supCount = count;
+          status = localList.length === supCount ? 'synced' : 'pending';
+        } else if (error) {
+          status = 'error';
+          if (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('schema')) {
+            lastError = `Tabela '${item.tableName}' não criada no Supabase. Execute o script SQL no editor Supabase.`;
+          } else {
+            lastError = error.message;
+          }
+        }
+      } catch (err: any) {
+        status = 'error';
+        lastError = err.message || "Erro ao conectar no Supabase";
+      }
+    }
+
+    results.push({
+      key: item.key,
+      label: item.label,
+      tableName: item.tableName,
+      localCount: localList.length,
+      supabaseCount: supCount,
+      status,
+      lastError
+    });
+  }
+
+  return results;
+}
+
+export async function syncLocalToSupabase(
+  onLog?: (log: string) => void
+): Promise<{ success: boolean; syncedCount: number; errors: string[] }> {
+  if (!isSupabaseConfigured()) {
+    throw new Error("Supabase não está configurado. Verifique VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.");
+  }
+
+  const errors: string[] = [];
+  let totalSynced = 0;
+
+  const log = (msg: string) => {
+    if (onLog) onLog(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  };
+
+  log("🚀 Iniciando sincronização do Armazenamento Local para o Supabase...");
+
+  // Pré-carregar listas locais para validar chaves estrangeiras de forma estrita
+  const usuarios = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+  const resp = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+  const mapList = getStoredList<MapeamentoLocalizacao>("mapeamento", SEED_MAPEAMENTO);
+  const mems = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
+  const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+  const geral = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  const hist = getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO);
+  const aud = getStoredList<Auditoria>("auditoria", SEED_AUDITORIA);
+
+  const validUserIds = new Set(usuarios.map(u => u.id));
+  const validRespIds = new Set(resp.map(r => r.id));
+  const validMemoIds = new Set(mems.map(m => m.id));
+  const validCandIds = new Set(cands.map(c => c.id));
+  const validGeralIds = new Set(geral.map(g => g.id));
+
+  const cleanFK = (id?: string | null, validSet?: Set<string>): string | null => {
+    if (!id || typeof id !== "string") return null;
+    const trimmed = id.trim();
+    if (trimmed === "") return null;
+    if (validSet && !validSet.has(trimmed)) return null;
+    return trimmed;
+  };
+
+  // 1. Usuarios
+  try {
+    log("📦 Sincronizando tabela 'usuarios'...");
+    if (usuarios.length > 0) {
+      const payload = usuarios.map(u => ({
+        id: u.id || "11111111-1111-1111-1111-111111111111",
+        nome: u.nome,
+        nome_curto: u.nome_curto,
+        fone: u.fone || null,
+        email: u.email,
+        funcao: u.funcao || null,
+        setor: u.setor || "Protocolo",
+        login: u.login,
+        senha: u.senha || "detran@123",
+        permissoes: u.permissoes,
+        perfil: u.perfil,
+        ativo: u.ativo !== false,
+        created_at: u.created_at || new Date().toISOString()
+      }));
+      const { error } = await supabase.from("usuarios").upsert(payload, { onConflict: "id" });
+      if (error) {
+        log(`❌ Erro em 'usuarios': ${error.message}`);
+        errors.push(`usuarios: ${error.message}`);
+      } else {
+        log(`✅ Tabela 'usuarios' sincronizada (${usuarios.length} registros).`);
+        totalSynced += usuarios.length;
+      }
+    }
+  } catch (err: any) {
+    errors.push(`usuarios: ${err.message}`);
+  }
+
+  // 2. Responsaveis
+  try {
+    log("📦 Sincronizando tabela 'responsaveis'...");
+    if (resp.length > 0) {
+      const payload = resp.map(r => ({
+        id: r.id || "00000000-0000-0000-0000-000000000001",
+        nome: r.nome,
+        cpf: r.cpf,
+        telefone: r.telefone || null,
+        observacao: r.observacao || null,
+        ativo: r.ativo !== false,
+        created_at: r.created_at || new Date().toISOString()
+      }));
+      const { error } = await supabase.from("responsaveis").upsert(payload, { onConflict: "id" });
+      if (error) {
+        log(`❌ Erro em 'responsaveis': ${error.message}`);
+        errors.push(`responsaveis: ${error.message}`);
+      } else {
+        log(`✅ Tabela 'responsaveis' sincronizada (${resp.length} registros).`);
+        totalSynced += resp.length;
+      }
+    }
+  } catch (err: any) {
+    errors.push(`responsaveis: ${err.message}`);
+  }
+
+  // 3. Mapeamento
+  try {
+    log("📦 Sincronizando tabela 'mapeamento_localizacao'...");
+    if (mapList.length > 0) {
+      const payload = mapList.map(m => ({
+        id: m.id || `map-${(m.inicial || "A").toLowerCase()}`,
+        inicial: m.inicial,
+        gaveta: m.gaveta,
+        reparticao: m.reparticao,
+        ativo: m.ativo !== false
+      }));
+      const { error } = await supabase.from("mapeamento_localizacao").upsert(payload, { onConflict: "id" });
+      if (error) {
+        log(`❌ Erro em 'mapeamento_localizacao': ${error.message}`);
+        errors.push(`mapeamento: ${error.message}`);
+      } else {
+        log(`✅ Tabela 'mapeamento_localizacao' sincronizada (${mapList.length} registros).`);
+        totalSynced += mapList.length;
+      }
+    }
+  } catch (err: any) {
+    errors.push(`mapeamento: ${err.message}`);
+  }
+
+  // 4. Memorandos
+  try {
+    log("📦 Sincronizando tabela 'memorandos'...");
+    if (mems.length > 0) {
+      const payload = mems.map(m => ({
+        id: m.id || `memo-${m.numero}`,
+        numero: m.numero,
+        status: m.status,
+        usuario_id: cleanFK(m.usuario_id, validUserIds),
+        usuario_nome: m.usuario_nome || null,
+        remessa: m.remessa || null,
+        candidatos_count: m.candidatos_count || 0,
+        created_at: m.created_at || new Date().toISOString()
+      }));
+      const { error } = await supabase.from("memorandos").upsert(payload, { onConflict: "id" });
+      if (error) {
+        log(`❌ Erro em 'memorandos': ${error.message}`);
+        errors.push(`memorandos: ${error.message}`);
+      } else {
+        log(`✅ Tabela 'memorandos' sincronizada (${mems.length} registros).`);
+        totalSynced += mems.length;
+      }
+    }
+  } catch (err: any) {
+    errors.push(`memorandos: ${err.message}`);
+  }
+
+  // 5. Candidatos
+  try {
+    log("📦 Sincronizando tabela 'candidatos'...");
+    if (cands.length > 0) {
+      const payload = cands.map(c => ({
+        id: c.id || `cand-${c.memorando_id}-${c.numero || "01"}`,
+        memorando_id: cleanFK(c.memorando_id, validMemoIds),
+        numero: c.numero || null,
+        nome: c.nome,
+        cpf: c.cpf,
+        telefone: c.telefone || null,
+        remessa: c.remessa || null,
+        created_at: c.created_at || new Date().toISOString()
+      }));
+      const { error } = await supabase.from("candidatos").upsert(payload, { onConflict: "id" });
+      if (error) {
+        log(`❌ Erro em 'candidatos': ${error.message}`);
+        errors.push(`candidatos: ${error.message}`);
+      } else {
+        log(`✅ Tabela 'candidatos' sincronizada (${cands.length} registros).`);
+        totalSynced += cands.length;
+      }
+    }
+  } catch (err: any) {
+    errors.push(`candidatos: ${err.message}`);
+  }
+
+  // 6. Geral CNHs
+  try {
+    log("📦 Sincronizando tabela 'geral_cnhs'...");
+    if (geral.length > 0) {
+      const payload = geral.map(g => ({
+        id: g.id || `cnh-${g.ordem}`,
+        ordem: g.ordem,
+        memorando_id: cleanFK(g.memorando_id, validMemoIds),
+        candidato_id: cleanFK(g.candidato_id, validCandIds),
+        nome: g.nome,
+        cpf: g.cpf,
+        gaveta: g.gaveta || "",
+        reparticao: g.reparticao || "",
+        situacao: g.situacao,
+        responsavel_id: cleanFK(g.responsavel_id, validRespIds),
+        responsavel_nome: g.responsavel_nome || null,
+        data_movimento: g.data_movimento || new Date().toISOString(),
+        usuario_id: cleanFK(g.usuario_id, validUserIds),
+        usuario_nome: g.usuario_nome || null,
+        memorando_numero: g.memorando_numero || null,
+        remessa: g.remessa || null,
+        observacao: g.observacao || null,
+        created_at: g.created_at || new Date().toISOString()
+      }));
+      const { error } = await supabase.from("geral_cnhs").upsert(payload, { onConflict: "id" });
+      if (error) {
+        log(`❌ Erro em 'geral_cnhs': ${error.message}`);
+        errors.push(`geral_cnhs: ${error.message}`);
+      } else {
+        log(`✅ Tabela 'geral_cnhs' sincronizada (${geral.length} registros).`);
+        totalSynced += geral.length;
+      }
+    }
+  } catch (err: any) {
+    errors.push(`geral_cnhs: ${err.message}`);
+  }
+
+  // 7. Histórico
+  try {
+    log("📦 Sincronizando tabela 'historico_movimentacoes'...");
+    if (hist.length > 0) {
+      const payload = hist
+        .map(h => ({
+          id: h.id || `hist-${h.geral_id}-${Math.random().toString(36).substring(2, 7)}`,
+          geral_id: cleanFK(h.geral_id, validGeralIds),
+          geral_ordem: h.geral_ordem || null,
+          geral_nome: h.geral_nome || null,
+          situacao_anterior: h.situacao_anterior || null,
+          situacao_nova: h.situacao_nova,
+          responsavel_id: cleanFK(h.responsavel_id, validRespIds),
+          responsavel_nome: h.responsavel_nome || null,
+          usuario_id: cleanFK(h.usuario_id, validUserIds),
+          usuario_nome: h.usuario_nome || null,
+          observacao: h.observacao || null,
+          data_hora: h.data_hora || new Date().toISOString()
+        }))
+        .filter(h => h.geral_id !== null); // Apenas registros de histórico com CNH existente
+
+      if (payload.length > 0) {
+        const { error } = await supabase.from("historico_movimentacoes").upsert(payload, { onConflict: "id" });
+        if (error) {
+          log(`❌ Erro em 'historico_movimentacoes': ${error.message}`);
+          errors.push(`historico: ${error.message}`);
+        } else {
+          log(`✅ Tabela 'historico_movimentacoes' sincronizada (${payload.length} registros).`);
+          totalSynced += payload.length;
+        }
+      } else {
+        log("ℹ️ Tabela 'historico_movimentacoes' sem registros elegíveis.");
+      }
+    }
+  } catch (err: any) {
+    errors.push(`historico: ${err.message}`);
+  }
+
+  // 8. Auditoria
+  try {
+    log("📦 Sincronizando tabela 'auditoria'...");
+    if (aud.length > 0) {
+      const payload = aud.map(a => ({
+        id: a.id || `aud-${a.registro_id}-${Math.random().toString(36).substring(2, 7)}`,
+        tabela: a.tabela,
+        registro_id: a.registro_id,
+        acao: a.acao,
+        usuario_id: cleanFK(a.usuario_id, validUserIds),
+        usuario_nome: a.usuario_nome,
+        data_hora: a.data_hora || new Date().toISOString(),
+        ip: a.ip || "127.0.0.1",
+        valores_anteriores: a.valores_anteriores || null,
+        valores_novos: a.valores_novos || null
+      }));
+      const { error } = await supabase.from("auditoria").upsert(payload, { onConflict: "id" });
+      if (error) {
+        log(`❌ Erro em 'auditoria': ${error.message}`);
+        errors.push(`auditoria: ${error.message}`);
+      } else {
+        log(`✅ Tabela 'auditoria' sincronizada (${aud.length} registros).`);
+        totalSynced += aud.length;
+      }
+    }
+  } catch (err: any) {
+    errors.push(`auditoria: ${err.message}`);
+  }
+
+  if (errors.length === 0) {
+    log("✨ Sincronização concluída com sucesso total!");
+  } else {
+    log(`⚠️ Sincronização concluída com ${errors.length} aviso(s)/erro(s).`);
+  }
+
+  return {
+    success: errors.length === 0,
+    syncedCount: totalSynced,
+    errors
+  };
+}
+
+export async function syncSupabaseToLocal(
+  onLog?: (log: string) => void
+): Promise<{ success: boolean; pulledCount: number; errors: string[] }> {
+  if (!isSupabaseConfigured()) {
+    throw new Error("Supabase não está configurado.");
+  }
+
+  const errors: string[] = [];
+  let totalPulled = 0;
+
+  const log = (msg: string) => {
+    if (onLog) onLog(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  };
+
+  log("🚀 Baixando dados do Supabase para o Armazenamento Local...");
+
+  const tables = [
+    { name: "usuarios", key: "usuarios" },
+    { name: "responsaveis", key: "responsaveis" },
+    { name: "mapeamento_localizacao", key: "mapeamento" },
+    { name: "memorandos", key: "memorandos" },
+    { name: "candidatos", key: "candidatos" },
+    { name: "geral_cnhs", key: "geral" },
+    { name: "historico_movimentacoes", key: "historico" },
+    { name: "auditoria", key: "auditoria" }
+  ];
+
+  for (const item of tables) {
+    try {
+      log(`📥 Baixando tabela '${item.name}'...`);
+      const { data, error } = await supabase.from(item.name).select("*");
+      if (error) {
+        log(`❌ Erro ao baixar '${item.name}': ${error.message}`);
+        errors.push(`${item.name}: ${error.message}`);
+      } else if (data && data.length > 0) {
+        saveStoredList(item.key, data);
+        log(`✅ '${item.name}' atualizado localmente (${data.length} registros).`);
+        totalPulled += data.length;
+      } else {
+        log(`ℹ️ '${item.name}' no Supabase está vazio.`);
+      }
+    } catch (err: any) {
+      errors.push(`${item.name}: ${err.message}`);
+    }
+  }
+
+  log("✨ Processo de download do Supabase concluído!");
+  return {
+    success: errors.length === 0,
+    pulledCount: totalPulled,
+    errors
+  };
+}
+

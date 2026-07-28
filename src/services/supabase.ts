@@ -1,29 +1,91 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 // ============================================================================
 // CLIENTE DE CONEXÃO COM O SUPABASE (POSTGRESQL)
 // ============================================================================
-// Para ativar a conexão em nuvem:
-// 1. Crie um arquivo .env na raiz do projeto com as seguintes variáveis:
-//    VITE_SUPABASE_URL=https://seu-projeto.supabase.co
-//    VITE_SUPABASE_ANON_KEY=sua-chave-anon-publica
-// 2. O arquivo `supabase_schema.sql` na raiz possui todo o código para ser
-//    colado no Editor SQL do Supabase.
-// ============================================================================
 
-const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || "https://sua-url.supabase.co";
-const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || "sua-chave-anon";
+const DEFAULT_URL = "https://sua-url.supabase.co";
+const DEFAULT_KEY = "sua-chave-anon";
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export interface SupabaseConfigInfo {
+  url: string;
+  key: string;
+  source: 'env' | 'local' | 'none';
+}
+
+export function getSupabaseCredentials(): SupabaseConfigInfo {
+  const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL;
+  const envKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
+
+  const localUrl = typeof window !== 'undefined' ? localStorage.getItem("detran_supabase_url") : null;
+  const localKey = typeof window !== 'undefined' ? localStorage.getItem("detran_supabase_key") : null;
+
+  if (localUrl && localKey && localUrl.trim() !== "" && localUrl !== DEFAULT_URL) {
+    return { url: localUrl.trim(), key: localKey.trim(), source: 'local' };
+  }
+
+  if (envUrl && envKey && envUrl.trim() !== "" && envUrl !== DEFAULT_URL && envUrl !== "https://seu-projeto.supabase.co") {
+    return { url: envUrl.trim(), key: envKey.trim(), source: 'env' };
+  }
+
+  return {
+    url: localUrl || envUrl || DEFAULT_URL,
+    key: localKey || envKey || DEFAULT_KEY,
+    source: 'none'
+  };
+}
+
+let supabaseClientInstance: SupabaseClient | null = null;
+
+export function getSupabaseClient(): SupabaseClient {
+  const { url, key } = getSupabaseCredentials();
+  if (!supabaseClientInstance) {
+    supabaseClientInstance = createClient(url, key);
+  }
+  return supabaseClientInstance;
+}
+
+export function resetSupabaseClient(): void {
+  const { url, key } = getSupabaseCredentials();
+  supabaseClientInstance = createClient(url, key);
+}
+
+// Proxy export para garantir chamadas transparentes sempre ao cliente ativo
+export const supabase = new Proxy({} as SupabaseClient, {
+  get(_target, prop) {
+    const client = getSupabaseClient() as any;
+    const value = client[prop];
+    return typeof value === 'function' ? value.bind(client) : value;
+  }
+});
 
 /**
- * Função utilitária para verificar se o Supabase está configurado corretamente.
+ * Verifica se o Supabase está configurado corretamente (via .env ou localStorage).
  */
 export function isSupabaseConfigured(): boolean {
-  const env = (import.meta as any).env || {};
+  const { url, key, source } = getSupabaseCredentials();
   return (
-    env.VITE_SUPABASE_URL !== undefined &&
-    env.VITE_SUPABASE_ANON_KEY !== undefined &&
-    env.VITE_SUPABASE_URL !== "https://sua-url.supabase.co"
+    source !== 'none' &&
+    !!url &&
+    !!key &&
+    url !== DEFAULT_URL &&
+    url !== "https://seu-projeto.supabase.co"
   );
 }
+
+export function saveLocalSupabaseConfig(url: string, key: string): void {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem("detran_supabase_url", url.trim());
+    localStorage.setItem("detran_supabase_key", key.trim());
+    resetSupabaseClient();
+  }
+}
+
+export function clearLocalSupabaseConfig(): void {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem("detran_supabase_url");
+    localStorage.removeItem("detran_supabase_key");
+    resetSupabaseClient();
+  }
+}
+
