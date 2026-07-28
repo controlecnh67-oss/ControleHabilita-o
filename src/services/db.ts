@@ -1540,6 +1540,259 @@ export function importDatabaseJSON(jsonContent: string): { success: boolean; mes
   }
 }
 
+export interface SpreadsheetImportOptions {
+  syncToSupabase?: boolean;
+  mode?: "merge" | "replace";
+  usuarioId?: string;
+  usuarioNome?: string;
+}
+
+export interface SpreadsheetImportSummary {
+  success: boolean;
+  message: string;
+  importedCount: number;
+  totalRowsProcessed: number;
+  tableName: string;
+  supabaseSyncedCount?: number;
+  supabaseError?: string;
+}
+
+function mapSpreadsheetRowToGeralCNH(
+  row: Record<string, any>,
+  index: number,
+  maxOrdem: number,
+  mapeamento: MapeamentoLocalizacao[],
+  usuarioId: string,
+  usuarioNome: string
+): GeralCNH | null {
+  const keys = Object.keys(row);
+  const getVal = (patterns: RegExp[]): any => {
+    for (const key of keys) {
+      const cleanKey = key.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      for (const pattern of patterns) {
+        if (pattern.test(cleanKey)) {
+          return row[key];
+        }
+      }
+    }
+    return undefined;
+  };
+
+  const rawNome = getVal([/nome/, /candidato/, /titular/, /aluno/]);
+  if (!rawNome || String(rawNome).trim() === "") {
+    return null;
+  }
+
+  const nome = String(rawNome).trim().toUpperCase();
+
+  const rawCpf = getVal([/cpf/, /doc/, /documento/]);
+  let cpf = rawCpf ? String(rawCpf).replace(/\D/g, "") : "";
+  if (cpf.length > 11) cpf = cpf.slice(0, 11);
+
+  const rawOrdem = getVal([/ordem/, /num/, /numero/, /nº/, /posicao/, /pos/]);
+  let ordem = parseInt(String(rawOrdem), 10);
+  if (isNaN(ordem) || ordem <= 0) {
+    ordem = maxOrdem + index + 1;
+  }
+
+  const rawGaveta = getVal([/gaveta/, /local/, /caixa/, /pasta/]);
+  let gaveta = rawGaveta ? String(rawGaveta).trim() : "";
+
+  const rawReparticao = getVal([/reparti/, /setor/, /unidade/, /depto/]);
+  let reparticao = rawReparticao ? String(rawReparticao).trim() : "";
+
+  if (!gaveta || !reparticao) {
+    const initial = nome.charAt(0).toUpperCase();
+    const mapMatch = mapeamento.find(m => m.inicial.toUpperCase() === initial);
+    if (mapMatch) {
+      if (!gaveta) gaveta = mapMatch.gaveta;
+      if (!reparticao) reparticao = mapMatch.reparticao;
+    } else {
+      if (!gaveta) gaveta = "G-01";
+      if (!reparticao) reparticao = "Protocolo Geral";
+    }
+  }
+
+  const rawSituacao = getVal([/situa/, /status/, /estado/]);
+  let situacao: SituacaoGeral = "Recebida";
+  if (rawSituacao) {
+    const sitStr = String(rawSituacao).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (sitStr.includes("entre")) situacao = "Entregue";
+    else if (sitStr.includes("reme")) situacao = "Remetida";
+    else if (sitStr.includes("pend")) situacao = "Pendente";
+    else if (sitStr.includes("receb")) situacao = "Recebida";
+  }
+
+  const rawResp = getVal([/responsa/, /procurador/, /retirante/]);
+  const responsavel_nome = rawResp ? String(rawResp).trim() : undefined;
+
+  const rawMemo = getVal([/memo/, /memorando/, /remessa/]);
+  const memorando_numero = rawMemo ? String(rawMemo).trim() : undefined;
+
+  const rawObs = getVal([/obs/, /observa/, /detalhe/, /nota/]);
+  const observacao = rawObs ? String(rawObs).trim() : undefined;
+
+  const rawData = getVal([/data/]);
+  let data_movimento = new Date().toISOString();
+  if (rawData) {
+    const parsedDate = new Date(rawData);
+    if (!isNaN(parsedDate.getTime())) {
+      data_movimento = parsedDate.toISOString();
+    }
+  }
+
+  return {
+    id: `cnh-imp-${ordem}-${Math.random().toString(36).substring(2, 7)}`,
+    ordem,
+    nome,
+    cpf,
+    gaveta,
+    reparticao,
+    situacao,
+    responsavel_nome,
+    data_movimento,
+    usuario_id: usuarioId,
+    usuario_nome: usuarioNome,
+    memorando_numero,
+    observacao,
+    created_at: new Date().toISOString()
+  };
+}
+
+export async function importSpreadsheetData(
+  fileBuffer: ArrayBuffer,
+  options: SpreadsheetImportOptions = {}
+): Promise<SpreadsheetImportSummary> {
+  const {
+    syncToSupabase = false,
+    mode = "merge",
+    usuarioId = "11111111-1111-1111-1111-111111111111",
+    usuarioNome = "Operador do Sistema"
+  } = options;
+
+  try {
+    const workbook = XLSX.read(fileBuffer, { type: "array" });
+    if (!workbook || workbook.SheetNames.length === 0) {
+      throw new Error("Arquivo CSV ou Excel vazio ou inválido.");
+    }
+
+    const mapeamento = getStoredList<MapeamentoLocalizacao>("mapeamento", SEED_MAPEAMENTO);
+    const existingGeral = getStoredList<GeralCNH>("geral", SEED_GERAL);
+
+    const maxOrdem = existingGeral.reduce((max, item) => Math.max(max, item.ordem || 0), 0);
+
+    let sheetName = workbook.SheetNames[0];
+    const geralSheetMatch = workbook.SheetNames.find(s => 
+      /geral|cnh|protocolo|candidato/i.test(s)
+    );
+    if (geralSheetMatch) {
+      sheetName = geralSheetMatch;
+    }
+
+    const worksheet = workbook.Sheets[sheetName];
+    const rawRows: Record<string, any>[] = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+
+    if (rawRows.length === 0) {
+      throw new Error(`A aba '${sheetName}' da planilha não contém dados ou linhas de cabeçalho.`);
+    }
+
+    const newItems: GeralCNH[] = [];
+
+    rawRows.forEach((row, idx) => {
+      const item = mapSpreadsheetRowToGeralCNH(row, idx, maxOrdem, mapeamento, usuarioId, usuarioNome);
+      if (item) {
+        newItems.push(item);
+      }
+    });
+
+    if (newItems.length === 0) {
+      throw new Error("Nenhuma linha com nome de candidato válido foi identificada na planilha.");
+    }
+
+    let finalGeralList: GeralCNH[];
+    if (mode === "replace") {
+      finalGeralList = newItems;
+    } else {
+      const existingMap = new Map<string, GeralCNH>();
+      existingGeral.forEach(g => {
+        const key = g.cpf ? `cpf:${g.cpf}` : `ordem:${g.ordem}`;
+        existingMap.set(key, g);
+      });
+
+      newItems.forEach(newItem => {
+        const key = newItem.cpf ? `cpf:${newItem.cpf}` : `ordem:${newItem.ordem}`;
+        if (existingMap.has(key)) {
+          const old = existingMap.get(key)!;
+          existingMap.set(key, { ...newItem, id: old.id });
+        } else {
+          existingMap.set(key, newItem);
+        }
+      });
+
+      finalGeralList = Array.from(existingMap.values()).sort((a, b) => a.ordem - b.ordem);
+    }
+
+    saveStoredList("geral", finalGeralList);
+
+    let supabaseSyncedCount = 0;
+    let supabaseError: string | undefined = undefined;
+
+    if (syncToSupabase) {
+      if (!isSupabaseConfigured()) {
+        supabaseError = "Supabase não está configurado. Os dados foram salvos no armazenamento local.";
+      } else {
+        try {
+          const payload = newItems.map(g => ({
+            id: g.id,
+            ordem: g.ordem,
+            nome: g.nome,
+            cpf: g.cpf,
+            gaveta: g.gaveta,
+            reparticao: g.reparticao,
+            situacao: g.situacao,
+            responsavel_nome: g.responsavel_nome || null,
+            data_movimento: g.data_movimento || new Date().toISOString(),
+            usuario_id: usuarioId,
+            usuario_nome: usuarioNome,
+            memorando_numero: g.memorando_numero || null,
+            observacao: g.observacao || null
+          }));
+
+          const batchSize = 100;
+          for (let i = 0; i < payload.length; i += batchSize) {
+            const batch = payload.slice(i, i + batchSize);
+            const { error } = await supabase.from("geral_cnhs").upsert(batch, { onConflict: "id" });
+            if (error) {
+              throw error;
+            }
+            supabaseSyncedCount += batch.length;
+          }
+        } catch (err: any) {
+          supabaseError = `Erro ao enviar para o Supabase: ${err.message}`;
+        }
+      }
+    }
+
+    return {
+      success: true,
+      message: `${newItems.length} registros da planilha foram importados com sucesso!`,
+      importedCount: newItems.length,
+      totalRowsProcessed: rawRows.length,
+      tableName: "geral_cnhs",
+      supabaseSyncedCount,
+      supabaseError
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err.message || "Erro ao processar planilha CSV ou Excel.",
+      importedCount: 0,
+      totalRowsProcessed: 0,
+      tableName: "geral_cnhs"
+    };
+  }
+}
+
 export interface SyncStatusItem {
   key: string;
   label: string;

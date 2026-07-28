@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { 
   FolderArchive, 
   Plus, 
@@ -23,7 +23,10 @@ import {
   RefreshCw,
   X,
   Printer,
-  Columns
+  Columns,
+  Upload,
+  FileText,
+  Building2
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -36,7 +39,8 @@ import {
   entregarCNH, 
   updateGeralCNH, 
   getResponsaveis, 
-  createResponsavel 
+  createResponsavel,
+  importSpreadsheetData
 } from "../services/db";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
@@ -119,6 +123,54 @@ export const GeralPage: React.FC = () => {
   const [editGaveta, setEditGaveta] = useState("");
   const [editReparticao, setEditReparticao] = useState("");
   const [editObs, setEditObs] = useState("");
+
+  // Modal 5: Importar Planilha CSV / XLSX
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
+  const [syncImportToSupabase, setSyncImportToSupabase] = useState(true);
+  const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
+  const [isImporting, setIsImporting] = useState(false);
+  const importFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImportFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSelectedImportFile(file);
+    setIsImportModalOpen(true);
+    if (importFileInputRef.current) importFileInputRef.current.value = "";
+  };
+
+  const handleConfirmImport = async () => {
+    if (!selectedImportFile || !user) return;
+    setIsImporting(true);
+    try {
+      const buffer = await selectedImportFile.arrayBuffer();
+      const res = await importSpreadsheetData(buffer, {
+        syncToSupabase: syncImportToSupabase,
+        mode: importMode,
+        usuarioId: user.id,
+        usuarioNome: user.nome_curto || user.nome
+      });
+
+      if (res.success) {
+        setMessage({
+          type: "success",
+          text: `🎉 ${res.importedCount} registros importados da planilha com sucesso!` +
+            (res.supabaseSyncedCount ? ` (${res.supabaseSyncedCount} salvos no Supabase)` : "") +
+            (res.supabaseError ? ` [Aviso Supabase: ${res.supabaseError}]` : "")
+        });
+        setIsImportModalOpen(false);
+        setSelectedImportFile(null);
+        await fetchDados();
+      } else {
+        alert(`Erro ao importar planilha: ${res.message}`);
+      }
+    } catch (err: any) {
+      alert(`Erro ao processar arquivo: ${err.message}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   const fetchDados = async () => {
     setLoading(true);
@@ -623,14 +675,31 @@ export const GeralPage: React.FC = () => {
             </button>
 
             {canEdit && (
-            <button
-              onClick={handleOpenManualModal}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md shadow-blue-600/20 text-xs transition-all shrink-0 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>➕ Cadastro Manual</span>
-            </button>
-          )}
+              <>
+                <input
+                  type="file"
+                  ref={importFileInputRef}
+                  accept=".xlsx, .xls, .csv"
+                  onChange={handleImportFileChange}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => importFileInputRef.current?.click()}
+                  title="Importar planilha de CNHs em formato CSV ou Excel (.xlsx, .xls)"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer border border-blue-200 dark:border-blue-800"
+                >
+                  <Upload className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  <span>Importar Planilha</span>
+                </button>
+                <button
+                  onClick={handleOpenManualModal}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md shadow-blue-600/20 text-xs transition-all shrink-0 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>➕ Cadastro Manual</span>
+                </button>
+              </>
+            )}
         </div>
       </div>
 
@@ -846,7 +915,8 @@ export const GeralPage: React.FC = () => {
                   )}
                   {visibleColumns.nome && (
                     <th onClick={() => handleSort("nome")} className="py-2 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors">
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1.5">
+                        <User className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                         <span>Nome do Titular</span>
                         <ArrowUpDown className="w-3 h-3" />
                       </div>
@@ -854,12 +924,17 @@ export const GeralPage: React.FC = () => {
                   )}
                   {visibleColumns.cpf && (
                     <th onClick={() => handleSort("cpf")} className="py-2 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors">
-                      <span>CPF</span>
+                      <div className="flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span>CPF</span>
+                        <ArrowUpDown className="w-3 h-3" />
+                      </div>
                     </th>
                   )}
                   {visibleColumns.gaveta && (
                     <th onClick={() => handleSort("gaveta")} className="py-2 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors">
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1.5">
+                        <FolderArchive className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                         <span>Gaveta</span>
                         <ArrowUpDown className="w-3 h-3" />
                       </div>
@@ -867,7 +942,8 @@ export const GeralPage: React.FC = () => {
                   )}
                   {visibleColumns.reparticao && (
                     <th onClick={() => handleSort("reparticao")} className="py-2 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors">
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
                         <span>Repartição</span>
                         <ArrowUpDown className="w-3 h-3" />
                       </div>
@@ -910,7 +986,8 @@ export const GeralPage: React.FC = () => {
                     {/* Nome do Titular */}
                     {visibleColumns.nome && (
                       <td className="py-2 px-4 font-semibold text-slate-800 dark:text-slate-100">
-                        <div>
+                        <div className="flex items-center gap-1.5">
+                          <User className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
                           <span>{c.nome}</span>
                         </div>
                       </td>
@@ -919,7 +996,10 @@ export const GeralPage: React.FC = () => {
                     {/* CPF */}
                     {visibleColumns.cpf && (
                       <td className="py-2 px-4 font-mono text-slate-600 dark:text-slate-300">
-                        {c.cpf}
+                        <div className="flex items-center gap-1.5">
+                          <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span>{c.cpf ? formatCPF(c.cpf) : "-"}</span>
+                        </div>
                       </td>
                     )}
 
@@ -928,7 +1008,7 @@ export const GeralPage: React.FC = () => {
                       <td className="py-2 px-4">
                         {c.gaveta && c.gaveta.trim() ? (
                           <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-50 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 font-semibold text-[11px]">
-                            <MapPin className="w-3 h-3 text-blue-500 shrink-0" />
+                            <FolderArchive className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                             <span>{c.gaveta}</span>
                           </div>
                         ) : (
@@ -941,7 +1021,8 @@ export const GeralPage: React.FC = () => {
                     {visibleColumns.reparticao && (
                       <td className="py-2 px-4">
                         {c.reparticao && c.reparticao.trim() ? (
-                          <div className="inline-flex items-center px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 font-semibold text-[11px]">
+                          <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 font-semibold text-[11px]">
+                            <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
                             <span>{c.reparticao}</span>
                           </div>
                         ) : (
@@ -1179,7 +1260,7 @@ export const GeralPage: React.FC = () => {
               <div>
                 <p className="text-[11px] uppercase font-bold text-slate-400">Titular da CNH (Ordem #{selectedCNHForEntrega.ordem})</p>
                 <h4 className="text-base font-extrabold text-slate-900 dark:text-white mt-0.5">{selectedCNHForEntrega.nome}</h4>
-                <p className="text-xs font-mono text-slate-600 dark:text-slate-300">CPF: {selectedCNHForEntrega.cpf}</p>
+                <p className="text-xs font-mono text-slate-600 dark:text-slate-300">CPF: {selectedCNHForEntrega.cpf ? formatCPF(selectedCNHForEntrega.cpf) : "-"}</p>
               </div>
               <div className="text-right">
                 <span className="text-[11px] font-bold px-2.5 py-1 bg-blue-100 text-blue-800 rounded-lg">
@@ -1432,7 +1513,7 @@ export const GeralPage: React.FC = () => {
           <form onSubmit={handleSaveEdit} className="space-y-4">
             <div>
               <p className="text-xs font-bold text-slate-900 dark:text-white">Ordem #{editingCNH.ordem} - {editingCNH.nome}</p>
-              <p className="text-xs font-mono text-slate-500">CPF: {editingCNH.cpf}</p>
+              <p className="text-xs font-mono text-slate-500">CPF: {editingCNH.cpf ? formatCPF(editingCNH.cpf) : "-"}</p>
             </div>
 
             <div>
@@ -1597,6 +1678,111 @@ export const GeralPage: React.FC = () => {
             >
               <Download className="w-4 h-4" />
               <span>📥 Baixar Arquivo PDF Oficial (Paisagem)</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal 5: Importar Planilha CSV / XLSX */}
+      <Modal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        title="📥 Importar Planilha (CSV ou Excel)"
+      >
+        <div className="space-y-4 text-xs">
+          <div className="p-3.5 bg-blue-50 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200">
+            <div className="font-bold flex items-center gap-2 mb-1">
+              <FileSpreadsheet className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+              <span>Arquivo Selecionado: <strong>{selectedImportFile?.name}</strong></span>
+            </div>
+            <p className="text-[11px] text-slate-600 dark:text-slate-300">
+              Tamanho: {(selectedImportFile?.size ? selectedImportFile.size / 1024 : 0).toFixed(1)} KB
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="font-bold text-slate-800 dark:text-slate-200 block">
+              Modo de Inserção no Sistema
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <label className={`p-3 rounded-xl border cursor-pointer transition-all flex items-start gap-2.5 ${
+                importMode === "merge" 
+                  ? "bg-blue-50/70 border-blue-500 dark:bg-blue-950/60 ring-1 ring-blue-500" 
+                  : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+              }`}>
+                <input
+                  type="radio"
+                  name="importMode"
+                  checked={importMode === "merge"}
+                  onChange={() => setImportMode("merge")}
+                  className="mt-0.5 text-blue-600 focus:ring-blue-500"
+                />
+                <div>
+                  <div className="font-bold text-slate-900 dark:text-white">Mesclar e Atualizar</div>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Atualiza os registros existentes por CPF/Ordem e adiciona os novos sem apagar os atuais.
+                  </p>
+                </div>
+              </label>
+
+              <label className={`p-3 rounded-xl border cursor-pointer transition-all flex items-start gap-2.5 ${
+                importMode === "replace" 
+                  ? "bg-rose-50/70 border-rose-500 dark:bg-rose-950/60 ring-1 ring-rose-500" 
+                  : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+              }`}>
+                <input
+                  type="radio"
+                  name="importMode"
+                  checked={importMode === "replace"}
+                  onChange={() => setImportMode("replace")}
+                  className="mt-0.5 text-rose-600 focus:ring-rose-500"
+                />
+                <div>
+                  <div className="font-bold text-slate-900 dark:text-white">Substituir Lista Local</div>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Substitui inteiramente todos os registros da tabela local pelos dados desta planilha.
+                  </p>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div className="p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
+            <label className="flex items-center gap-2 font-bold text-slate-900 dark:text-white cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={syncImportToSupabase}
+                onChange={(e) => setSyncImportToSupabase(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+              <span>Sincronizar também com o banco Supabase em nuvem</span>
+            </label>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 pl-6">
+              Quando ativado, envia todos os registros importados da planilha diretamente para a tabela <code className="font-mono bg-slate-200 dark:bg-slate-700 px-1 py-0.5 rounded">geral_cnhs</code> no Supabase.
+            </p>
+          </div>
+
+          <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-[11px] leading-relaxed">
+            💡 <strong>Reconhecimento Automático de Colunas:</strong> A planilha pode estar em <code className="font-mono">.csv</code> ou <code className="font-mono">.xlsx</code>. O sistema detecta colunas como <em>Ordem, Nome/Candidato, CPF, Gaveta, Repartição, Situação, Responsável, Memorando e Observações</em>.
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => setIsImportModalOpen(false)}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+            >
+              Cancelar
+            </button>
+
+            <button
+              type="button"
+              onClick={handleConfirmImport}
+              disabled={isImporting}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm cursor-pointer"
+            >
+              {isImporting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              <span>{isImporting ? "Importando Planilha..." : "Iniciar Importação"}</span>
             </button>
           </div>
         </div>
