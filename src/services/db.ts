@@ -1308,6 +1308,77 @@ export async function updateGeralCNH(
   return atualizado;
 }
 
+// Exclusão de registro CNH individual
+export async function deleteGeralCNH(
+  id: string,
+  userId: string,
+  userNome: string
+): Promise<boolean> {
+  const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  const target = geralList.find((g) => g.id === id);
+  if (!target) return false;
+
+  const updated = geralList.filter((g) => g.id !== id);
+  saveStoredList("geral", updated);
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("geral_cnhs").delete().eq("id", id);
+    } catch (err) {
+      console.error("Erro ao deletar do Supabase:", err);
+    }
+  }
+
+  await logAuditoria(
+    "geral",
+    `Ordem #${target.ordem}`,
+    "Exclusão",
+    userId,
+    userNome,
+    target,
+    null
+  );
+
+  return true;
+}
+
+// Exclusão em massa de registros CNH
+export async function deleteMultipleGeralCNHs(
+  ids: string[],
+  userId: string,
+  userNome: string
+): Promise<number> {
+  if (!ids || ids.length === 0) return 0;
+  const idsSet = new Set(ids);
+  const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  const targets = geralList.filter((g) => idsSet.has(g.id));
+  const updated = geralList.filter((g) => !idsSet.has(g.id));
+  saveStoredList("geral", updated);
+
+  if (isSupabaseConfigured()) {
+    try {
+      for (let i = 0; i < ids.length; i += 100) {
+        const batch = ids.slice(i, i + 100);
+        await supabase.from("geral_cnhs").delete().in("id", batch);
+      }
+    } catch (err) {
+      console.error("Erro ao deletar em massa do Supabase:", err);
+    }
+  }
+
+  await logAuditoria(
+    "geral",
+    `Exclusão em massa (${ids.length} registros)`,
+    "Exclusão",
+    userId,
+    userNome,
+    { count: ids.length, ids },
+    null
+  );
+
+  return targets.length;
+}
+
 // ============================================================================
 // MÓDULOS DE HISTÓRICO E AUDITORIA (CONSULTA)
 // ============================================================================

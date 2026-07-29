@@ -27,7 +27,8 @@ import {
   Upload,
   FileText,
   Building2,
-  Eye
+  Eye,
+  Trash2
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -39,6 +40,8 @@ import {
   receberCNH, 
   entregarCNH, 
   updateGeralCNH, 
+  deleteGeralCNH,
+  deleteMultipleGeralCNHs,
   getResponsaveis, 
   createResponsavel,
   importSpreadsheetData
@@ -128,6 +131,14 @@ export const GeralPage: React.FC = () => {
   // Modal 6: Visualização Detalhada da CNH
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [selectedCNHDetails, setSelectedCNHDetails] = useState<GeralCNH | null>(null);
+
+  // Seleção Múltipla de Registros
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  // Modais de Exclusão Individual e em Massa
+  const [cnhToDelete, setCnhToDelete] = useState<GeralCNH | null>(null);
+  const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   const handleOpenDetailsModal = (cnh: GeralCNH) => {
     setSelectedCNHDetails(cnh);
@@ -247,6 +258,64 @@ export const GeralPage: React.FC = () => {
     } else {
       setSortColumn(col);
       setSortDirection("desc");
+    }
+  };
+
+  // Handlers para Seleção Múltipla
+  const toggleSelectRow = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    const currentPageIds = paginatedData.map((c) => c.id);
+    const allSelected = currentPageIds.length > 0 && currentPageIds.every((id) => selectedIds.includes(id));
+
+    if (allSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !currentPageIds.includes(id)));
+    } else {
+      const newSelected = new Set([...selectedIds, ...currentPageIds]);
+      setSelectedIds(Array.from(newSelected));
+    }
+  };
+
+  // Handlers para Exclusão
+  const handleConfirmDeleteSingle = async () => {
+    if (!cnhToDelete || !user || !canEdit) return;
+    setIsDeleting(true);
+    try {
+      await deleteGeralCNH(cnhToDelete.id, user.id, user.nome_curto || user.nome);
+      setMessage({
+        type: "success",
+        text: `Registro de CNH #${cnhToDelete.ordem} (${cnhToDelete.nome}) excluído com sucesso!`
+      });
+      setSelectedIds((prev) => prev.filter((id) => id !== cnhToDelete.id));
+      setCnhToDelete(null);
+      await fetchDados();
+    } catch (err: any) {
+      setMessage({ type: "error", text: `Erro ao excluir CNH: ${err.message}` });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleConfirmBatchDelete = async () => {
+    if (selectedIds.length === 0 || !user || !canEdit) return;
+    setIsDeleting(true);
+    try {
+      const count = await deleteMultipleGeralCNHs(selectedIds, user.id, user.nome_curto || user.nome);
+      setMessage({
+        type: "success",
+        text: `${count} registros de CNH excluídos com sucesso!`
+      });
+      setSelectedIds([]);
+      setIsBatchDeleteModalOpen(false);
+      await fetchDados();
+    } catch (err: any) {
+      setMessage({ type: "error", text: `Erro ao excluir registros selecionados: ${err.message}` });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -902,6 +971,33 @@ export const GeralPage: React.FC = () => {
           </div>
         </div>
 
+        {/* Barra de Ações em Lote para Linhas Selecionadas */}
+        {selectedIds.length > 0 && (
+          <div className="mb-3 p-3 bg-red-50/90 dark:bg-red-950/60 border border-red-200 dark:border-red-800/80 rounded-xl flex items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2 text-red-800 dark:text-red-200 font-bold text-xs">
+              <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
+              <span>{selectedIds.length} {selectedIds.length === 1 ? "linha selecionada" : "linhas selecionadas"}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setSelectedIds([])}
+                className="px-2.5 py-1 text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800 rounded-lg text-xs font-semibold cursor-pointer"
+              >
+                Limpar Seleção
+              </button>
+              {canEdit && (
+                <button
+                  onClick={() => setIsBatchDeleteModalOpen(true)}
+                  className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Excluir {selectedIds.length} Selecionado(s)</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="p-16 text-center text-xs text-slate-500">Carregando protocolo Geral de CNHs...</div>
         ) : paginatedData.length === 0 ? (
@@ -913,6 +1009,16 @@ export const GeralPage: React.FC = () => {
             <table className="w-full text-left border-collapse text-xs">
               <thead className="bg-slate-50 dark:bg-slate-800/80 sticky top-0 border-b border-slate-200 dark:border-slate-800 text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 tracking-wider">
                 <tr>
+                  {/* Caixa de Seleção para Multiplas Linhas */}
+                  <th className="py-2 px-3 text-center w-10">
+                    <input
+                      type="checkbox"
+                      checked={paginatedData.length > 0 && paginatedData.every((c) => selectedIds.includes(c.id))}
+                      onChange={toggleSelectAll}
+                      title="Selecionar / Desselecionar todos desta página"
+                      className="w-4 h-4 text-blue-600 rounded border-slate-300 dark:border-slate-700 focus:ring-blue-500 cursor-pointer"
+                    />
+                  </th>
                   {visibleColumns.ordem && (
                     <th onClick={() => handleSort("ordem")} className="py-2 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors">
                       <div className="flex items-center gap-1">
@@ -986,12 +1092,26 @@ export const GeralPage: React.FC = () => {
                   <tr 
                     key={c.id} 
                     onClick={() => handleOpenDetailsModal(c)}
-                    className="hover:bg-blue-50/60 dark:hover:bg-slate-800/60 transition-colors group cursor-pointer"
+                    className={`hover:bg-blue-50/60 dark:hover:bg-slate-800/60 transition-colors group cursor-pointer ${
+                      selectedIds.includes(c.id) ? "bg-blue-50/40 dark:bg-blue-950/30" : ""
+                    }`}
                   >
+                    {/* Caixa de Seleção para Linha */}
+                    <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(c.id)}
+                        onChange={() => toggleSelectRow(c.id)}
+                        className="w-4 h-4 text-blue-600 rounded border-slate-300 dark:border-slate-700 focus:ring-blue-500 cursor-pointer"
+                      />
+                    </td>
+
                     {/* Ordem */}
                     {visibleColumns.ordem && (
-                      <td className="py-2 px-4 font-mono text-slate-500 dark:text-slate-400 font-bold">
-                        #{c.ordem}
+                      <td className="py-2 px-4">
+                        <span className="inline-flex items-center justify-center font-mono font-black text-sm px-2.5 py-1 rounded-lg bg-blue-100 text-blue-800 dark:bg-blue-900/80 dark:text-blue-100 border border-blue-200 dark:border-blue-700 shadow-2xs tracking-wide">
+                          #{c.ordem}
+                        </span>
                       </td>
                     )}
 
@@ -1135,6 +1255,20 @@ export const GeralPage: React.FC = () => {
                               className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded transition-colors cursor-pointer"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
+                          {/* Botão de Exclusão Individual */}
+                          {canEdit && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCnhToDelete(c);
+                              }}
+                              title="Excluir este registro de CNH"
+                              className="p-1 text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-red-500/80 hover:text-red-600" />
                             </button>
                           )}
                         </div>
@@ -1832,8 +1966,8 @@ export const GeralPage: React.FC = () => {
             {/* Banner Superior com Nome e Situação */}
             <div className="p-4 bg-slate-50 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <div className="p-3 bg-blue-100 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 rounded-xl font-bold font-mono text-base">
-                  #{selectedCNHDetails.ordem}
+                <div className="px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-black font-mono text-lg shadow-sm tracking-wide">
+                  Ordem #{selectedCNHDetails.ordem}
                 </div>
                 <div>
                   <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
@@ -1995,6 +2129,19 @@ export const GeralPage: React.FC = () => {
                   </button>
                 )}
 
+                {canEdit && (
+                  <button
+                    onClick={() => {
+                      setIsDetailsModalOpen(false);
+                      setCnhToDelete(selectedCNHDetails);
+                    }}
+                    className="px-3 py-1.5 bg-red-100 hover:bg-red-200 dark:bg-red-950/60 text-red-700 dark:text-red-300 font-bold rounded-xl text-xs flex items-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Excluir</span>
+                  </button>
+                )}
+
                 <button
                   onClick={() => setIsDetailsModalOpen(false)}
                   className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
@@ -2005,6 +2152,101 @@ export const GeralPage: React.FC = () => {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* Modal 7: Confirmação de Exclusão Individual */}
+      <Modal
+        isOpen={cnhToDelete !== null}
+        onClose={() => setCnhToDelete(null)}
+        title="⚠️ Confirmar Exclusão de Registro"
+      >
+        {cnhToDelete && (
+          <div className="space-y-4 text-xs">
+            <div className="p-3.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/60 rounded-xl text-red-800 dark:text-red-200">
+              <p className="font-bold flex items-center gap-1.5">
+                <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
+                <span>Atenção: Ação Irreversível</span>
+              </p>
+              <p className="mt-1">
+                Você está prestes a excluir permanentemente o registro de CNH da tabela geral. Esta alteração será salva no sistema e registrada para auditoria.
+              </p>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl space-y-2 border border-slate-200 dark:border-slate-700">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Ordem:</span>
+                <span className="font-black font-mono text-base text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2.5 py-0.5 rounded-lg border border-blue-200/60 dark:border-blue-800/60">#{cnhToDelete.ordem}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500">Nome:</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">{cnhToDelete.nome}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500">CPF:</span>
+                <span className="font-mono text-slate-800 dark:text-slate-200">{cnhToDelete.cpf ? formatCPF(cnhToDelete.cpf) : "Não informado"}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500">Situação Atual:</span>
+                <Badge situacao={cnhToDelete.situacao} />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                onClick={() => setCnhToDelete(null)}
+                disabled={isDeleting}
+                className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirmDeleteSingle}
+                disabled={isDeleting}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{isDeleting ? "Excluindo..." : "Confirmar Exclusão"}</span>
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal 8: Confirmação de Exclusão em Massa */}
+      <Modal
+        isOpen={isBatchDeleteModalOpen}
+        onClose={() => setIsBatchDeleteModalOpen(false)}
+        title={`⚠️ Excluir ${selectedIds.length} Registros Selecionados`}
+      >
+        <div className="space-y-4 text-xs">
+          <div className="p-3.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/60 rounded-xl text-red-800 dark:text-red-200">
+            <p className="font-bold flex items-center gap-1.5">
+              <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
+              <span>Atenção: Exclusão em Massa</span>
+            </p>
+            <p className="mt-1 leading-relaxed">
+              Tem certeza que deseja excluir permanentemente os <strong className="font-mono text-sm underline">{selectedIds.length}</strong> registros de CNH selecionados? Essa operação removerá todas as linhas marcadas e registrará o evento de exclusão em lote no histórico de auditoria.
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button
+              onClick={() => setIsBatchDeleteModalOpen(false)}
+              disabled={isDeleting}
+              className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleConfirmBatchDelete}
+              disabled={isDeleting}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>{isDeleting ? "Excluindo..." : `Excluir ${selectedIds.length} Registros`}</span>
+            </button>
+          </div>
+        </div>
       </Modal>
       </div>
 
