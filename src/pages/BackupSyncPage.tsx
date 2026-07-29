@@ -32,6 +32,7 @@ import {
   checkSyncStatus, 
   syncLocalToSupabase, 
   syncSupabaseToLocal, 
+  syncBiDirectional,
   resetDemoData,
   SyncStatusItem
 } from "../services/db";
@@ -50,6 +51,7 @@ export const BackupSyncPage: React.FC = () => {
   const [isLoadingStats, setIsLoadingStats] = useState<boolean>(false);
   const [isSyncingUpload, setIsSyncingUpload] = useState<boolean>(false);
   const [isSyncingDownload, setIsSyncingDownload] = useState<boolean>(false);
+  const [isSyncingBiDirectional, setIsSyncingBiDirectional] = useState<boolean>(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [copiedSql, setCopiedSql] = useState<boolean>(false);
   const [copiedFullSql, setCopiedFullSql] = useState<boolean>(false);
@@ -391,6 +393,30 @@ END $$;
     }
   };
 
+  const handleSyncBiDirectional = async () => {
+    if (!isConnected) {
+      alert("Conexão Supabase não configurada.");
+      return;
+    }
+    setIsSyncingBiDirectional(true);
+    setLogs([]);
+    addLog("=== INICIANDO SINCRONIZAÇÃO BIDIRECIONAL COMPLETA (UNIFICAÇÃO DE DADOS) ===");
+
+    try {
+      const result = await syncBiDirectional((msg) => addLog(msg));
+      if (result.success) {
+        addLog(`🎉 Sucesso! Unificação concluída. Total de ${result.totalCount} registros sincronizados sem divergências.`);
+      } else {
+        addLog(`⚠️ Concluído com avisos: ${result.errors.length} erro(s).`);
+      }
+    } catch (err: any) {
+      addLog(`❌ Erro fatal durante a unificação: ${err.message}`);
+    } finally {
+      setIsSyncingBiDirectional(false);
+      await loadStats();
+    }
+  };
+
   const handleExportJSON = () => {
     try {
       const jsonStr = exportDatabaseJSON();
@@ -633,51 +659,82 @@ END $$;`;
         )}
       </div>
 
-      {/* Cartão 2: Sincronização em Massa (Upload / Download) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Cartão 2: Sincronização em Massa e Unificação Bidirecional */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Unificação Bidirecional */}
+        <div className="bg-gradient-to-br from-indigo-900 to-slate-900 text-white rounded-2xl border border-indigo-700/50 p-6 shadow-md flex flex-col justify-between space-y-4 md:col-span-3 lg:col-span-1">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="w-5 h-5 text-indigo-400" />
+                <h2 className="text-sm font-bold uppercase tracking-wider text-white">
+                  Sincronização Bidirecional
+                </h2>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
+                Recomendado
+              </span>
+            </div>
+            <p className="text-xs text-indigo-200/90 leading-relaxed">
+              Envia todos os registros locais para o Supabase em lotes e, em seguida, baixa a base remota completa unificada (sem o limite de 1000 registros). Resolve divergências e deixa ambos 100% iguais.
+            </p>
+          </div>
+
+          <button
+            onClick={handleSyncBiDirectional}
+            disabled={isSyncingBiDirectional || isSyncingUpload || isSyncingDownload || !isConnected}
+            className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-indigo-900/50 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${isSyncingBiDirectional ? "animate-spin" : ""}`} />
+            <span>{isSyncingBiDirectional ? "Unificando Dados em Lote..." : "🔄 Unificar Bancos (Bidirecional)"}</span>
+          </button>
+        </div>
+
+        {/* Upload Local -> Supabase */}
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs flex flex-col justify-between space-y-4">
           <div>
             <div className="flex items-center gap-3 mb-2">
               <UploadCloud className="w-5 h-5 text-blue-600 dark:text-blue-400" />
               <h2 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-                Enviar Dados Locais para o Supabase
+                Enviar Local → Supabase
               </h2>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Sincronize todos os registros mantidos no armazenamento local (Usuários, Responsáveis, CNHs, Memorandos, Mapeamento A-Z, Histórico e Auditoria) com as tabelas do banco de dados na nuvem Supabase via operação <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono">UPSERT</code>.
+              Sincronize todos os registros mantidos no armazenamento local com as tabelas do Supabase via operação <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono">UPSERT</code> em lotes de 250 itens.
             </p>
           </div>
 
           <button
             onClick={handleSyncUpload}
-            disabled={isSyncingUpload || !isConnected}
+            disabled={isSyncingUpload || isSyncingBiDirectional || !isConnected}
             className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-xs shadow-md shadow-blue-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
             <UploadCloud className={`w-4 h-4 ${isSyncingUpload ? "animate-bounce" : ""}`} />
-            <span>{isSyncingUpload ? "Sincronizando com Supabase..." : "Iniciar Upload (Local → Supabase)"}</span>
+            <span>{isSyncingUpload ? "Sincronizando em Lotes..." : "Iniciar Upload (Local → Supabase)"}</span>
           </button>
         </div>
 
+        {/* Download Supabase -> Local */}
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs flex flex-col justify-between space-y-4">
           <div>
             <div className="flex items-center gap-3 mb-2">
               <DownloadCloud className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
               <h2 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-                Baixar Dados do Supabase para o Local
+                Baixar Supabase → Local
               </h2>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Substitua e recarregue o cache do navegador baixando as tabelas completas diretamente do banco remoto Supabase para uso offline.
+              Baixa a totalidade das tabelas remotas com paginação contínua (além do limite de 1.000 linhas do PostgREST) para atualizar o cache local.
             </p>
           </div>
 
           <button
             onClick={handleSyncDownload}
-            disabled={isSyncingDownload || !isConnected}
+            disabled={isSyncingDownload || isSyncingBiDirectional || !isConnected}
             className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-xs shadow-md shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
             <DownloadCloud className={`w-4 h-4 ${isSyncingDownload ? "animate-bounce" : ""}`} />
-            <span>{isSyncingDownload ? "Baixando do Supabase..." : "Iniciar Download (Supabase → Local)"}</span>
+            <span>{isSyncingDownload ? "Baixando Registros do Banco..." : "Iniciar Download (Supabase → Local)"}</span>
           </button>
         </div>
       </div>

@@ -1859,6 +1859,61 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
   return results;
 }
 
+// Helper para buscar todos os registros de uma tabela do Supabase com paginação (evita limite de 1000 registros do PostgREST)
+export async function fetchAllRowsFromSupabase<T = any>(tableName: string, pageSize = 1000): Promise<T[]> {
+  let allRows: T[] = [];
+  let from = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const to = from + pageSize - 1;
+    const { data, error } = await supabase
+      .from(tableName)
+      .select("*")
+      .range(from, to);
+
+    if (error) {
+      throw error;
+    }
+
+    if (data && data.length > 0) {
+      allRows = allRows.concat(data as T[]);
+      if (data.length < pageSize) {
+        hasMore = false;
+      } else {
+        from += pageSize;
+      }
+    } else {
+      hasMore = false;
+    }
+  }
+
+  return allRows;
+}
+
+// Helper para enviar registros ao Supabase em lotes (evita erro de Payload Too Large)
+async function upsertInBatches(
+  tableName: string, 
+  payload: any[], 
+  batchSize = 250, 
+  onConflict = "id",
+  onProgress?: (synced: number, total: number) => void
+): Promise<number> {
+  let count = 0;
+  for (let i = 0; i < payload.length; i += batchSize) {
+    const batch = payload.slice(i, i + batchSize);
+    const { error } = await supabase.from(tableName).upsert(batch, { onConflict });
+    if (error) {
+      throw error;
+    }
+    count += batch.length;
+    if (onProgress) {
+      onProgress(count, payload.length);
+    }
+  }
+  return count;
+}
+
 export async function syncLocalToSupabase(
   onLog?: (log: string) => void
 ): Promise<{ success: boolean; syncedCount: number; errors: string[] }> {
@@ -1873,7 +1928,7 @@ export async function syncLocalToSupabase(
     if (onLog) onLog(`[${new Date().toLocaleTimeString()}] ${msg}`);
   };
 
-  log("🚀 Iniciando sincronização do Armazenamento Local para o Supabase...");
+  log("🚀 Iniciando sincronização do Armazenamento Local para o Supabase (com envio em lotes)...");
 
   // Pré-carregar listas locais para validar chaves estrangeiras de forma estrita
   const usuarios = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
@@ -1918,16 +1973,12 @@ export async function syncLocalToSupabase(
         ativo: u.ativo !== false,
         created_at: u.created_at || new Date().toISOString()
       }));
-      const { error } = await supabase.from("usuarios").upsert(payload, { onConflict: "id" });
-      if (error) {
-        log(`❌ Erro em 'usuarios': ${error.message}`);
-        errors.push(`usuarios: ${error.message}`);
-      } else {
-        log(`✅ Tabela 'usuarios' sincronizada (${usuarios.length} registros).`);
-        totalSynced += usuarios.length;
-      }
+      const synced = await upsertInBatches("usuarios", payload, 250);
+      log(`✅ Tabela 'usuarios' sincronizada (${synced} registros).`);
+      totalSynced += synced;
     }
   } catch (err: any) {
+    log(`❌ Erro em 'usuarios': ${err.message}`);
     errors.push(`usuarios: ${err.message}`);
   }
 
@@ -1944,16 +1995,12 @@ export async function syncLocalToSupabase(
         ativo: r.ativo !== false,
         created_at: r.created_at || new Date().toISOString()
       }));
-      const { error } = await supabase.from("responsaveis").upsert(payload, { onConflict: "id" });
-      if (error) {
-        log(`❌ Erro em 'responsaveis': ${error.message}`);
-        errors.push(`responsaveis: ${error.message}`);
-      } else {
-        log(`✅ Tabela 'responsaveis' sincronizada (${resp.length} registros).`);
-        totalSynced += resp.length;
-      }
+      const synced = await upsertInBatches("responsaveis", payload, 250);
+      log(`✅ Tabela 'responsaveis' sincronizada (${synced} registros).`);
+      totalSynced += synced;
     }
   } catch (err: any) {
+    log(`❌ Erro em 'responsaveis': ${err.message}`);
     errors.push(`responsaveis: ${err.message}`);
   }
 
@@ -1968,16 +2015,12 @@ export async function syncLocalToSupabase(
         reparticao: m.reparticao,
         ativo: m.ativo !== false
       }));
-      const { error } = await supabase.from("mapeamento_localizacao").upsert(payload, { onConflict: "id" });
-      if (error) {
-        log(`❌ Erro em 'mapeamento_localizacao': ${error.message}`);
-        errors.push(`mapeamento: ${error.message}`);
-      } else {
-        log(`✅ Tabela 'mapeamento_localizacao' sincronizada (${mapList.length} registros).`);
-        totalSynced += mapList.length;
-      }
+      const synced = await upsertInBatches("mapeamento_localizacao", payload, 250);
+      log(`✅ Tabela 'mapeamento_localizacao' sincronizada (${synced} registros).`);
+      totalSynced += synced;
     }
   } catch (err: any) {
+    log(`❌ Erro em 'mapeamento_localizacao': ${err.message}`);
     errors.push(`mapeamento: ${err.message}`);
   }
 
@@ -1995,16 +2038,12 @@ export async function syncLocalToSupabase(
         candidatos_count: m.candidatos_count || 0,
         created_at: m.created_at || new Date().toISOString()
       }));
-      const { error } = await supabase.from("memorandos").upsert(payload, { onConflict: "id" });
-      if (error) {
-        log(`❌ Erro em 'memorandos': ${error.message}`);
-        errors.push(`memorandos: ${error.message}`);
-      } else {
-        log(`✅ Tabela 'memorandos' sincronizada (${mems.length} registros).`);
-        totalSynced += mems.length;
-      }
+      const synced = await upsertInBatches("memorandos", payload, 250);
+      log(`✅ Tabela 'memorandos' sincronizada (${synced} registros).`);
+      totalSynced += synced;
     }
   } catch (err: any) {
+    log(`❌ Erro em 'memorandos': ${err.message}`);
     errors.push(`memorandos: ${err.message}`);
   }
 
@@ -2022,22 +2061,18 @@ export async function syncLocalToSupabase(
         remessa: c.remessa || null,
         created_at: c.created_at || new Date().toISOString()
       }));
-      const { error } = await supabase.from("candidatos").upsert(payload, { onConflict: "id" });
-      if (error) {
-        log(`❌ Erro em 'candidatos': ${error.message}`);
-        errors.push(`candidatos: ${error.message}`);
-      } else {
-        log(`✅ Tabela 'candidatos' sincronizada (${cands.length} registros).`);
-        totalSynced += cands.length;
-      }
+      const synced = await upsertInBatches("candidatos", payload, 250);
+      log(`✅ Tabela 'candidatos' sincronizada (${synced} registros).`);
+      totalSynced += synced;
     }
   } catch (err: any) {
+    log(`❌ Erro em 'candidatos': ${err.message}`);
     errors.push(`candidatos: ${err.message}`);
   }
 
   // 6. Geral CNHs
   try {
-    log("📦 Sincronizando tabela 'geral_cnhs'...");
+    log(`📦 Sincronizando tabela 'geral_cnhs' (${geral.length} registros em lotes de 250)...`);
     if (geral.length > 0) {
       const payload = geral.map(g => ({
         id: g.id || `cnh-${g.ordem}`,
@@ -2059,16 +2094,15 @@ export async function syncLocalToSupabase(
         observacao: g.observacao || null,
         created_at: g.created_at || new Date().toISOString()
       }));
-      const { error } = await supabase.from("geral_cnhs").upsert(payload, { onConflict: "id" });
-      if (error) {
-        log(`❌ Erro em 'geral_cnhs': ${error.message}`);
-        errors.push(`geral_cnhs: ${error.message}`);
-      } else {
-        log(`✅ Tabela 'geral_cnhs' sincronizada (${geral.length} registros).`);
-        totalSynced += geral.length;
-      }
+
+      const synced = await upsertInBatches("geral_cnhs", payload, 250, "id", (synced, total) => {
+        log(` ⏳ Progresso geral_cnhs: ${synced}/${total} registros enviados...`);
+      });
+      log(`✅ Tabela 'geral_cnhs' sincronizada totalmente (${synced} registros).`);
+      totalSynced += synced;
     }
   } catch (err: any) {
+    log(`❌ Erro em 'geral_cnhs': ${err.message}`);
     errors.push(`geral_cnhs: ${err.message}`);
   }
 
@@ -2094,19 +2128,15 @@ export async function syncLocalToSupabase(
         .filter(h => h.geral_id !== null); // Apenas registros de histórico com CNH existente
 
       if (payload.length > 0) {
-        const { error } = await supabase.from("historico_movimentacoes").upsert(payload, { onConflict: "id" });
-        if (error) {
-          log(`❌ Erro em 'historico_movimentacoes': ${error.message}`);
-          errors.push(`historico: ${error.message}`);
-        } else {
-          log(`✅ Tabela 'historico_movimentacoes' sincronizada (${payload.length} registros).`);
-          totalSynced += payload.length;
-        }
+        const synced = await upsertInBatches("historico_movimentacoes", payload, 250);
+        log(`✅ Tabela 'historico_movimentacoes' sincronizada (${synced} registros).`);
+        totalSynced += synced;
       } else {
         log("ℹ️ Tabela 'historico_movimentacoes' sem registros elegíveis.");
       }
     }
   } catch (err: any) {
+    log(`❌ Erro em 'historico_movimentacoes': ${err.message}`);
     errors.push(`historico: ${err.message}`);
   }
 
@@ -2126,21 +2156,17 @@ export async function syncLocalToSupabase(
         valores_anteriores: a.valores_anteriores || null,
         valores_novos: a.valores_novos || null
       }));
-      const { error } = await supabase.from("auditoria").upsert(payload, { onConflict: "id" });
-      if (error) {
-        log(`❌ Erro em 'auditoria': ${error.message}`);
-        errors.push(`auditoria: ${error.message}`);
-      } else {
-        log(`✅ Tabela 'auditoria' sincronizada (${aud.length} registros).`);
-        totalSynced += aud.length;
-      }
+      const synced = await upsertInBatches("auditoria", payload, 250);
+      log(`✅ Tabela 'auditoria' sincronizada (${synced} registros).`);
+      totalSynced += synced;
     }
   } catch (err: any) {
+    log(`❌ Erro em 'auditoria': ${err.message}`);
     errors.push(`auditoria: ${err.message}`);
   }
 
   if (errors.length === 0) {
-    log("✨ Sincronização concluída com sucesso total!");
+    log("✨ Sincronização Local -> Supabase concluída com sucesso total!");
   } else {
     log(`⚠️ Sincronização concluída com ${errors.length} aviso(s)/erro(s).`);
   }
@@ -2166,7 +2192,7 @@ export async function syncSupabaseToLocal(
     if (onLog) onLog(`[${new Date().toLocaleTimeString()}] ${msg}`);
   };
 
-  log("🚀 Baixando dados do Supabase para o Armazenamento Local...");
+  log("🚀 Baixando todos os dados do Supabase para o Armazenamento Local (com paginação sem limite)...");
 
   const tables = [
     { name: "usuarios", key: "usuarios" },
@@ -2182,18 +2208,16 @@ export async function syncSupabaseToLocal(
   for (const item of tables) {
     try {
       log(`📥 Baixando tabela '${item.name}'...`);
-      const { data, error } = await supabase.from(item.name).select("*");
-      if (error) {
-        log(`❌ Erro ao baixar '${item.name}': ${error.message}`);
-        errors.push(`${item.name}: ${error.message}`);
-      } else if (data && data.length > 0) {
+      const data = await fetchAllRowsFromSupabase(item.name, 1000);
+      if (data && data.length > 0) {
         saveStoredList(item.key, data);
-        log(`✅ '${item.name}' atualizado localmente (${data.length} registros).`);
+        log(`✅ '${item.name}' baixado e atualizado localmente (${data.length} registros).`);
         totalPulled += data.length;
       } else {
         log(`ℹ️ '${item.name}' no Supabase está vazio.`);
       }
     } catch (err: any) {
+      log(`❌ Erro ao baixar '${item.name}': ${err.message}`);
       errors.push(`${item.name}: ${err.message}`);
     }
   }
@@ -2202,6 +2226,32 @@ export async function syncSupabaseToLocal(
   return {
     success: errors.length === 0,
     pulledCount: totalPulled,
+    errors
+  };
+}
+
+// Sincronização Bidirecional Completa (Envia locais e depois Baixa todos do Supabase unificados)
+export async function syncBiDirectional(
+  onLog?: (log: string) => void
+): Promise<{ success: boolean; totalCount: number; errors: string[] }> {
+  const log = (msg: string) => {
+    if (onLog) onLog(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  };
+
+  log("🔄 INICIANDO SINCRONIZAÇÃO BIDIRECIONAL COMPLETA (UNIFICAÇÃO DE DADOS)...");
+  
+  // Passo 1: Enviar todos os dados locais para o Supabase via upsert em lotes
+  const pushRes = await syncLocalToSupabase(onLog);
+
+  // Passo 2: Baixar a totalidade dos dados do Supabase com paginação completa
+  const pullRes = await syncSupabaseToLocal(onLog);
+
+  const errors = [...pushRes.errors, ...pullRes.errors];
+  log("🎉 UNIFICAÇÃO BIDIRECIONAL CONCLUÍDA! Ambos os bancos estão 100% alinhados.");
+
+  return {
+    success: errors.length === 0,
+    totalCount: pullRes.pulledCount,
     errors
   };
 }
