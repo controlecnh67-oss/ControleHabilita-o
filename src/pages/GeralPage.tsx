@@ -26,7 +26,8 @@ import {
   Columns,
   Upload,
   FileText,
-  Building2
+  Building2,
+  Eye
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -124,7 +125,14 @@ export const GeralPage: React.FC = () => {
   const [editReparticao, setEditReparticao] = useState("");
   const [editObs, setEditObs] = useState("");
 
-  // Modal 5: Importar Planilha CSV / XLSX
+  // Modal 6: Visualização Detalhada da CNH
+  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+  const [selectedCNHDetails, setSelectedCNHDetails] = useState<GeralCNH | null>(null);
+
+  const handleOpenDetailsModal = (cnh: GeralCNH) => {
+    setSelectedCNHDetails(cnh);
+    setIsDetailsModalOpen(true);
+  };
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
   const [syncImportToSupabase, setSyncImportToSupabase] = useState(true);
@@ -975,7 +983,11 @@ export const GeralPage: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                 {paginatedData.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors group">
+                  <tr 
+                    key={c.id} 
+                    onClick={() => handleOpenDetailsModal(c)}
+                    className="hover:bg-blue-50/60 dark:hover:bg-slate-800/60 transition-colors group cursor-pointer"
+                  >
                     {/* Ordem */}
                     {visibleColumns.ordem && (
                       <td className="py-2 px-4 font-mono text-slate-500 dark:text-slate-400 font-bold">
@@ -1066,14 +1078,29 @@ export const GeralPage: React.FC = () => {
                       </td>
                     )}
 
-                    {/* Ações (Botões 📥 Receber e 📤 Entregar) */}
+                    {/* Ações (Botões 👁️ Detalhes, 📥 Receber e 📤 Entregar) */}
                     {visibleColumns.acoes && (
                       <td className="py-2 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
+                        <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                          {/* Botão 👁️ Detalhes */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenDetailsModal(c);
+                            }}
+                            title="Visualizar todas as informações da CNH"
+                            className="p-1.5 text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 hover:bg-blue-100/70 dark:hover:bg-blue-900/40 rounded-lg transition-colors cursor-pointer"
+                          >
+                            <Eye className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                          </button>
+
                           {/* Botão 📥 Receber: Somente disponível quando Situação = Remetida ou Pendente */}
                           {canEdit && (c.situacao === "Remetida" || c.situacao === "Pendente") && (
                             <button
-                              onClick={() => handleReceber(c)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleReceber(c);
+                              }}
                               title="Receber CNH no protocolo e alocar na gaveta"
                               className="flex items-center gap-1 px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded shadow-xs text-[11px] transition-all cursor-pointer animate-pulse hover:animate-none"
                             >
@@ -1085,7 +1112,10 @@ export const GeralPage: React.FC = () => {
                           {/* Botão 📤 Entregar: Somente disponível quando Situação = Recebida */}
                           {canEdit && c.situacao === "Recebida" && (
                             <button
-                              onClick={() => handleOpenEntregaModal(c)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenEntregaModal(c);
+                              }}
                               title="Confirmar entrega da CNH ao titular ou despachante"
                               className="flex items-center gap-1 px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded shadow-xs text-[11px] transition-all cursor-pointer"
                             >
@@ -1097,9 +1127,12 @@ export const GeralPage: React.FC = () => {
                           {/* Botão de Edição/Pendente */}
                           {canEdit && (
                             <button
-                              onClick={() => handleOpenEditModal(c)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenEditModal(c);
+                              }}
                               title="Editar CNH / Alterar situação"
-                              className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded transition-colors"
+                              className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded transition-colors cursor-pointer"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
@@ -1786,6 +1819,192 @@ export const GeralPage: React.FC = () => {
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* Modal 6: Visualização Detalhada da CNH */}
+      <Modal
+        isOpen={isDetailsModalOpen}
+        onClose={() => setIsDetailsModalOpen(false)}
+        title={`👁️ Detalhes Completos da CNH (Ordem #${selectedCNHDetails?.ordem || ""})`}
+      >
+        {selectedCNHDetails && (
+          <div className="space-y-4 text-xs">
+            {/* Banner Superior com Nome e Situação */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-blue-100 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 rounded-xl font-bold font-mono text-base">
+                  #{selectedCNHDetails.ordem}
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                    {selectedCNHDetails.nome}
+                  </h3>
+                  <p className="text-xs font-mono text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
+                    <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>CPF: {selectedCNHDetails.cpf ? formatCPF(selectedCNHDetails.cpf) : "Não informado"}</span>
+                  </p>
+                </div>
+              </div>
+              <div>
+                <Badge situacao={selectedCNHDetails.situacao} />
+              </div>
+            </div>
+
+            {/* Grid de Informações Estruturadas de Todas as Colunas */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Localização Física */}
+              <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                <div className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                  <FolderArchive className="w-4 h-4 text-blue-500" />
+                  <span>Localização Física</span>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Gaveta:</span>
+                    <span className="font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded">
+                      {selectedCNHDetails.gaveta && selectedCNHDetails.gaveta.trim() ? selectedCNHDetails.gaveta : "Em trânsito"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Repartição:</span>
+                    <span className="font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded">
+                      {selectedCNHDetails.reparticao || "Geral"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Origem e Memorando */}
+              <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                <div className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
+                  <span>Origem & Remessa</span>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Nº Memorando:</span>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                      {selectedCNHDetails.memorando_numero || "Avulsa / Manual"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Remessa:</span>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                      {selectedCNHDetails.remessa || "-"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Registro de Movimentação */}
+              <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                <div className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                  <Calendar className="w-4 h-4 text-purple-500" />
+                  <span>Movimentação</span>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Data Movimento:</span>
+                    <span className="font-mono font-medium text-slate-800 dark:text-slate-200">
+                      {formatDateTime(selectedCNHDetails.data_movimento)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Operador / Servidor:</span>
+                    <span className="font-medium text-slate-800 dark:text-slate-200">
+                      {selectedCNHDetails.usuario_nome || "Sistema"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Responsável pela Retirada */}
+              <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                <div className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                  <User className="w-4 h-4 text-amber-500" />
+                  <span>Retirada / Responsável</span>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Responsável:</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">
+                      {selectedCNHDetails.responsavel_nome || "Titular ou Não Registrado"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Criado em:</span>
+                    <span className="font-mono text-slate-600 dark:text-slate-400">
+                      {formatDateTime(selectedCNHDetails.created_at)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Observações */}
+            <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1">
+              <span className="font-bold text-slate-700 dark:text-slate-300 block">Observações do Registro:</span>
+              <p className="text-slate-600 dark:text-slate-300 leading-relaxed italic">
+                {selectedCNHDetails.observacao || "Nenhuma observação informada."}
+              </p>
+            </div>
+
+            {/* Rodapé e Botões de Ação */}
+            <div className="flex flex-wrap justify-between items-center gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <span className="text-[10px] text-slate-400 font-mono">
+                ID Sistema: {selectedCNHDetails.id}
+              </span>
+
+              <div className="flex items-center gap-2">
+                {canEdit && (selectedCNHDetails.situacao === "Remetida" || selectedCNHDetails.situacao === "Pendente") && (
+                  <button
+                    onClick={() => {
+                      setIsDetailsModalOpen(false);
+                      handleReceber(selectedCNHDetails);
+                    }}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs flex items-center gap-1 cursor-pointer"
+                  >
+                    <Inbox className="w-3.5 h-3.5" />
+                    <span>📥 Receber</span>
+                  </button>
+                )}
+
+                {canEdit && selectedCNHDetails.situacao === "Recebida" && (
+                  <button
+                    onClick={() => {
+                      setIsDetailsModalOpen(false);
+                      handleOpenEntregaModal(selectedCNHDetails);
+                    }}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs flex items-center gap-1 cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>📤 Entregar</span>
+                  </button>
+                )}
+
+                {canEdit && (
+                  <button
+                    onClick={() => {
+                      setIsDetailsModalOpen(false);
+                      handleOpenEditModal(selectedCNHDetails);
+                    }}
+                    className="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-800 dark:text-slate-200 font-bold rounded-xl text-xs flex items-center gap-1 cursor-pointer"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                    <span>Editar</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => setIsDetailsModalOpen(false)}
+                  className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>
       </div>
 
