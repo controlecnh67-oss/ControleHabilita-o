@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Navbar } from "./components/layout/Navbar";
 import { Sidebar } from "./components/layout/Sidebar";
@@ -12,9 +12,47 @@ import { AuditoriaPage } from "./pages/AuditoriaPage";
 import { MapeamentoPage } from "./pages/MapeamentoPage";
 import { UsuariosPage } from "./pages/UsuariosPage";
 import { BackupSyncPage } from "./pages/BackupSyncPage";
+import { ConsultaPublicaPage } from "./pages/ConsultaPublicaPage";
 
 const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading, timeRemaining } = useAuth();
+  
+  const [isPublicConsulta, setIsPublicConsulta] = useState(() => {
+    if (typeof window !== "undefined") {
+      const search = window.location.search;
+      const hash = window.location.hash;
+      return search.includes("consulta=true") || hash === "#consulta";
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const handleUrlChange = () => {
+      if (typeof window !== "undefined") {
+        const search = window.location.search;
+        const hash = window.location.hash;
+        if (search.includes("consulta=true") || hash === "#consulta") {
+          setIsPublicConsulta(true);
+        }
+      }
+    };
+    window.addEventListener("popstate", handleUrlChange);
+    return () => window.removeEventListener("popstate", handleUrlChange);
+  }, []);
+
+  const closePublicConsulta = () => {
+    setIsPublicConsulta(false);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("consulta");
+      url.searchParams.delete("cpf");
+      if (window.location.hash === "#consulta") {
+        url.hash = "";
+      }
+      window.history.replaceState({}, "", url.toString());
+    }
+  };
+
   const [activeTabState, setActiveTabState] = useState(() => {
     if (typeof window !== "undefined") {
       return sessionStorage.getItem("detran_active_tab") || "dashboard";
@@ -41,6 +79,10 @@ const MainLayout: React.FC = () => {
     return `${m}:${s < 10 ? "0" : ""}${s}`;
   };
 
+  if (isPublicConsulta) {
+    return <ConsultaPublicaPage onBackToLogin={closePublicConsulta} />;
+  }
+
   if (isLoading && !isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center text-slate-500">
@@ -51,7 +93,7 @@ const MainLayout: React.FC = () => {
   }
 
   if (!isAuthenticated) {
-    return <LoginPage />;
+    return <LoginPage onOpenConsultaPublica={() => setIsPublicConsulta(true)} />;
   }
 
   return (

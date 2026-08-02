@@ -246,7 +246,7 @@ const SEED_GERAL: GeralCNH[] = [
     gaveta: "Gaveta 1",
     reparticao: "Repartição 3",
     situacao: "Recebida",
-    data_movimento: new Date(Date.now() - 2 * 86400000).toISOString(),
+    data_movimento: new Date(Date.now() - 3 * 86400000).toISOString(),
     usuario_id: "22222222-2222-2222-2222-222222222222",
     usuario_nome: "Fernanda Souza",
     observacao: "Recebida e arquivada na Gaveta 1 Repartição 3 (Inicial C)",
@@ -261,7 +261,7 @@ const SEED_GERAL: GeralCNH[] = [
     gaveta: "Gaveta 1",
     reparticao: "Repartição 4",
     situacao: "Recebida",
-    data_movimento: new Date(Date.now() - 2 * 86400000).toISOString(),
+    data_movimento: new Date(Date.now() - 3 * 86400000).toISOString(),
     usuario_id: "22222222-2222-2222-2222-222222222222",
     usuario_nome: "Fernanda Souza",
     observacao: "Recebida via malote expresso",
@@ -277,7 +277,7 @@ const SEED_GERAL: GeralCNH[] = [
     situacao: "Entregue",
     responsavel_id: "00000000-0000-0000-0000-000000000001",
     responsavel_nome: "Proprietário",
-    data_movimento: new Date(Date.now() - 1 * 86400000).toISOString(),
+    data_movimento: new Date(Date.now() - 6 * 86400000).toISOString(),
     usuario_id: "33333333-3333-3333-3333-333333333333",
     usuario_nome: "Roberto Alves",
     observacao: "Retirada efetuada pelo próprio titular no guichê 4",
@@ -293,7 +293,7 @@ const SEED_GERAL: GeralCNH[] = [
     situacao: "Entregue",
     responsavel_id: "00000000-0000-0000-0000-000000000003",
     responsavel_nome: "Dr. Marcos Silva Procurações",
-    data_movimento: new Date(Date.now() - 3600000).toISOString(),
+    data_movimento: new Date(Date.now() - 5 * 86400000).toISOString(),
     usuario_id: "33333333-3333-3333-3333-333333333333",
     usuario_nome: "Roberto Alves",
     observacao: "Entregue para despachante Dr. Marcos Silva via procuração",
@@ -1100,8 +1100,68 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
 // MÓDULO GERAL (Tabela Principal de CNHs - PROTOCOLO)
 // ============================================================================
 
-export async function getGeralCNHs(): Promise<GeralCNH[]> {
+export async function sincronizarDataMovimentoComCriacao(): Promise<number> {
   const list = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  let updatedCount = 0;
+
+  const listCorrigida = list.map((c) => {
+    const dataCriacao = c.created_at || (c as any).criado_em || c.data_movimento;
+    if (dataCriacao && (c.data_movimento !== dataCriacao || !c.created_at)) {
+      updatedCount++;
+      return {
+        ...c,
+        data_movimento: dataCriacao,
+        created_at: dataCriacao
+      };
+    }
+    return c;
+  });
+
+  if (updatedCount > 0) {
+    saveStoredList("geral", listCorrigida);
+  }
+
+  if (isSupabaseConfigured() && listCorrigida.length > 0) {
+    try {
+      const payload = listCorrigida.map((g) => ({
+        id: g.id,
+        data_movimento: g.created_at || g.data_movimento,
+        created_at: g.created_at || g.data_movimento
+      }));
+      for (let i = 0; i < payload.length; i += 100) {
+        const batch = payload.slice(i, i + 100);
+        await supabase.from("geral_cnhs").upsert(batch, { onConflict: "id" });
+      }
+    } catch (err) {
+      console.error("Erro ao sincronizar datas de criação/movimentação no Supabase:", err);
+    }
+  }
+
+  return updatedCount;
+}
+
+export async function getGeralCNHs(): Promise<GeralCNH[]> {
+  const rawList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+
+  // Garantir que a data_movimento seja rigorosamente igual à data de criação (created_at) para todas as linhas
+  let listChanged = false;
+  const list = rawList.map((c) => {
+    const dataCriacao = c.created_at || (c as any).criado_em || c.data_movimento;
+    if (dataCriacao && (c.data_movimento !== dataCriacao || !c.created_at)) {
+      listChanged = true;
+      return {
+        ...c,
+        data_movimento: dataCriacao,
+        created_at: dataCriacao
+      };
+    }
+    return c;
+  });
+
+  if (listChanged) {
+    saveStoredList("geral", list);
+  }
+
   const usuarios = await getUsuarios();
   const responsaveis = await getResponsaveis();
   const memorandos = await getMemorandos();
@@ -1118,6 +1178,100 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
       remessa: memo ? (memo.remessa || memo.numero) : (c.remessa || undefined)
     };
   }).sort((a, b) => b.ordem - a.ordem);
+}
+
+// Interface e Função para Contador de Consultas Públicas Mobile por Cidadão
+export function getPublicSearchCount(): number {
+  if (typeof window === "undefined") return 128;
+  const val = localStorage.getItem("detran_public_search_count");
+  if (!val) {
+    localStorage.setItem("detran_public_search_count", "128");
+    return 128;
+  }
+  return parseInt(val, 10) || 0;
+}
+
+export function incrementPublicSearchCount(): number {
+  const current = getPublicSearchCount();
+  const next = current + 1;
+  if (typeof window !== "undefined") {
+    localStorage.setItem("detran_public_search_count", next.toString());
+  }
+  return next;
+}
+
+export interface ResultadoConsultaPublica {
+  cpfConsultado: string;
+  cnhEncontrada: GeralCNH | null;
+  historico: GeralCNH[];
+  statusDisponibilidade: "DISPONIVEL" | "ENTREGUE" | "EM_PROCESSAMENTO" | "NAO_ENCONTRADA";
+  mensagem: string;
+}
+
+export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<ResultadoConsultaPublica> {
+  const cleanCpf = cpfInput.replace(/\D/g, "");
+  if (!cleanCpf || cleanCpf.length !== 11) {
+    throw new Error("Por favor, informe um CPF válido com 11 dígitos.");
+  }
+
+  // Incrementar o contador de consultas efetuadas pelo app público
+  incrementPublicSearchCount();
+
+  const todasCNHs = await getGeralCNHs();
+
+  // Filtrar todos os registros de CNH correspondentes ao CPF
+  const cnhsDoCidadao = todasCNHs.filter((c) => {
+    if (!c.cpf) return false;
+    const cCpfClean = c.cpf.replace(/\D/g, "");
+    return cCpfClean === cleanCpf;
+  });
+
+  if (cnhsDoCidadao.length === 0) {
+    return {
+      cpfConsultado: cleanCpf,
+      cnhEncontrada: null,
+      historico: [],
+      statusDisponibilidade: "NAO_ENCONTRADA",
+      mensagem: "Nenhum registro de CNH localizado para o CPF informado."
+    };
+  }
+
+  // Ordenar para ter a mais recente primeiro (por ordem ou data de movimento)
+  const ordenadas = [...cnhsDoCidadao].sort((a, b) => b.ordem - a.ordem);
+
+  // Requisito específico: Buscar a última CNH com status "Recebida"
+  const cnhRecebida = ordenadas.find((c) => c.situacao === "Recebida");
+
+  if (cnhRecebida) {
+    return {
+      cpfConsultado: cleanCpf,
+      cnhEncontrada: cnhRecebida,
+      historico: ordenadas,
+      statusDisponibilidade: "DISPONIVEL",
+      mensagem: "✅ Sua CNH já está disponível para retirada no balcão do DETRAN!"
+    };
+  }
+
+  // Se não tem nenhuma com status "Recebida", pegamos a mais recente para indicar a situação atual
+  const ultimaCNH = ordenadas[0];
+
+  if (ultimaCNH.situacao === "Entregue") {
+    return {
+      cpfConsultado: cleanCpf,
+      cnhEncontrada: ultimaCNH,
+      historico: ordenadas,
+      statusDisponibilidade: "ENTREGUE",
+      mensagem: "ℹ️ A sua CNH consta como ENTREGUE no balcão."
+    };
+  }
+
+  return {
+    cpfConsultado: cleanCpf,
+    cnhEncontrada: ultimaCNH,
+    historico: ordenadas,
+    statusDisponibilidade: "EM_PROCESSAMENTO",
+    mensagem: "⏳ Sua CNH consta em processamento/trânsito e ainda não deu entrada no balcão de atendimento."
+  };
 }
 
 // Cadastro Manual de CNH no Protocolo (Botão ➕ Cadastro Manual)
@@ -1456,7 +1610,8 @@ export async function getDashboardStats() {
       pendentes,
       entregues,
       memorandos: memorandos.length,
-      usuarios: usuarios.length
+      usuarios: usuarios.length,
+      consultasPublicas: getPublicSearchCount()
     },
     chartSituacao,
     chartGaveta,
@@ -1726,7 +1881,7 @@ function mapSpreadsheetRowToGeralCNH(
     usuario_nome: usuarioNome,
     memorando_numero,
     observacao,
-    created_at: new Date().toISOString()
+    created_at: data_movimento
   };
 }
 

@@ -1,11 +1,15 @@
 import React, { useState } from "react";
-import { ShieldCheck, KeyRound, UserCheck, Lock, Database, Sparkles, ArrowRight, Eye, EyeOff, Key, CheckCircle2 } from "lucide-react";
+import { ShieldCheck, KeyRound, UserCheck, Lock, Database, Sparkles, ArrowRight, Eye, EyeOff, Key, CheckCircle2, Smartphone, QrCode } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { PerfilUsuario } from "../types";
 import { isSupabaseConnected, getUsuarios, updateUsuario } from "../services/db";
 import { Modal } from "../components/ui/Modal";
 
-export const LoginPage: React.FC = () => {
+interface LoginPageProps {
+  onOpenConsultaPublica?: () => void;
+}
+
+export const LoginPage: React.FC<LoginPageProps> = ({ onOpenConsultaPublica }) => {
   const { login, loginAsProfile, isLoading } = useAuth();
   const [loginInput, setLoginInput] = useState("");
   const [senhaInput, setSenhaInput] = useState("");
@@ -226,6 +230,24 @@ export const LoginPage: React.FC = () => {
               >
                 {isLoading ? "Autenticando..." : "Entrar no Sistema"}
                 <ArrowRight className="w-4 h-4" />
+              </button>
+
+              {/* Botão de Consulta Pública Mobile para Cidadãos */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (onOpenConsultaPublica) {
+                    onOpenConsultaPublica();
+                  } else if (typeof window !== "undefined") {
+                    const url = new URL(window.location.href);
+                    url.searchParams.set("consulta", "true");
+                    window.location.href = url.toString();
+                  }
+                }}
+                className="w-full py-2.5 px-4 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 font-extrabold rounded-xl border border-emerald-300 dark:border-emerald-700/80 transition-all flex items-center justify-center gap-2 text-xs shadow-2xs cursor-pointer group"
+              >
+                <Smartphone className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
+                <span>📱 Consulta Cidadão (Sem Login / Por CPF)</span>
               </button>
             </form>
 

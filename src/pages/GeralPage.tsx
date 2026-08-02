@@ -28,7 +28,9 @@ import {
   FileText,
   Building2,
   Eye,
-  Trash2
+  Trash2,
+  QrCode,
+  Smartphone
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -44,7 +46,8 @@ import {
   deleteMultipleGeralCNHs,
   getResponsaveis, 
   createResponsavel,
-  importSpreadsheetData
+  importSpreadsheetData,
+  getPublicSearchCount
 } from "../services/db";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
@@ -100,6 +103,7 @@ export const GeralPage: React.FC = () => {
   const [manualSituacao, setManualSituacao] = useState<SituacaoGeral>("Recebida");
   const [manualObservacao, setManualObservacao] = useState("");
   const [manualErrors, setManualErrors] = useState<Record<string, string>>({});
+  const [manualSuccessMsg, setManualSuccessMsg] = useState<string | null>(null);
   const [submittingManual, setSubmittingManual] = useState(false);
 
   // Modal 2: Entrega de CNH
@@ -144,6 +148,7 @@ export const GeralPage: React.FC = () => {
     setSelectedCNHDetails(cnh);
     setIsDetailsModalOpen(true);
   };
+  const [isCitizenQrModalOpen, setIsCitizenQrModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
   const [syncImportToSupabase, setSyncImportToSupabase] = useState(true);
@@ -343,6 +348,7 @@ export const GeralPage: React.FC = () => {
 
   // Botão ➕ Cadastro Manual
   const handleOpenManualModal = () => {
+    setManualSuccessMsg(null);
     setManualErrors({});
     setManualNome("");
     setManualCpf("");
@@ -355,6 +361,7 @@ export const GeralPage: React.FC = () => {
     e.preventDefault();
     if (!user) return;
     setManualErrors({});
+    setManualSuccessMsg(null);
 
     const validation = CadastroManualCNHSchema.safeParse({
       nome: manualNome,
@@ -385,21 +392,30 @@ export const GeralPage: React.FC = () => {
         user.nome_curto
       );
 
-      setIsManualModalOpen(false);
       await fetchDados();
 
-      // Se cadastrar como Entregue, abrir automaticamente a modal de entrega!
+      // Se cadastrar como Entregue, fechar a modal manual e abrir a de entrega
       if (manualSituacao === "Entregue") {
+        setIsManualModalOpen(false);
         setMessage({
           type: "success",
           text: `CNH #${nova.ordem} de "${nova.nome}" cadastrada. Complete agora as informações da entrega.`
         });
         handleOpenEntregaModal(nova);
       } else {
+        const msg = `✅ CNH #${nova.ordem} ("${nova.nome}") cadastrada com sucesso! Alocada em: ${nova.gaveta || "Em Trânsito"} ${nova.reparticao}`;
+        setManualSuccessMsg(msg);
         setMessage({
           type: "success",
-          text: `✅ CNH #${nova.ordem} cadastrada com sucesso (${nova.situacao})! Alocada em: ${nova.gaveta || "Em Trânsito"} ${nova.reparticao}`
+          text: msg
         });
+
+        // Mantém a modal aberta para novos cadastros e limpa os campos
+        setManualNome("");
+        setManualCpf("");
+        setManualObservacao("");
+        setManualErrors({});
+        setIsManualModalOpen(true);
       }
     } catch (err: any) {
       setManualErrors({ geral: err.message || "Erro no cadastro manual." });
@@ -725,6 +741,15 @@ export const GeralPage: React.FC = () => {
 
           <div className="flex items-center gap-2 flex-wrap">
             <button
+              onClick={() => setIsCitizenQrModalOpen(true)}
+              title="Abrir e compartilhar QR Code / Link de Consulta do Cidadão"
+              className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-200 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-emerald-300 dark:border-emerald-800"
+            >
+              <QrCode className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <span>📱 QR Code Cidadão</span>
+            </button>
+
+            <button
               onClick={handleExportExcel}
               title="Exportar para Excel (.xlsx)"
               className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900 text-emerald-700 dark:text-emerald-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
@@ -752,30 +777,13 @@ export const GeralPage: React.FC = () => {
             </button>
 
             {canEdit && (
-              <>
-                <input
-                  type="file"
-                  ref={importFileInputRef}
-                  accept=".xlsx, .xls, .csv"
-                  onChange={handleImportFileChange}
-                  className="hidden"
-                />
-                <button
-                  onClick={() => importFileInputRef.current?.click()}
-                  title="Importar planilha de CNHs em formato CSV ou Excel (.xlsx, .xls)"
-                  className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer border border-blue-200 dark:border-blue-800"
-                >
-                  <Upload className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                  <span>Importar Planilha</span>
-                </button>
-                <button
-                  onClick={handleOpenManualModal}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md shadow-blue-600/20 text-xs transition-all shrink-0 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>➕ Cadastro Manual</span>
-                </button>
-              </>
+              <button
+                onClick={handleOpenManualModal}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md shadow-blue-600/20 text-xs transition-all shrink-0 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>➕ Cadastro Manual</span>
+              </button>
             )}
         </div>
       </div>
@@ -1127,10 +1135,10 @@ export const GeralPage: React.FC = () => {
 
                     {/* CPF */}
                     {visibleColumns.cpf && (
-                      <td className="py-2 px-4 font-mono text-slate-600 dark:text-slate-300">
-                        <div className="flex items-center gap-1.5">
-                          <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          <span>{c.cpf ? formatCPF(c.cpf) : "-"}</span>
+                      <td className="py-2 px-4">
+                        <div className="flex items-center gap-1.5 font-mono text-sm font-extrabold text-slate-800 dark:text-slate-100">
+                          <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                          <span className="tracking-wide">{c.cpf ? formatCPF(c.cpf) : "-"}</span>
                         </div>
                       </td>
                     )}
@@ -1327,6 +1335,15 @@ export const GeralPage: React.FC = () => {
             <p>2. Se cadastrar como <strong>Recebida</strong>, a Gaveta e Repartição são calculadas automaticamente conforme a inicial do nome.</p>
             <p>3. Se cadastrar como <strong>Entregue</strong>, a modal de entrega será aberta em seguida para informar o responsável pela retirada.</p>
           </div>
+
+          {manualSuccessMsg && (
+            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-800 dark:text-emerald-200 font-bold flex items-center justify-between gap-2 shadow-2xs">
+              <span>{manualSuccessMsg}</span>
+              <span className="text-[10px] bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-100 px-2 py-0.5 rounded-md uppercase font-extrabold shrink-0">
+                Pronto p/ próximo
+              </span>
+            </div>
+          )}
 
           {manualErrors.geral && (
             <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-600 font-medium">
@@ -1973,8 +1990,8 @@ export const GeralPage: React.FC = () => {
                   <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
                     {selectedCNHDetails.nome}
                   </h3>
-                  <p className="text-xs font-mono text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
-                    <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <p className="text-sm font-mono font-extrabold text-slate-800 dark:text-slate-100 flex items-center gap-1.5 mt-1">
+                    <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
                     <span>CPF: {selectedCNHDetails.cpf ? formatCPF(selectedCNHDetails.cpf) : "Não informado"}</span>
                   </p>
                 </div>
@@ -2303,6 +2320,73 @@ export const GeralPage: React.FC = () => {
           <span>Orientação: Horizontal (Paisagem) | Página gerada com cabeçalho repetitivo (@page)</span>
         </div>
       </div>
+
+      {/* Modal QR Code / Link do Cidadão */}
+      <Modal
+        isOpen={isCitizenQrModalOpen}
+        onClose={() => setIsCitizenQrModalOpen(false)}
+        title="📱 Link e QR Code de Consulta do Cidadão"
+        size="md"
+      >
+        <div className="space-y-4 text-center">
+          <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl flex items-center gap-3 text-left">
+            <Smartphone className="w-6 h-6 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <div className="text-xs text-emerald-800 dark:text-emerald-200">
+              <p className="font-bold">Acesso Direto sem Login</p>
+              <p className="mt-0.5">Disponibilize este QR Code ou link no balcão de atendimento para que o cidadão possa consultar pelo celular se a CNH já está disponível para retirada.</p>
+            </div>
+          </div>
+
+          <div className="p-4 bg-white rounded-2xl inline-block border-4 border-slate-200 dark:border-slate-700 shadow-md">
+            <img
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(
+                typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname}?consulta=true` : ""
+              )}`}
+              alt="QR Code Consulta Cidadão"
+              className="w-48 h-48 mx-auto rounded-lg object-contain"
+            />
+          </div>
+
+          <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-xl text-left space-y-1">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 block">Link de Acesso Público:</label>
+              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950 px-2 py-0.5 rounded-md border border-emerald-300 dark:border-emerald-800">
+                📊 {getPublicSearchCount()} consultas efetuadas
+              </span>
+            </div>
+            <p className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400 break-all select-all">
+              {typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname}?consulta=true` : ""}
+            </p>
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== "undefined") {
+                  const url = `${window.location.origin}${window.location.pathname}?consulta=true`;
+                  navigator.clipboard.writeText(url);
+                  alert("✅ Link público de consulta copiado com sucesso!");
+                }
+              }}
+              className="flex-1 py-2.5 px-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
+            >
+              Copiar Link
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== "undefined") {
+                  window.open(`${window.location.origin}${window.location.pathname}?consulta=true`, "_blank");
+                }
+              }}
+              className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
+            >
+              Testar Consulta Agora
+            </button>
+          </div>
+        </div>
+      </Modal>
     </>
   );
 };

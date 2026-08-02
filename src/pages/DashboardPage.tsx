@@ -12,7 +12,8 @@ import {
   TrendingUp, 
   MapPin, 
   Layers,
-  RefreshCw
+  RefreshCw,
+  Smartphone
 } from "lucide-react";
 import { 
   ResponsiveContainer, 
@@ -72,6 +73,7 @@ export const DashboardPage: React.FC = () => {
     { label: "Entregues ao Cidadão", value: stats.cards.entregues, icon: CheckCircle2, labelColor: "text-emerald-600 dark:text-emerald-400", barColor: "bg-emerald-600", percent: stats.cards.totalGeral ? Math.min(100, Math.round((stats.cards.entregues / stats.cards.totalGeral) * 100)) : 0 },
     { label: "Memorandos Ativos", value: stats.cards.memorandos, icon: FileText, labelColor: "text-purple-600 dark:text-purple-400", barColor: "bg-purple-600", percent: 100 },
     { label: "Usuários no Sistema", value: stats.cards.usuarios, icon: Users, labelColor: "text-indigo-600 dark:text-indigo-400", barColor: "bg-indigo-600", percent: 100 },
+    { label: "Consultas App Público", value: stats.cards.consultasPublicas || 0, icon: Smartphone, labelColor: "text-teal-600 dark:text-teal-400", barColor: "bg-teal-500", percent: 100 },
   ];
 
   return (
@@ -97,7 +99,7 @@ export const DashboardPage: React.FC = () => {
       </div>
 
       {/* Grid de Cartões de Métricas - High Density */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3.5">
+      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8 gap-3.5">
         {cards.map((card, idx) => {
           const Icon = card.icon;
           return (

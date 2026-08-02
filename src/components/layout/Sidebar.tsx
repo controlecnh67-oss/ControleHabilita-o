@@ -11,7 +11,9 @@ import {
   Database,
   X,
   LogOut,
-  ShieldCheck
+  ShieldCheck,
+  Smartphone,
+  QrCode
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { cn } from "../../lib/utils";
@@ -134,6 +136,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </button>
               );
             })}
+
+            <div className="pt-2 mt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof window !== "undefined") {
+                    const url = new URL(window.location.href);
+                    url.searchParams.set("consulta", "true");
+                    window.location.href = url.toString();
+                  }
+                }}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-bold text-xs bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-800/80 transition-colors text-left group cursor-pointer shadow-2xs"
+              >
+                <Smartphone className="w-4 h-4 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
+                <span className="truncate">📱 Portal Cidadão (Sem Login)</span>
+              </button>
+            </div>
           </nav>
         </div>
 
