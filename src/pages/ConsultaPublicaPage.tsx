@@ -16,7 +16,8 @@ import {
   ArrowLeft, 
   Info,
   Sparkles,
-  RefreshCw
+  RefreshCw,
+  Download
 } from "lucide-react";
 import { consultarCnhPublicaPorCpf, ResultadoConsultaPublica, getPublicSearchCount } from "../services/db";
 import { formatCPF, formatDateTime } from "../lib/utils";
@@ -36,7 +37,45 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
   const [resultado, setResultado] = useState<ResultadoConsultaPublica | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showQrCodeModal, setShowQrCodeModal] = useState(false);
+  const [showInstallModal, setShowInstallModal] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isStandalone, setIsStandalone] = useState(false);
   const [searchCount, setSearchCount] = useState(() => getPublicSearchCount());
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      if (window.matchMedia("(display-mode: standalone)").matches || (window.navigator as any).standalone) {
+        setIsStandalone(true);
+      }
+
+      const handleBeforeInstallPrompt = (e: Event) => {
+        e.preventDefault();
+        setDeferredPrompt(e);
+      };
+
+      window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+
+      return () => {
+        window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      };
+    }
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      try {
+        const { outcome } = await deferredPrompt.userChoice;
+        if (outcome === "accepted") {
+          setDeferredPrompt(null);
+        }
+      } catch (err) {
+        setShowInstallModal(true);
+      }
+    } else {
+      setShowInstallModal(true);
+    }
+  };
 
   // Formatar CPF enquanto digita
   const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -143,6 +182,15 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
 
         <div className="flex items-center gap-1.5">
           <button
+            onClick={handleInstallApp}
+            title="Instalar App no celular ou computador"
+            className="px-2.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl border border-emerald-400/50 shadow-md shadow-emerald-900/30 transition-all cursor-pointer text-xs flex items-center gap-1.5 font-bold"
+          >
+            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">Instalar App</span>
+          </button>
+
+          <button
             onClick={() => setShowQrCodeModal(true)}
             title="Ver QR Code para Compartilhar"
             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl border border-slate-700 transition-colors cursor-pointer"
@@ -176,6 +224,30 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
             Informe o seu <strong className="text-white">CPF</strong> abaixo para verificar em tempo real se a sua Carteira Nacional de Habilitação (CNH) já chegou ao balcão de atendimento e está pronta para ser retirada.
           </p>
         </div>
+
+        {/* Botão / Banner de Instalação do App no Dispositivo */}
+        {!isStandalone && (
+          <button
+            type="button"
+            onClick={handleInstallApp}
+            className="w-full py-3 px-4 bg-gradient-to-r from-emerald-950/90 via-slate-800 to-teal-950/90 border-2 border-emerald-500/60 hover:border-emerald-400 rounded-2xl shadow-lg text-emerald-100 flex items-center justify-between gap-3 group transition-all cursor-pointer hover:shadow-emerald-950/50"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-400 shrink-0 group-hover:scale-110 transition-transform">
+                <Download className="w-5 h-5 animate-bounce" />
+              </div>
+              <div className="text-left">
+                <span className="text-xs font-black text-white block">
+                  📲 Instalar App no Dispositivo
+                </span>
+                <span className="text-[11px] text-emerald-300 font-medium">Crie um atalho na tela inicial do seu celular</span>
+              </div>
+            </div>
+            <span className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-[11px] font-black uppercase tracking-wider rounded-xl shadow-md shrink-0">
+              Instalar
+            </span>
+          </button>
+        )}
 
         {/* Card do Formulário de Consulta */}
         <div className="bg-slate-800/90 border border-slate-700 rounded-3xl p-5 shadow-xl space-y-4">
@@ -483,6 +555,88 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
               className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
             >
               Fechar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Instruções de Instalação do App */}
+      {showInstallModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-emerald-800/80 rounded-3xl max-w-md w-full p-6 text-left space-y-4 shadow-2xl relative text-slate-200">
+            <button
+              onClick={() => setShowInstallModal(false)}
+              className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl"
+            >
+              ✕
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-600 flex items-center justify-center text-white shadow-lg shrink-0">
+                <Download className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-white">Instalar App no Dispositivo</h3>
+                <p className="text-xs text-emerald-400 font-semibold">Adicione o Portal do Cidadão à sua Tela Inicial</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Você pode instalar este aplicativo no seu celular ou computador para consultar a CNH instantaneamente com 1 toque, mesmo sem internet:
+            </p>
+
+            <div className="space-y-3 pt-1">
+              <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-2xl space-y-1">
+                <div className="flex items-center gap-2 font-bold text-xs text-emerald-300">
+                  <Smartphone className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>No Android (Chrome):</span>
+                </div>
+                <p className="text-[11px] text-slate-400 pl-6 leading-normal">
+                  Toque no menu do navegador <strong className="text-slate-200">⋮ (três pontos)</strong> no canto superior e selecione <strong className="text-emerald-300 font-bold">"Instalar aplicativo"</strong> ou <strong className="text-emerald-300 font-bold">"Adicionar à Tela inicial"</strong>.
+                </p>
+              </div>
+
+              <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-2xl space-y-1">
+                <div className="flex items-center gap-2 font-bold text-xs text-blue-300">
+                  <Share2 className="w-4 h-4 text-blue-400 shrink-0" />
+                  <span>No iPhone / iPad (Safari):</span>
+                </div>
+                <p className="text-[11px] text-slate-400 pl-6 leading-normal">
+                  Toque no botão <strong className="text-slate-200">Compartilhar (quadrado com seta para cima)</strong> na barra inferior e escolha <strong className="text-blue-300 font-bold">"Adicionar à Tela de Início"</strong>.
+                </p>
+              </div>
+
+              <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-2xl space-y-1">
+                <div className="flex items-center gap-2 font-bold text-xs text-purple-300">
+                  <Building2 className="w-4 h-4 text-purple-400 shrink-0" />
+                  <span>No Computador (Chrome / Edge):</span>
+                </div>
+                <p className="text-[11px] text-slate-400 pl-6 leading-normal">
+                  Clique no ícone de <strong className="text-purple-300 font-bold">Instalação ⊕</strong> na barra de endereço do navegador.
+                </p>
+              </div>
+            </div>
+
+            {deferredPrompt && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowInstallModal(false);
+                  handleInstallApp();
+                }}
+                className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs rounded-xl transition-all cursor-pointer shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-2 uppercase tracking-wider"
+              >
+                <Download className="w-4 h-4" />
+                <span>Instalar Agora Direto</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setShowInstallModal(false)}
+              className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+            >
+              Entendi / Fechar
             </button>
           </div>
         </div>
