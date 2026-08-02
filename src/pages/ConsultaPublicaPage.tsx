@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { consultarCnhPublicaPorCpf, ResultadoConsultaPublica, getPublicSearchCount } from "../services/db";
 import { formatCPF, formatDateTime } from "../lib/utils";
+import { getPublicShareUrl, saveLocalSupabaseConfig } from "../services/supabase";
 
 interface ConsultaPublicaPageProps {
   onBackToLogin?: () => void;
@@ -125,9 +126,15 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
   };
 
   useEffect(() => {
-    // Ler CPF da URL se fornecido no carregamento da página
+    // Ler CPF e credenciais da URL se fornecidos no carregamento da página
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
+      const sbUrl = params.get("sb_url");
+      const sbKey = params.get("sb_key");
+      if (sbUrl && sbKey) {
+        saveLocalSupabaseConfig(sbUrl, sbKey);
+      }
+
       const urlCpf = params.get("cpf") || initialCpf;
       if (urlCpf) {
         const clean = urlCpf.replace(/\D/g, "").slice(0, 11);
@@ -150,7 +157,7 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
   const handleCopyShareLink = async () => {
     if (typeof window === "undefined") return;
     const cleanCpf = cpfInput.replace(/\D/g, "");
-    const shareUrl = `${window.location.origin}${window.location.pathname}?consulta=true${cleanCpf ? `&cpf=${cleanCpf}` : ""}`;
+    const shareUrl = getPublicShareUrl(cleanCpf);
     
     try {
       await navigator.clipboard.writeText(shareUrl);
@@ -161,9 +168,7 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
     }
   };
 
-  const currentPublicUrl = typeof window !== "undefined" 
-    ? `${window.location.origin}${window.location.pathname}?consulta=true`
-    : "";
+  const currentPublicUrl = getPublicShareUrl(cpfInput);
 
   return (
     <div className="min-h-screen w-full bg-slate-900 bg-gradient-to-b from-slate-900 via-slate-800 to-indigo-950 text-slate-100 flex flex-col justify-between font-sans selection:bg-blue-500 selection:text-white pb-8">

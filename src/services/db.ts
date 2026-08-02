@@ -1141,7 +1141,27 @@ export async function sincronizarDataMovimentoComCriacao(): Promise<number> {
 }
 
 export async function getGeralCNHs(): Promise<GeralCNH[]> {
-  const rawList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  let rawList: GeralCNH[] = [];
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase
+        .from("geral_cnhs")
+        .select("*")
+        .order("ordem", { ascending: false });
+
+      if (!error && data && data.length > 0) {
+        rawList = data as GeralCNH[];
+        saveStoredList("geral", rawList);
+      }
+    } catch (err) {
+      console.warn("Aviso ao buscar CNHs no Supabase, utilizando armazenamento local:", err);
+    }
+  }
+
+  if (rawList.length === 0) {
+    rawList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  }
 
   // Garantir que a data_movimento seja rigorosamente igual à data de criação (created_at) para todas as linhas
   let listChanged = false;

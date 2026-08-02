@@ -49,6 +49,7 @@ import {
   importSpreadsheetData,
   getPublicSearchCount
 } from "../services/db";
+import { getPublicShareUrl } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
 import { Badge } from "../components/ui/Badge";
@@ -2340,7 +2341,7 @@ export const GeralPage: React.FC = () => {
           <div className="p-4 bg-white rounded-2xl inline-block border-4 border-slate-200 dark:border-slate-700 shadow-md">
             <img
               src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(
-                typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname}?consulta=true` : ""
+                getPublicShareUrl()
               )}`}
               alt="QR Code Consulta Cidadão"
               className="w-48 h-48 mx-auto rounded-lg object-contain"
@@ -2355,7 +2356,7 @@ export const GeralPage: React.FC = () => {
               </span>
             </div>
             <p className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400 break-all select-all">
-              {typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname}?consulta=true` : ""}
+              {getPublicShareUrl()}
             </p>
           </div>
 
@@ -2364,7 +2365,7 @@ export const GeralPage: React.FC = () => {
               type="button"
               onClick={() => {
                 if (typeof window !== "undefined") {
-                  const url = `${window.location.origin}${window.location.pathname}?consulta=true`;
+                  const url = getPublicShareUrl();
                   navigator.clipboard.writeText(url);
                   alert("✅ Link público de consulta copiado com sucesso!");
                 }

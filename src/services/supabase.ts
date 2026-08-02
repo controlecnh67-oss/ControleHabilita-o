@@ -89,3 +89,21 @@ export function clearLocalSupabaseConfig(): void {
   }
 }
 
+export function getPublicShareUrl(cpf?: string): string {
+  if (typeof window === "undefined") return "";
+  const url = new URL(window.location.origin + window.location.pathname);
+  url.searchParams.set("consulta", "true");
+  if (cpf) {
+    const cleanCpf = cpf.replace(/\D/g, "");
+    if (cleanCpf) url.searchParams.set("cpf", cleanCpf);
+  }
+
+  const creds = getSupabaseCredentials();
+  if (creds.source === 'local' && creds.url && creds.key) {
+    url.searchParams.set("sb_url", creds.url);
+    url.searchParams.set("sb_key", creds.key);
+  }
+
+  return url.toString();
+}
+
