@@ -1,8 +1,7 @@
 import React, { useState } from "react";
-import { ShieldCheck, KeyRound, UserCheck, Lock, Database, Sparkles, ArrowRight, Eye, EyeOff, Key, CheckCircle2, Smartphone, QrCode } from "lucide-react";
+import { ShieldCheck, UserCheck, Lock, Sparkles, ArrowRight, Eye, EyeOff, Key, CheckCircle2, Smartphone } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { PerfilUsuario } from "../types";
-import { isSupabaseConnected, getUsuarios, updateUsuario } from "../services/db";
+import { getUsuarios, updateUsuario } from "../services/db";
 import { Modal } from "../components/ui/Modal";
 
 interface LoginPageProps {
@@ -10,8 +9,22 @@ interface LoginPageProps {
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onOpenConsultaPublica }) => {
-  const { login, loginAsProfile, isLoading } = useAuth();
-  const [loginInput, setLoginInput] = useState("");
+  const { login, isLoading } = useAuth();
+  
+  const [rememberMe, setRememberMe] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("detran_remember_me") === "true";
+    }
+    return false;
+  });
+
+  const [loginInput, setLoginInput] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("detran_remember_login") || "";
+    }
+    return "";
+  });
+
   const [senhaInput, setSenhaInput] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,28 +89,24 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onOpenConsultaPublica }) =
       return;
     }
     setError(null);
+
+    // Salvar ou remover login do localStorage de acordo com a checkbox 'Lembrar meu acesso'
+    if (typeof window !== "undefined") {
+      if (rememberMe) {
+        localStorage.setItem("detran_remember_login", loginInput.trim());
+        localStorage.setItem("detran_remember_me", "true");
+      } else {
+        localStorage.removeItem("detran_remember_login");
+        localStorage.removeItem("detran_remember_me");
+      }
+    }
+
     try {
       await login(loginInput.trim(), senhaInput);
     } catch (err: any) {
       setError(err.message || "Erro ao efetuar login. Verifique suas credenciais.");
     }
   };
-
-  const handleQuickProfile = async (perfil: PerfilUsuario) => {
-    setError(null);
-    try {
-      await loginAsProfile(perfil);
-    } catch (err: any) {
-      setError(err.message || "Não foi possível alternar para este perfil.");
-    }
-  };
-
-  const perfisDescricao: { perfil: PerfilUsuario; desc: string; color: string; badge: string }[] = [
-    { perfil: "Administrador", desc: "Acesso total ao protocolo e gerenciamento de usuários", color: "from-emerald-500 to-teal-600", badge: "bg-emerald-100 text-emerald-800" },
-    { perfil: "Supervisor", desc: "Acesso total operacional, exceto cadastro de usuários", color: "from-purple-500 to-indigo-600", badge: "bg-purple-100 text-purple-800" },
-    { perfil: "Operador", desc: "Operações rotineiras: remeter, receber, entregar CNHs", color: "from-blue-500 to-cyan-600", badge: "bg-blue-100 text-blue-800" },
-    { perfil: "Consulta", desc: "Somente leitura e exportação de relatórios/auditoria", color: "from-amber-500 to-orange-600", badge: "bg-amber-100 text-amber-800" },
-  ];
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-slate-900 bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 p-4 font-sans text-slate-100">
@@ -127,7 +136,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onOpenConsultaPublica }) =
             <div className="p-3.5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/15 space-y-2">
               <div className="flex items-center gap-2 text-xs font-bold text-amber-300">
                 <Sparkles className="w-4 h-4 shrink-0" />
-                <span>Segurança e RLS Supabase</span>
+                <span>Segurança e Proteção de Dados</span>
               </div>
               <p className="text-xs text-blue-100 leading-normal">
                 Sessão com expiração automática após 30 minutos de inatividade e auditoria completa de todas as transações.
@@ -136,23 +145,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onOpenConsultaPublica }) =
           </div>
         </div>
 
-        {/* Direita: Formulário de Login & Acesso Rápido de Demonstração */}
+        {/* Direita: Formulário de Login */}
         <div className="md:col-span-7 p-8 md:p-10 flex flex-col justify-center bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100">
           <div className="max-w-md mx-auto w-full space-y-6">
             <div>
-              <div className="flex items-center gap-2 mb-2">
-                <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
-                  isSupabaseConnected 
-                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                    : "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300"
-                }`}>
-                  <Database className="w-3 h-3" />
-                  {isSupabaseConnected ? "Supabase Conectado" : "Ambiente Demo / Avaliação"}
-                </span>
-              </div>
               <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Acesse sua conta</h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Digite suas credenciais do DETRAN ou selecione um perfil abaixo para teste imediato.
+                Digite suas credenciais do DETRAN para acessar o sistema.
               </p>
             </div>
 
@@ -223,6 +222,21 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onOpenConsultaPublica }) =
                 </div>
               </div>
 
+              {/* Caixa 'Lembrar meu acesso' */}
+              <div className="flex items-center justify-between pt-0.5">
+                <label className="flex items-center gap-2 cursor-pointer select-none group">
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="w-4 h-4 text-blue-600 border-slate-300 dark:border-slate-700 rounded focus:ring-blue-500 dark:bg-slate-800 transition-colors cursor-pointer"
+                  />
+                  <span className="text-xs font-medium text-slate-600 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-slate-200 transition-colors">
+                    Lembrar meu acesso
+                  </span>
+                </label>
+              </div>
+
               <button
                 type="submit"
                 disabled={isLoading}
@@ -250,60 +264,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onOpenConsultaPublica }) =
                 <span>📱 Consulta Cidadão (Sem Login / Por CPF)</span>
               </button>
             </form>
-
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-200 dark:border-slate-800" />
-              </div>
-              <div className="relative flex justify-center text-[10px] uppercase font-bold tracking-wider">
-                <span className="px-3 bg-slate-50 dark:bg-slate-900 text-slate-400">
-                  Ou acesse com 1 Clique (Perfis de Avaliação)
-                </span>
-              </div>
-            </div>
-
-            {/* Switchers Rápidos para os 4 Perfis de Avaliação */}
-            <div className="grid grid-cols-2 gap-2.5">
-              {perfisDescricao.map((item) => (
-                <button
-                  key={item.perfil}
-                  type="button"
-                  onClick={() => handleQuickProfile(item.perfil)}
-                  className="flex flex-col items-start p-3 bg-white dark:bg-slate-800/80 hover:bg-blue-50/50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80 hover:border-blue-300 dark:hover:border-blue-600 rounded-xl transition-all text-left group"
-                >
-                  <div className="flex items-center justify-between w-full mb-1">
-                    <span className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                      {item.perfil}
-                    </span>
-                    <KeyRound className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-500" />
-                  </div>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-2">
-                    {item.desc}
-                  </p>
-                </button>
-              ))}
-            </div>
-
-            {/* Ação para copiar o Script SQL do Supabase diretamente da tela de login */}
-            <div className="pt-1">
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const res = await fetch('/supabase_schema.sql');
-                    const sql = await res.text();
-                    await navigator.clipboard.writeText(sql);
-                    alert("✅ Script SQL Completo copiado com sucesso!\n\nAbra o 'SQL Editor' no painel do seu Supabase e cole o script para criar as 8 tabelas e importar todos os usuários temporários, responsáveis, memorandos e CNHs.");
-                  } catch (e) {
-                    alert("⚠️ O arquivo supabase_schema.sql está disponível na pasta public/ e na raiz do seu projeto!");
-                  }
-                }}
-                className="w-full py-2.5 px-3 bg-blue-50 hover:bg-blue-100/80 dark:bg-blue-950/40 dark:hover:bg-blue-900/50 text-blue-800 dark:text-blue-200 rounded-xl transition-all flex items-center justify-center gap-2 text-xs font-semibold border border-blue-200 dark:border-blue-800/80 cursor-pointer shadow-2xs group"
-              >
-                <Database className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 group-hover:scale-110 transition-transform" />
-                <span>Copiar Script SQL do Supabase (Usuários + Dados Temporários)</span>
-              </button>
-            </div>
 
           </div>
         </div>

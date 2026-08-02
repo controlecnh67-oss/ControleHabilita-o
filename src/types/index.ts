@@ -3,6 +3,38 @@ import { z } from "zod";
 export type PerfilUsuario = "Administrador" | "Supervisor" | "Operador" | "Consulta";
 export type PerfilAcesso = PerfilUsuario;
 
+export type NavTab = 
+  | "dashboard" 
+  | "geral" 
+  | "memorandos" 
+  | "responsaveis" 
+  | "mapeamento" 
+  | "historico" 
+  | "auditoria" 
+  | "usuarios"
+  | "backup";
+
+export function isTabAllowedForProfile(tab: NavTab, perfil?: PerfilUsuario): boolean {
+  if (!perfil) return false;
+
+  switch (perfil) {
+    case "Administrador":
+      return true;
+
+    case "Supervisor":
+      return ["dashboard", "geral", "memorandos", "responsaveis", "mapeamento", "historico", "auditoria"].includes(tab);
+
+    case "Operador":
+      return ["dashboard", "geral", "memorandos", "responsaveis", "mapeamento", "historico"].includes(tab);
+
+    case "Consulta":
+      return ["dashboard", "geral", "historico", "auditoria"].includes(tab);
+
+    default:
+      return false;
+  }
+}
+
 export interface Usuario {
   id: string;
   nome: string;

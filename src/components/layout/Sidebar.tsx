@@ -17,17 +17,9 @@ import {
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { cn } from "../../lib/utils";
+import { NavTab, isTabAllowedForProfile } from "../../types";
 
-export type NavTab = 
-  | "dashboard" 
-  | "geral" 
-  | "memorandos" 
-  | "responsaveis" 
-  | "mapeamento" 
-  | "historico" 
-  | "auditoria" 
-  | "usuarios"
-  | "backup";
+export type { NavTab };
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -42,19 +34,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isOpen,
   onClose,
 }) => {
-  const { user, canManageUsers, logout } = useAuth();
+  const { user, logout } = useAuth();
 
   const navItems = [
-    { id: "dashboard" as NavTab, label: "Dashboard", icon: LayoutDashboard, requiredProfile: null },
-    { id: "geral" as NavTab, label: "Protocolo Geral (CNHs)", icon: FolderArchive, requiredProfile: null },
-    { id: "memorandos" as NavTab, label: "Memorandos e Remessas", icon: FileText, requiredProfile: null },
-    { id: "responsaveis" as NavTab, label: "Responsáveis e CFCs", icon: Users, requiredProfile: null },
-    { id: "mapeamento" as NavTab, label: "Mapeamento (A-Z)", icon: MapPin, requiredProfile: null },
-    { id: "historico" as NavTab, label: "Histórico de Movimento", icon: History, requiredProfile: null },
-    { id: "auditoria" as NavTab, label: "Auditoria do Sistema", icon: ShieldAlert, requiredProfile: null },
-    { id: "usuarios" as NavTab, label: "Gerenciar Usuários", icon: UserCog, requiredProfile: null },
-    { id: "backup" as NavTab, label: "Backup e Sincronização", icon: Database, requiredProfile: null },
+    { id: "dashboard" as NavTab, label: "Dashboard", icon: LayoutDashboard },
+    { id: "geral" as NavTab, label: "Protocolo Geral (CNHs)", icon: FolderArchive },
+    { id: "memorandos" as NavTab, label: "Memorandos e Remessas", icon: FileText },
+    { id: "responsaveis" as NavTab, label: "Responsáveis e CFCs", icon: Users },
+    { id: "mapeamento" as NavTab, label: "Mapeamento (A-Z)", icon: MapPin },
+    { id: "historico" as NavTab, label: "Histórico de Movimento", icon: History },
+    { id: "auditoria" as NavTab, label: "Auditoria do Sistema", icon: ShieldAlert },
+    { id: "usuarios" as NavTab, label: "Gerenciar Usuários", icon: UserCog },
+    { id: "backup" as NavTab, label: "Backup e Sincronização", icon: Database },
   ];
+
+  const visibleNavItems = navItems.filter((item) =>
+    isTabAllowedForProfile(item.id, user?.perfil)
+  );
 
   const handleNavClick = (tab: NavTab) => {
     onSelectTab(tab);
@@ -103,15 +99,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           {/* Navegação Principal */}
           <nav className="p-4 space-y-1">
-            <div className="text-[10px] uppercase font-bold text-slate-500 mb-2 px-2 tracking-wider">
-              Menu Principal
+            <div className="flex items-center justify-between px-2 mb-2">
+              <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
+                Menu Principal
+              </span>
+              {user && (
+                <span className="text-[10px] font-semibold text-blue-400 bg-blue-950/80 px-2 py-0.5 rounded border border-blue-800/60 truncate max-w-[100px]" title={`Perfil: ${user.perfil}`}>
+                  {user.perfil}
+                </span>
+              )}
             </div>
 
-            {navItems.map((item) => {
-              if (item.requiredProfile === "Administrador" && !canManageUsers) {
-                return null;
-              }
-
+            {visibleNavItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
 
@@ -120,7 +119,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   key={item.id}
                   onClick={() => handleNavClick(item.id)}
                   className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors text-left",
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors text-left cursor-pointer",
                     isActive
                       ? "bg-blue-600 text-white shadow-sm font-semibold"
                       : "text-slate-300 hover:bg-slate-800 hover:text-white"

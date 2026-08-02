@@ -13,9 +13,10 @@ import { MapeamentoPage } from "./pages/MapeamentoPage";
 import { UsuariosPage } from "./pages/UsuariosPage";
 import { BackupSyncPage } from "./pages/BackupSyncPage";
 import { ConsultaPublicaPage } from "./pages/ConsultaPublicaPage";
+import { isTabAllowedForProfile, NavTab } from "./types";
 
 const MainLayout: React.FC = () => {
-  const { isAuthenticated, isLoading, timeRemaining } = useAuth();
+  const { user, isAuthenticated, isLoading, timeRemaining } = useAuth();
   
   const [isPublicConsulta, setIsPublicConsulta] = useState(() => {
     if (typeof window !== "undefined") {
@@ -53,21 +54,29 @@ const MainLayout: React.FC = () => {
     }
   };
 
-  const [activeTabState, setActiveTabState] = useState(() => {
+  const [activeTabState, setActiveTabState] = useState<NavTab>(() => {
     if (typeof window !== "undefined") {
-      return sessionStorage.getItem("detran_active_tab") || "dashboard";
+      const saved = sessionStorage.getItem("detran_active_tab") as NavTab;
+      if (saved) return saved;
     }
     return "dashboard";
   });
 
-  const setActiveTab = (tab: any) => {
+  const setActiveTab = (tab: NavTab) => {
     setActiveTabState(tab);
     if (typeof window !== "undefined") {
       sessionStorage.setItem("detran_active_tab", tab);
     }
   };
 
-  const activeTab = activeTabState as any;
+  const activeTab = activeTabState;
+
+  // Redireciona se a aba ativa não for permitida para o perfil do usuário logado
+  useEffect(() => {
+    if (user && !isTabAllowedForProfile(activeTab, user.perfil)) {
+      setActiveTab("dashboard");
+    }
+  }, [user?.perfil, activeTab]);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     return typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
@@ -118,15 +127,15 @@ const MainLayout: React.FC = () => {
 
         <main className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-100 dark:bg-slate-950 flex flex-col gap-6">
           <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col">
-            {activeTab === "dashboard" && <DashboardPage onNavigate={(tab) => setActiveTab(tab)} />}
-            {activeTab === "geral" && <GeralPage />}
-            {activeTab === "memorandos" && <MemorandosPage onNavigateToGeral={() => setActiveTab("geral")} />}
-            {activeTab === "responsaveis" && <ResponsaveisPage />}
-            {activeTab === "historico" && <HistoricoPage />}
-            {activeTab === "auditoria" && <AuditoriaPage />}
-            {activeTab === "mapeamento" && <MapeamentoPage />}
-            {activeTab === "usuarios" && <UsuariosPage />}
-            {activeTab === "backup" && <BackupSyncPage />}
+            {activeTab === "dashboard" && isTabAllowedForProfile("dashboard", user?.perfil) && <DashboardPage />}
+            {activeTab === "geral" && isTabAllowedForProfile("geral", user?.perfil) && <GeralPage />}
+            {activeTab === "memorandos" && isTabAllowedForProfile("memorandos", user?.perfil) && <MemorandosPage onNavigateToGeral={() => setActiveTab("geral")} />}
+            {activeTab === "responsaveis" && isTabAllowedForProfile("responsaveis", user?.perfil) && <ResponsaveisPage />}
+            {activeTab === "historico" && isTabAllowedForProfile("historico", user?.perfil) && <HistoricoPage />}
+            {activeTab === "auditoria" && isTabAllowedForProfile("auditoria", user?.perfil) && <AuditoriaPage />}
+            {activeTab === "mapeamento" && isTabAllowedForProfile("mapeamento", user?.perfil) && <MapeamentoPage />}
+            {activeTab === "usuarios" && isTabAllowedForProfile("usuarios", user?.perfil) && <UsuariosPage />}
+            {activeTab === "backup" && isTabAllowedForProfile("backup", user?.perfil) && <BackupSyncPage />}
           </div>
         </main>
 

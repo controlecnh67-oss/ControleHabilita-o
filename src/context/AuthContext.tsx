@@ -160,8 +160,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Pode editar se não for "Consulta"
   const canEdit = Boolean(user && user.perfil !== "Consulta");
 
-  // Pode gerenciar usuários
-  const canManageUsers = Boolean(user);
+  // Pode gerenciar usuários (Somente Administrador)
+  const canManageUsers = Boolean(user && user.perfil === "Administrador");
 
   const updateCurrentUser = useCallback((updatedUser: Usuario) => {
     setUser(updatedUser);
