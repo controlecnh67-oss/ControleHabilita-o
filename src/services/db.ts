@@ -1210,8 +1210,8 @@ export interface ResultadoConsultaPublica {
 
 export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<ResultadoConsultaPublica> {
   const cleanCpf = cpfInput.replace(/\D/g, "");
-  if (!cleanCpf || cleanCpf.length !== 11) {
-    throw new Error("Por favor, informe um CPF válido com 11 dígitos.");
+  if (!cleanCpf || cleanCpf.length < 9) {
+    throw new Error("Por favor, informe um CPF válido para realizar a consulta.");
   }
 
   // Incrementar o contador de consultas efetuadas pelo app público
@@ -1219,11 +1219,22 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
 
   const todasCNHs = await getGeralCNHs();
 
-  // Filtrar todos os registros de CNH correspondentes ao CPF
+  const pad11 = (val: string) => val.replace(/\D/g, "").padStart(11, "0");
+  const searchPad = pad11(cleanCpf);
+
+  // Filtrar todos os registros de CNH correspondentes ao CPF (suporta zeros à esquerda e formatações distintas)
   const cnhsDoCidadao = todasCNHs.filter((c) => {
     if (!c.cpf) return false;
     const cCpfClean = c.cpf.replace(/\D/g, "");
-    return cCpfClean === cleanCpf;
+    if (!cCpfClean) return false;
+    const cCpfPad = pad11(cCpfClean);
+
+    return (
+      cCpfClean === cleanCpf ||
+      cCpfPad === searchPad ||
+      (cCpfClean.length >= 9 && cleanCpf.endsWith(cCpfClean)) ||
+      (cleanCpf.length >= 9 && cCpfClean.endsWith(cleanCpf))
+    );
   });
 
   if (cnhsDoCidadao.length === 0) {

@@ -79,27 +79,25 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
 
   // Formatar CPF enquanto digita
   const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value.replace(/\D/g, "");
-    if (raw.length <= 11) {
-      let formatted = raw;
-      if (raw.length > 9) {
-        formatted = raw.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
-      } else if (raw.length > 6) {
-        formatted = raw.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
-      } else if (raw.length > 3) {
-        formatted = raw.replace(/(\d{3})(\d{1,3})/, "$1.$2");
-      }
-      setCpfInput(formatted);
-      setError(null);
+    const raw = e.target.value.replace(/\D/g, "").slice(0, 11);
+    let formatted = raw;
+    if (raw.length > 9) {
+      formatted = raw.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+    } else if (raw.length > 6) {
+      formatted = raw.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
+    } else if (raw.length > 3) {
+      formatted = raw.replace(/(\d{3})(\d{1,3})/, "$1.$2");
     }
+    setCpfInput(formatted);
+    setError(null);
   };
 
   const handleBuscar = async (cpfParaBuscar?: string) => {
     const targetCpf = cpfParaBuscar || cpfInput;
     const cleanCpf = targetCpf.replace(/\D/g, "");
 
-    if (!cleanCpf || cleanCpf.length !== 11) {
-      setError("Por favor, digite um CPF válido contendo 11 números.");
+    if (!cleanCpf || cleanCpf.length < 9) {
+      setError("Por favor, digite um CPF válido contendo até 11 números.");
       return;
     }
 
@@ -132,9 +130,16 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
       const params = new URLSearchParams(window.location.search);
       const urlCpf = params.get("cpf") || initialCpf;
       if (urlCpf) {
-        const clean = urlCpf.replace(/\D/g, "");
-        if (clean.length === 11) {
-          let formatted = clean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+        const clean = urlCpf.replace(/\D/g, "").slice(0, 11);
+        if (clean.length >= 9) {
+          let formatted = clean;
+          if (clean.length > 9) {
+            formatted = clean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+          } else if (clean.length > 6) {
+            formatted = clean.replace(/(\d{3})(\d{3})(\d{1,3})/, "$1.$2.$3");
+          } else if (clean.length > 3) {
+            formatted = clean.replace(/(\d{3})(\d{1,3})/, "$1.$2");
+          }
           setCpfInput(formatted);
           handleBuscar(clean);
         }
