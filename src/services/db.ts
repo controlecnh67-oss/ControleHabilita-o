@@ -430,8 +430,88 @@ const SEED_AUDITORIA: Auditoria[] = [
   }
 ];
 
-// Helper para obter/salvar em LocalStorage
+// Store em memória para suportar grandes volumes (ex: >8000 CNHs) que excedem a cota de ~5MB do localStorage
+const memoryStore: Record<string, any[]> = {};
+
+// Suporte a IndexedDB nativo do navegador para persistência de grandes volumes offline
+const DB_NAME = "DetranCNH_DB";
+const STORE_NAME = "kv_store";
+const DB_VERSION = 1;
+
+let dbPromise: Promise<IDBDatabase> | null = null;
+
+function getIDB(): Promise<IDBDatabase> {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    if (typeof window === "undefined" || !window.indexedDB) {
+      return reject(new Error("IndexedDB não suportado neste ambiente"));
+    }
+    const request = window.indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = (e) => {
+      const db = (e.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  return dbPromise;
+}
+
+async function idbGet<T>(key: string): Promise<T | null> {
+  try {
+    const db = await getIDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.get(key);
+      req.onsuccess = () => resolve((req.result as T) ?? null);
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function idbSet(key: string, val: any): Promise<void> {
+  try {
+    const db = await getIDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.put(val, key);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } catch (err) {
+    console.warn("Aviso ao salvar no IndexedDB:", err);
+  }
+}
+
+let isIdbInitialized = false;
+export async function initStorage(): Promise<void> {
+  if (isIdbInitialized) return;
+  const keys = ["usuarios", "responsaveis", "memorandos", "candidatos", "geral", "historico", "auditoria", "mapeamento"];
+  for (const k of keys) {
+    try {
+      const idbVal = await idbGet<any[]>(`detran_cnh_${k}`);
+      if (idbVal && Array.isArray(idbVal) && idbVal.length > 0) {
+        memoryStore[k] = idbVal;
+      }
+    } catch (e) {
+      console.warn(`Aviso ao carregar ${k} do IndexedDB:`, e);
+    }
+  }
+  isIdbInitialized = true;
+}
+
+// Helper para obter/salvar com cache em memória e IndexedDB + LocalStorage
 function getStoredList<T extends { id?: string }>(key: string, seed: T[]): T[] {
+  if (memoryStore[key] && memoryStore[key].length > 0) {
+    return memoryStore[key] as T[];
+  }
+
   try {
     const storageKey = `detran_cnh_${key}`;
     const versionKey = `detran_cnh_${key}_v5`;
@@ -439,8 +519,8 @@ function getStoredList<T extends { id?: string }>(key: string, seed: T[]): T[] {
     const hasV5 = localStorage.getItem(versionKey);
 
     if (!raw) {
-      localStorage.setItem(storageKey, JSON.stringify(seed));
-      localStorage.setItem(versionKey, "true");
+      memoryStore[key] = seed;
+      saveStoredList(key, seed);
       return seed;
     }
 
@@ -452,8 +532,8 @@ function getStoredList<T extends { id?: string }>(key: string, seed: T[]): T[] {
         (item) => item.id && !seedIds.has(item.id) && item.id !== "00000000-0000-0000-0000-000000000001" && item.id !== "00000000-0000-0000-0000-000000000002" && item.id !== "00000000-0000-0000-0000-000000000003"
       );
       parsed = [...seed, ...customItems];
-      localStorage.setItem(storageKey, JSON.stringify(parsed));
-      localStorage.setItem(versionKey, "true");
+      memoryStore[key] = parsed;
+      saveStoredList(key, parsed);
       return parsed;
     }
 
@@ -467,24 +547,35 @@ function getStoredList<T extends { id?: string }>(key: string, seed: T[]): T[] {
         }
       }
       if (updated) {
-        localStorage.setItem(storageKey, JSON.stringify(parsed));
+        saveStoredList(key, parsed);
       }
     }
+    memoryStore[key] = parsed;
     return parsed;
   } catch {
+    memoryStore[key] = seed;
     return seed;
   }
 }
 
 function saveStoredList<T>(key: string, data: T[]): void {
+  memoryStore[key] = data;
+  idbSet(`detran_cnh_${key}`, data).catch(() => {});
   try {
     localStorage.setItem(`detran_cnh_${key}`, JSON.stringify(data));
   } catch (err) {
-    console.error("Erro ao salvar no localStorage:", err);
+    // Erro de cota excedida do localStorage ignorado graciosamente pois memoryStore + IndexedDB possuem os dados
   }
 }
 
 export function resetDemoData(): void {
+  for (const k of Object.keys(memoryStore)) {
+    delete memoryStore[k];
+  }
+  const keys = ["usuarios", "responsaveis", "memorandos", "candidatos", "geral", "historico", "auditoria", "mapeamento"];
+  for (const k of keys) {
+    idbSet(`detran_cnh_${k}`, null).catch(() => {});
+  }
   localStorage.setItem("detran_cnh_usuarios", JSON.stringify(SEED_USUARIOS));
   localStorage.setItem("detran_cnh_responsaveis", JSON.stringify(SEED_RESPONSAVEIS));
   localStorage.setItem("detran_cnh_memorandos", JSON.stringify(SEED_MEMORANDOS));
@@ -1273,6 +1364,7 @@ export async function sincronizarDataMovimentoComCriacao(): Promise<number> {
 }
 
 export async function getGeralCNHs(): Promise<GeralCNH[]> {
+  await initStorage();
   let rawList: GeralCNH[] = [];
 
   if (isSupabaseConfigured()) {
@@ -1297,9 +1389,9 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
 
   const list = rawList.map((c) => {
     const seed = seedByOrdem.get(c.ordem) || seedById.get(c.id);
-    const dataMov = (seed && seed.data_movimento) ? seed.data_movimento : (c.data_movimento || c.created_at || (c as any).criado_em);
-    const usrId = (seed && seed.usuario_id) ? seed.usuario_id : c.usuario_id;
-    const usrNome = (seed && seed.usuario_nome) ? seed.usuario_nome : c.usuario_nome;
+    const dataMov = c.data_movimento || c.created_at || (c as any).criado_em || (seed ? seed.data_movimento : undefined);
+    const usrId = c.usuario_id || (seed ? seed.usuario_id : undefined);
+    const usrNome = c.usuario_nome || (seed ? seed.usuario_nome : undefined);
 
     return {
       ...c,
@@ -1465,7 +1557,7 @@ export async function createGeralManual(
   userId: string,
   userNome: string
 ): Promise<GeralCNH> {
-  const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  const geralList = await getGeralCNHs();
   const maxOrdem = geralList.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0) + 1;
   const now = new Date().toISOString();
 
@@ -1505,7 +1597,7 @@ export async function createGeralManual(
 // Ao clicar: Situação = Recebida, Data = atual, Usuário = logado
 // Determinar automaticamente Gaveta e Repartição via Mapeamento pela inicial do nome
 export async function receberCNH(id: string, userId: string, userNome: string): Promise<{ geral: GeralCNH; isVazio: boolean }> {
-  const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  const geralList = await getGeralCNHs();
   const index = geralList.findIndex((g) => g.id === id);
   if (index === -1) throw new Error("Registro CNH não encontrado no protocolo");
   const atual = geralList[index];
@@ -1557,7 +1649,7 @@ export async function entregarCNH(
   userId: string,
   userNome: string
 ): Promise<GeralCNH> {
-  const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  const geralList = await getGeralCNHs();
   const index = geralList.findIndex((g) => g.id === id);
   if (index === -1) throw new Error("Registro CNH não encontrado");
   const atual = geralList[index];
@@ -1617,7 +1709,7 @@ export async function updateGeralCNH(
   userId: string,
   userNome: string
 ): Promise<GeralCNH> {
-  const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  const geralList = await getGeralCNHs();
   const index = geralList.findIndex((g) => g.id === id);
   if (index === -1) throw new Error("Registro CNH não encontrado");
   const ant = geralList[index];
@@ -1648,7 +1740,7 @@ export async function deleteGeralCNH(
   userId: string,
   userNome: string
 ): Promise<boolean> {
-  const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  const geralList = await getGeralCNHs();
   const target = geralList.find((g) => g.id === id);
   if (!target) return false;
 
@@ -1684,7 +1776,7 @@ export async function deleteMultipleGeralCNHs(
 ): Promise<number> {
   if (!ids || ids.length === 0) return 0;
   const idsSet = new Set(ids);
-  const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  const geralList = await getGeralCNHs();
   const targets = geralList.filter((g) => idsSet.has(g.id));
   const updated = geralList.filter((g) => !idsSet.has(g.id));
   saveStoredList("geral", updated);
@@ -2224,7 +2316,7 @@ export async function importSpreadsheetData(
     }
 
     const mapeamento = getStoredList<MapeamentoLocalizacao>("mapeamento", SEED_MAPEAMENTO);
-    const existingGeral = getStoredList<GeralCNH>("geral", SEED_GERAL);
+    const existingGeral = await getGeralCNHs();
 
     const maxOrdem = existingGeral.reduce((max, item) => Math.max(max, item.ordem || 0), 0);
 
@@ -2526,7 +2618,7 @@ export async function syncLocalToSupabase(
   const mapList = getStoredList<MapeamentoLocalizacao>("mapeamento", SEED_MAPEAMENTO);
   const mems = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
   const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
-  const geral = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  const geral = memoryStore["geral"] && memoryStore["geral"].length > 0 ? memoryStore["geral"] : await getGeralCNHs();
   const hist = getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO);
   const aud = getStoredList<Auditoria>("auditoria", SEED_AUDITORIA);
 
@@ -2818,20 +2910,20 @@ export async function syncSupabaseToLocal(
   log("🚀 Baixando todos os dados do Supabase para o Armazenamento Local (com paginação sem limite)...");
 
   const tables = [
-    { name: "usuarios", key: "usuarios" },
-    { name: "responsaveis", key: "responsaveis" },
-    { name: "mapeamento_localizacao", key: "mapeamento" },
-    { name: "memorandos", key: "memorandos" },
-    { name: "candidatos", key: "candidatos" },
-    { name: "geral_cnhs", key: "geral" },
-    { name: "historico_movimentacoes", key: "historico" },
-    { name: "auditoria", key: "auditoria" }
+    { name: "usuarios", key: "usuarios", orderCol: "id", asc: true },
+    { name: "responsaveis", key: "responsaveis", orderCol: "id", asc: true },
+    { name: "mapeamento_localizacao", key: "mapeamento", orderCol: "id", asc: true },
+    { name: "memorandos", key: "memorandos", orderCol: "id", asc: true },
+    { name: "candidatos", key: "candidatos", orderCol: "id", asc: true },
+    { name: "geral_cnhs", key: "geral", orderCol: "ordem", asc: false },
+    { name: "historico_movimentacoes", key: "historico", orderCol: "id", asc: true },
+    { name: "auditoria", key: "auditoria", orderCol: "id", asc: true }
   ];
 
   for (const item of tables) {
     try {
       log(`📥 Baixando tabela '${item.name}'...`);
-      const data = await fetchAllRowsFromSupabase(item.name, 1000);
+      const data = await fetchAllRowsFromSupabase(item.name, 1000, item.orderCol, item.asc);
       if (data && data.length > 0) {
         saveStoredList(item.key, data);
         log(`✅ '${item.name}' baixado e atualizado localmente (${data.length} registros).`);
