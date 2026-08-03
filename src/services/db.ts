@@ -14,6 +14,7 @@ import {
 import { getInitialChar, formatDateTime } from "../lib/utils";
 import { supabase, isSupabaseConfigured } from "./supabase";
 import * as XLSX from "xlsx";
+import cnhSeedData from "../data/cnhSeedData.json";
 
 // Verificação de credenciais Supabase reais via variáveis de ambiente VITE_ ou utilitário
 export function isSupabaseConnected(): boolean {
@@ -30,7 +31,7 @@ function toValidUUID(id?: string | null): string | null {
   if (cleanId === "supervisor") return "22222222-2222-2222-2222-222222222222";
   if (cleanId === "operador") return "33333333-3333-3333-3333-333333333333";
   if (cleanId === "consulta") return "44444444-4444-4444-4444-444444444444";
-  if (cleanId === "proprietario") return "00000000-0000-0000-0000-000000000001";
+  if (cleanId === "proprietario") return "e2335b1e";
 
   // Gerar um UUID v4 determinístico a partir de qualquer string (ex: "usr-01", "resp-02")
   let hash = 0;
@@ -48,6 +49,111 @@ function toValidUUID(id?: string | null): string | null {
 // ============================================================================
 
 const SEED_USUARIOS: Usuario[] = [
+  {
+    id: "51f76373",
+    nome: "Kaio",
+    nome_curto: "Kaio",
+    fone: "(67) 99111-2222",
+    email: "kaio@detran.pa.gov.br",
+    funcao: "Agente de Trânsito",
+    setor: "Atendimento CNH",
+    login: "kaio",
+    senha: "detran@123",
+    permissoes: getPermissoesPadrao("Operador"),
+    perfil: "Operador",
+    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+    ativo: true
+  },
+  {
+    id: "a6708d10",
+    nome: "Dabita",
+    nome_curto: "Dabita",
+    fone: "(67) 99222-3333",
+    email: "dabita@detran.pa.gov.br",
+    funcao: "Agente de Trânsito",
+    setor: "Atendimento CNH",
+    login: "dabita",
+    senha: "detran@123",
+    permissoes: getPermissoesPadrao("Operador"),
+    perfil: "Operador",
+    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+    ativo: true
+  },
+  {
+    id: "ba8dff5e",
+    nome: "Lohandes",
+    nome_curto: "Lohandes",
+    fone: "(67) 99333-4444",
+    email: "lohandes@detran.pa.gov.br",
+    funcao: "Agente de Trânsito",
+    setor: "Atendimento CNH",
+    login: "lohandes",
+    senha: "detran@123",
+    permissoes: getPermissoesPadrao("Operador"),
+    perfil: "Operador",
+    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+    ativo: true
+  },
+  {
+    id: "33aa7d87",
+    nome: "Regis",
+    nome_curto: "Regis",
+    fone: "(67) 99444-5555",
+    email: "regis@detran.pa.gov.br",
+    funcao: "Agente de Trânsito",
+    setor: "Atendimento CNH",
+    login: "regis",
+    senha: "detran@123",
+    permissoes: getPermissoesPadrao("Operador"),
+    perfil: "Operador",
+    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+    ativo: true
+  },
+  {
+    id: "8bc1be25",
+    nome: "Ivanilde",
+    nome_curto: "Ivanilde",
+    fone: "(67) 99555-6666",
+    email: "ivanilde@detran.pa.gov.br",
+    funcao: "Agente de Trânsito",
+    setor: "Atendimento CNH",
+    login: "ivanilde",
+    senha: "detran@123",
+    permissoes: getPermissoesPadrao("Operador"),
+    perfil: "Operador",
+    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+    ativo: true
+  },
+  {
+    id: "2837b0a8",
+    nome: "Zedequias",
+    nome_curto: "Zedequias",
+    fone: "(67) 99666-7777",
+    email: "zedequias@detran.pa.gov.br",
+    funcao: "Agente de Trânsito",
+    setor: "Atendimento CNH",
+    login: "zedequias",
+    senha: "detran@123",
+    permissoes: getPermissoesPadrao("Operador"),
+    perfil: "Operador",
+    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+    ativo: true
+  },
+  {
+    id: "33a4ab38",
+    nome: "Deck",
+    nome_curto: "Deck",
+    fone: "(67) 99777-8888",
+    email: "deck@detran.pa.gov.br",
+    funcao: "Agente de Trânsito",
+    setor: "Atendimento CNH",
+    login: "deck",
+    senha: "detran@123",
+    permissoes: getPermissoesPadrao("Operador"),
+    perfil: "Operador",
+    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+    ativo: true
+  },
   {
     id: "11111111-1111-1111-1111-111111111111",
     nome: "Carlos Eduardo Mendes (Administrador)",
@@ -111,33 +217,84 @@ const SEED_USUARIOS: Usuario[] = [
 ];
 
 const SEED_RESPONSAVEIS: Responsavel[] = [
-  {
-    id: "00000000-0000-0000-0000-000000000001",
-    nome: "Proprietário",
-    cpf: "000.000.000-00",
-    telefone: "(00) 00000-0000",
-    observacao: "Registro padrão intransferível para entrega ao próprio titular da CNH",
-    ativo: true,
-    created_at: new Date(Date.now() - 60 * 86400000).toISOString()
-  },
-  {
-    id: "00000000-0000-0000-0000-000000000002",
-    nome: "Centro de Formação de Condutores - CFC Modelo",
-    cpf: "12.345.678/0001-90",
-    telefone: "(67) 3321-4500",
-    observacao: "Responsável cadastrado por procuração do CFC para retirada em lote",
-    ativo: true,
-    created_at: new Date(Date.now() - 40 * 86400000).toISOString()
-  },
-  {
-    id: "00000000-0000-0000-0000-000000000003",
-    nome: "Dr. Marcos Silva Procurações",
-    cpf: "111.222.333-44",
-    telefone: "(67) 99988-7766",
-    observacao: "Despachante oficial credenciado no DETRAN/PA",
-    ativo: true,
-    created_at: new Date(Date.now() - 20 * 86400000).toISOString()
-  }
+  { id: "e2335b1e", nome: "PROPRIETÁRIO(A)", registro: "1", cpf: "", telefone: "", observacao: "Registro padrão para entrega ao próprio titular da CNH", ativo: true, created_at: new Date(Date.now() - 60 * 86400000).toISOString() },
+  { id: "d2b9952a", nome: "FRANCINEY DESPACHANTE", registro: "1522", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "f4f347f1", nome: "CLEONAR DESPCHANTE", registro: "4567", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "39de40af", nome: "BRIZOLA AUTO ESCOLA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "384b2d8c", nome: "DARLAN DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "60c09b00", nome: "MARLISSON DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "33a90e11", nome: "NATIELE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "71396f81", nome: "JOÃO PULO R MARQUES", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "97d3ad5e", nome: "AUTO ESCOLA SANTANA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "fa41cde8", nome: "ARY DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "402ee83c", nome: "BAMBAM DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "b9bfae57", nome: "MARIA EUNICE DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "1f3d321e", nome: "MOISES DESPACAHNTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "5c4f215f", nome: "GILMAR DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "772dfcfd", nome: "NEILA DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "56899764", nome: "KAIO LOHANDES", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "bb95cdf5", nome: "WALTER DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "1b5ecd73", nome: "ODON DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "ee175176", nome: "TULA DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "fa1481d9", nome: "ESPOSA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "527d4682", nome: "ELIONAI DESPACHANTE", cpf: "67079733200", registro: "52", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "c1058daa", nome: "ANTONIO WELITON RODRIGUES", cpf: "51548496200", telefone: "XXXXXX", ativo: true, created_at: new Date().toISOString() },
+  { id: "efd23bd9", nome: "NICE DESPACHANTE", cpf: "5555555", telefone: "555555", ativo: true, created_at: new Date().toISOString() },
+  { id: "7345b45d", nome: "GUSTAVO HENRIQUE SENA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "85415cb3", nome: "SOCORRO DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "2995c099", nome: "ADAO DA ROSA NETO", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "6fb3467c", nome: "EDCARLOS LOLO", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "68b5d3ce", nome: "FERNANDO DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "a84dc2b7", nome: "JULIMAR DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "6da4b403", nome: "ED CARLOS BRAGA DOS SANTOS", cpf: "57950040220", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "b7d9a27f", nome: "ANA CRISTINA CIRINO", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "9a185a18", nome: "JACKSON DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "54a9108e", nome: "DIEGO DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "9387e9c9", nome: "ADENIL DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "f785d235", nome: "LIDIANE FARIAS DA SILVA", cpf: "64639363249", telefone: "92991058775", ativo: true, created_at: new Date().toISOString() },
+  { id: "458fc6d7", nome: "NICE DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "221601a6", nome: "AMOS OLIVEIRA DOS ANJOS", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "0db81080", nome: "REGIS", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "40fda483", nome: "leonardo", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "83147b46", nome: "LUCIVAN DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "cc2a44d9", nome: "MANOEL DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "9967d842", nome: "RONALDO DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "8e90b2b1", nome: "ROSA DOS SANTOS DA SILVA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "b1597c81", nome: "PIERRE DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "f8b761c2", nome: "LEONARDO F MORAIS", cpf: "04456813229", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "a08afa6e", nome: "RAMON STIVENSON SILVA BANDEIRA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "bd4309ca", nome: "NAIZA KM 70", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "461abe27", nome: "CARLOS ROBERTO CORDEIRO DE SOUZA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "1852a327", nome: "ALESSANDRO DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "42121784", nome: "VERA LUCIA GONCALVES TEIXEIRA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "868e33c3", nome: "WANDERLEIA DE SENA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "b8c3fb7f", nome: "GERALDO BIESEK", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "24553e1f", nome: "JEAN COMTRI", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "541e38dc", nome: "ANGELO SILVA DO NASCIMENTO NETO", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "7b906878", nome: "VALDIR AG DETRAN", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "dfc67cdf", nome: "IVANILDE S SOUZA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "f2e68384", nome: "EVANILDO", cpf: "30862111234", telefone: "93991522309", ativo: true, created_at: new Date().toISOString() },
+  { id: "773b2b5e", nome: "DESPACHANTE BEZERRA", cpf: "04546542133", telefone: "9341286985", ativo: true, created_at: new Date().toISOString() },
+  { id: "1f8d56b0", nome: "HELIO JUNIOR FERREIRA DA SILVA", cpf: "58896740215", telefone: "93991611255", ativo: true, created_at: new Date().toISOString() },
+  { id: "bd613528", nome: "VAN DESPACHANTE", cpf: "64753808220", telefone: "93991523181", ativo: true, created_at: new Date().toISOString() },
+  { id: "bedd6d31", nome: "MARIA DA SILVA SOUSA", cpf: "88281221372", telefone: "91999019284", ativo: true, created_at: new Date().toISOString() },
+  { id: "bbfd243b", nome: "elisangela costa de souza", cpf: "40261735268", telefone: "93991230100", ativo: true, created_at: new Date().toISOString() },
+  { id: "c600348a", nome: "ALDAMIRO DE SOUSA", cpf: "00581706269", telefone: "93991634132", ativo: true, created_at: new Date().toISOString() },
+  { id: "2bace6d9", nome: "jamilson despachante", cpf: "98075829204", telefone: "93991380811", ativo: true, created_at: new Date().toISOString() },
+  { id: "5054bcf2", nome: "flavio da conceicao silva", cpf: "99015560153", telefone: "9398420915091", ativo: true, created_at: new Date().toISOString() },
+  { id: "bd2db3cb", nome: "BRUNO SA", cpf: "90619277220", telefone: "222222222", ativo: true, created_at: new Date().toISOString() },
+  { id: "a6638725", nome: "NEILA DESPACHANTE", cpf: "64752186268", telefone: "93991841911", ativo: true, created_at: new Date().toISOString() },
+  { id: "b9ace4bd", nome: "ANDREIA SOUZA DA CRUZ", cpf: "01421637243", telefone: "93991023212", ativo: true, created_at: new Date().toISOString() },
+  { id: "8724bcf3", nome: "NEY PEREIRA DE SOUSA JUNIOR", cpf: "01268469289", telefone: "93991546577", ativo: true, created_at: new Date().toISOString() },
+  { id: "853abea7", nome: "RENILDO MARTINS SANTOS", cpf: "28418838841", telefone: "93991395729", ativo: true, created_at: new Date().toISOString() },
+  { id: "78a4531a", nome: "MARINTIA DUTRA OLIVEIRA", cpf: "02818939267", telefone: "979911720559", ativo: true, created_at: new Date().toISOString() },
+  { id: "bf84ea0a", nome: "lazaro josevaldo dias moraes", cpf: "03255827264", telefone: "93991403019", ativo: true, created_at: new Date().toISOString() },
+  { id: "77b81905", nome: "VALMIRA DE BRITO PASSOS BRASIL", cpf: "31107613272", telefone: "93991416828", ativo: true, created_at: new Date().toISOString() },
+  { id: "4a72c6fa", nome: "maria de fatima barros morais", cpf: "63494388253", telefone: "93992292653", ativo: true, created_at: new Date().toISOString() },
+  { id: "74346934", nome: "ELIS MATIAS DE SOUZA", cpf: "59588209404", telefone: "9399181343381", ativo: true, created_at: new Date().toISOString() },
+  { id: "79d70e03", nome: "bruno cordeiro de moraes", cpf: "03911236298", telefone: "93991848502", ativo: true, created_at: new Date().toISOString() },
+  { id: "2a61a311", nome: "silvio vieira da silva", cpf: "03019656257", telefone: "939911712267", ativo: true, created_at: new Date().toISOString() },
+  { id: "75da89d6", nome: "EMANUEL AUTO ESCOLA", cpf: "4561.515613", telefone: "93991386008", ativo: true, created_at: new Date().toISOString() }
 ];
 
 const SEED_MAPEAMENTO: MapeamentoLocalizacao[] = [
@@ -206,100 +363,7 @@ const SEED_CANDIDATOS: Candidato[] = [
   { id: "cand-03", memorando_id: "memo-03", numero: "03", nome: "Helena Maria de Souza", cpf: "777.888.999-00", telefone: "(67) 98333-4455", remessa: "REM-003/ABRIL", created_at: new Date().toISOString() }
 ];
 
-const SEED_GERAL: GeralCNH[] = [
-  {
-    id: "cnh-01",
-    ordem: 1,
-    memorando_id: "memo-01",
-    nome: "Ana Paula da Silva Santos",
-    cpf: "123.456.789-00",
-    gaveta: "",
-    reparticao: "",
-    situacao: "Remetida",
-    data_movimento: new Date(Date.now() - 4 * 86400000).toISOString(),
-    usuario_id: "33333333-3333-3333-3333-333333333333",
-    usuario_nome: "Roberto Alves",
-    observacao: "Remessa enviada da Gráfica / Prodata em 25/07",
-    created_at: new Date(Date.now() - 4 * 86400000).toISOString()
-  },
-  {
-    id: "cnh-02",
-    ordem: 2,
-    memorando_id: "memo-01",
-    nome: "Bruno Costa Oliveira",
-    cpf: "234.567.890-11",
-    gaveta: "",
-    reparticao: "",
-    situacao: "Remetida",
-    data_movimento: new Date(Date.now() - 4 * 86400000).toISOString(),
-    usuario_id: "33333333-3333-3333-3333-333333333333",
-    usuario_nome: "Roberto Alves",
-    observacao: "Aguardando conferência no protocolo da agência",
-    created_at: new Date(Date.now() - 4 * 86400000).toISOString()
-  },
-  {
-    id: "cnh-03",
-    ordem: 3,
-    memorando_id: "memo-02",
-    nome: "Carlos Alberto Albuquerque",
-    cpf: "345.678.901-22",
-    gaveta: "Gaveta 1",
-    reparticao: "Repartição 3",
-    situacao: "Recebida",
-    data_movimento: new Date(Date.now() - 3 * 86400000).toISOString(),
-    usuario_id: "22222222-2222-2222-2222-222222222222",
-    usuario_nome: "Fernanda Souza",
-    observacao: "Recebida e arquivada na Gaveta 1 Repartição 3 (Inicial C)",
-    created_at: new Date(Date.now() - 3 * 86400000).toISOString()
-  },
-  {
-    id: "cnh-04",
-    ordem: 4,
-    memorando_id: "memo-02",
-    nome: "Daniela Rodrigues de Castro",
-    cpf: "456.789.012-33",
-    gaveta: "Gaveta 1",
-    reparticao: "Repartição 4",
-    situacao: "Recebida",
-    data_movimento: new Date(Date.now() - 3 * 86400000).toISOString(),
-    usuario_id: "22222222-2222-2222-2222-222222222222",
-    usuario_nome: "Fernanda Souza",
-    observacao: "Recebida via malote expresso",
-    created_at: new Date(Date.now() - 3 * 86400000).toISOString()
-  },
-  {
-    id: "cnh-05",
-    ordem: 5,
-    nome: "Eduardo Henrique Gonzaga",
-    cpf: "888.999.000-11",
-    gaveta: "Gaveta 1",
-    reparticao: "Repartição 5",
-    situacao: "Entregue",
-    responsavel_id: "00000000-0000-0000-0000-000000000001",
-    responsavel_nome: "Proprietário",
-    data_movimento: new Date(Date.now() - 6 * 86400000).toISOString(),
-    usuario_id: "33333333-3333-3333-3333-333333333333",
-    usuario_nome: "Roberto Alves",
-    observacao: "Retirada efetuada pelo próprio titular no guichê 4",
-    created_at: new Date(Date.now() - 6 * 86400000).toISOString()
-  },
-  {
-    id: "cnh-06",
-    ordem: 6,
-    nome: "Gabriel Augusto Peixoto",
-    cpf: "999.000.111-22",
-    gaveta: "Gaveta 1",
-    reparticao: "Repartição 7",
-    situacao: "Entregue",
-    responsavel_id: "00000000-0000-0000-0000-000000000003",
-    responsavel_nome: "Dr. Marcos Silva Procurações",
-    data_movimento: new Date(Date.now() - 5 * 86400000).toISOString(),
-    usuario_id: "33333333-3333-3333-3333-333333333333",
-    usuario_nome: "Roberto Alves",
-    observacao: "Entregue para despachante Dr. Marcos Silva via procuração",
-    created_at: new Date(Date.now() - 5 * 86400000).toISOString()
-  }
-];
+const SEED_GERAL: GeralCNH[] = cnhSeedData as GeralCNH[];
 
 const SEED_HISTORICO: HistoricoMovimentacao[] = [
   {
@@ -367,14 +431,46 @@ const SEED_AUDITORIA: Auditoria[] = [
 ];
 
 // Helper para obter/salvar em LocalStorage
-function getStoredList<T>(key: string, seed: T[]): T[] {
+function getStoredList<T extends { id?: string }>(key: string, seed: T[]): T[] {
   try {
-    const raw = localStorage.getItem(`detran_cnh_${key}`);
+    const storageKey = `detran_cnh_${key}`;
+    const versionKey = `detran_cnh_${key}_v5`;
+    const raw = localStorage.getItem(storageKey);
+    const hasV5 = localStorage.getItem(versionKey);
+
     if (!raw) {
-      localStorage.setItem(`detran_cnh_${key}`, JSON.stringify(seed));
+      localStorage.setItem(storageKey, JSON.stringify(seed));
+      localStorage.setItem(versionKey, "true");
       return seed;
     }
-    return JSON.parse(raw);
+
+    let parsed: T[] = JSON.parse(raw);
+
+    if (!hasV5 || (key === "responsaveis" && parsed.length < seed.length)) {
+      const seedIds = new Set(seed.map((s) => s.id));
+      const customItems = parsed.filter(
+        (item) => item.id && !seedIds.has(item.id) && item.id !== "00000000-0000-0000-0000-000000000001" && item.id !== "00000000-0000-0000-0000-000000000002" && item.id !== "00000000-0000-0000-0000-000000000003"
+      );
+      parsed = [...seed, ...customItems];
+      localStorage.setItem(storageKey, JSON.stringify(parsed));
+      localStorage.setItem(versionKey, "true");
+      return parsed;
+    }
+
+    if (seed && seed.length > 0) {
+      let updated = false;
+      const existingIds = new Set(parsed.map((item) => item.id));
+      for (const s of seed) {
+        if (s.id && !existingIds.has(s.id)) {
+          parsed.push(s);
+          updated = true;
+        }
+      }
+      if (updated) {
+        localStorage.setItem(storageKey, JSON.stringify(parsed));
+      }
+    }
+    return parsed;
   } catch {
     return seed;
   }
@@ -619,14 +715,16 @@ export async function getUsuarios(): Promise<Usuario[]> {
     try {
       const { data, error } = await supabase.from("usuarios").select("*").order("created_at", { ascending: false });
       if (!error && data && data.length > 0) {
-        saveStoredList("usuarios", data as Usuario[]);
-        return data as Usuario[];
+        const activeUsers = (data as Usuario[]).filter((u) => u.ativo !== false);
+        saveStoredList("usuarios", activeUsers);
+        return activeUsers;
       }
     } catch (err) {
       console.warn("Aviso ao buscar usuários do Supabase, caindo para local:", err);
     }
   }
-  return getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+  const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+  return localList.filter((u) => u.ativo !== false);
 }
 
 export async function createUsuario(data: Omit<Usuario, "id" | "created_at">, adminId: string, adminNome: string): Promise<Usuario> {
@@ -700,31 +798,43 @@ export async function updateUsuario(id: string, data: Partial<Usuario>, adminId:
 
   if (isSupabaseConfigured()) {
     try {
-      const { data: updatedSup, error } = await supabase.from("usuarios").update(data).eq("id", id).select().single();
-      if (error) {
-        console.error("Erro no Supabase ao editar usuário:", error);
-        throw new Error(`Erro no Supabase: ${error.message}`);
+      // Filtra apenas as colunas válidas que existem na tabela 'usuarios' do Supabase
+      const allowedKeys = [
+        "nome", "nome_curto", "fone", "email", "funcao", "setor",
+        "login", "senha", "permissoes", "perfil", "ativo"
+      ];
+      const updatePayload: Record<string, any> = {};
+      for (const key of allowedKeys) {
+        if ((data as any)[key] !== undefined) {
+          updatePayload[key] = (data as any)[key];
+        }
       }
-      if (updatedSup) {
-        const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
-        const lIndex = localList.findIndex((u) => u.id === id);
-        if (lIndex !== -1) localList[lIndex] = updatedSup as Usuario;
-        saveStoredList("usuarios", localList);
-        await logAuditoria("usuarios", ant.login, "Alteração", adminId, adminNome, ant, updatedSup);
-        return updatedSup as Usuario;
+
+      if (Object.keys(updatePayload).length > 0) {
+        const { data: updatedSup, error } = await supabase
+          .from("usuarios")
+          .update(updatePayload)
+          .eq("id", id)
+          .select()
+          .maybeSingle();
+
+        if (error) {
+          console.warn("Aviso do Supabase ao atualizar usuário:", error.message);
+        } else if (updatedSup) {
+          Object.assign(atualizado, updatedSup);
+        }
       }
     } catch (err: any) {
-      console.error("Falha ao editar usuário no Supabase:", err);
-      if (err.message && err.message.startsWith("Erro no Supabase")) {
-        throw err;
-      }
+      console.warn("Falha ao atualizar usuário no Supabase, mantendo dados locais:", err);
     }
   }
 
   const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
   const lIndex = localList.findIndex((u) => u.id === id);
   if (lIndex !== -1) localList[lIndex] = atualizado;
+  else localList.push(atualizado);
   saveStoredList("usuarios", localList);
+
   await logAuditoria("usuarios", ant.login, "Alteração", adminId, adminNome, ant, atualizado);
   return atualizado;
 }
@@ -741,14 +851,11 @@ export async function deleteUsuario(id: string, adminId: string, adminNome: stri
     try {
       const { error } = await supabase.from("usuarios").delete().eq("id", id);
       if (error) {
-        console.error("Erro no Supabase ao deletar usuário:", error);
-        throw new Error(`Erro no Supabase: ${error.message}`);
+        console.warn("Aviso no Supabase ao deletar usuário (inativando para preservar integridade):", error.message);
+        await supabase.from("usuarios").update({ ativo: false }).eq("id", id);
       }
     } catch (err: any) {
-      console.error("Falha ao deletar no Supabase:", err);
-      if (err.message && err.message.startsWith("Erro no Supabase")) {
-        throw err;
-      }
+      console.warn("Falha ao deletar no Supabase, mantendo exclusão local:", err);
     }
   }
 
@@ -785,8 +892,8 @@ export async function createResponsavel(
   userNome: string
 ): Promise<Responsavel> {
   const list = await getResponsaveis();
-  const cleanNewCpf = data.cpf.replace(/\D/g, "");
-  if (list.some((r) => r.cpf.replace(/\D/g, "") === cleanNewCpf)) {
+  const cleanNewCpf = data.cpf ? data.cpf.replace(/\D/g, "") : "";
+  if (cleanNewCpf && list.some((r) => r.cpf && r.cpf.replace(/\D/g, "") === cleanNewCpf)) {
     throw new Error("Impedir CPF duplicado: Este CPF já está cadastrado como responsável.");
   }
 
@@ -1163,24 +1270,22 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
     rawList = getStoredList<GeralCNH>("geral", SEED_GERAL);
   }
 
-  // Garantir que a data_movimento seja rigorosamente igual à data de criação (created_at) para todas as linhas
-  let listChanged = false;
-  const list = rawList.map((c) => {
-    const dataCriacao = c.created_at || (c as any).criado_em || c.data_movimento;
-    if (dataCriacao && (c.data_movimento !== dataCriacao || !c.created_at)) {
-      listChanged = true;
-      return {
-        ...c,
-        data_movimento: dataCriacao,
-        created_at: dataCriacao
-      };
-    }
-    return c;
-  });
+  const seedByOrdem = new Map(SEED_GERAL.map((s) => [s.ordem, s]));
+  const seedById = new Map(SEED_GERAL.map((s) => [s.id, s]));
 
-  if (listChanged) {
-    saveStoredList("geral", list);
-  }
+  const list = rawList.map((c) => {
+    const seed = seedByOrdem.get(c.ordem) || seedById.get(c.id);
+    const dataMov = (seed && seed.data_movimento) ? seed.data_movimento : (c.data_movimento || c.created_at || (c as any).criado_em);
+    const usrId = (seed && seed.usuario_id) ? seed.usuario_id : c.usuario_id;
+    const usrNome = (seed && seed.usuario_nome) ? seed.usuario_nome : c.usuario_nome;
+
+    return {
+      ...c,
+      data_movimento: dataMov,
+      usuario_id: usrId,
+      usuario_nome: usrNome
+    };
+  });
 
   const usuarios = await getUsuarios();
   const responsaveis = await getResponsaveis();
@@ -1188,12 +1293,34 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
 
   return list.map((c) => {
     const usr = usuarios.find((u) => u.id === c.usuario_id);
-    const resp = responsaveis.find((r) => r.id === c.responsavel_id);
+    const resp = responsaveis.find(
+      (r) =>
+        r.id === c.responsavel_id ||
+        r.id === c.responsavel_nome ||
+        (r.nome && c.responsavel_nome && r.nome.trim().toLowerCase() === c.responsavel_nome.trim().toLowerCase()) ||
+        (r.nome && c.responsavel_id && r.nome.trim().toLowerCase() === c.responsavel_id.trim().toLowerCase())
+    );
     const memo = memorandos.find((m) => m.id === c.memorando_id);
+
+    let displayRespNome = resp ? resp.nome : c.responsavel_nome;
+    if (displayRespNome) {
+      const matchResp = responsaveis.find((r) => r.id === displayRespNome);
+      if (matchResp) {
+        displayRespNome = matchResp.nome;
+      }
+    }
+    if ((!displayRespNome || displayRespNome === "-") && c.responsavel_id) {
+      const matchResp = responsaveis.find((r) => r.id === c.responsavel_id);
+      if (matchResp) {
+        displayRespNome = matchResp.nome;
+      }
+    }
+
     return {
       ...c,
       usuario_nome: usr ? usr.nome_curto : c.usuario_nome || "Agente DETRAN",
-      responsavel_nome: resp ? resp.nome : c.responsavel_nome || "-",
+      responsavel_id: resp ? resp.id : c.responsavel_id,
+      responsavel_nome: displayRespNome && displayRespNome !== "-" ? displayRespNome : (c.responsavel_nome && !responsaveis.some(r => r.id === c.responsavel_nome) ? c.responsavel_nome : "-"),
       memorando_numero: memo ? memo.numero : undefined,
       remessa: memo ? (memo.remessa || memo.numero) : (c.remessa || undefined)
     };
@@ -1814,6 +1941,51 @@ export interface SpreadsheetImportSummary {
   supabaseError?: string;
 }
 
+function parseSpreadsheetDate(raw: any): string {
+  if (raw === undefined || raw === null || raw === "") {
+    return new Date().toISOString();
+  }
+
+  if (raw instanceof Date && !isNaN(raw.getTime())) {
+    return raw.toISOString();
+  }
+
+  if (typeof raw === "number") {
+    try {
+      const dateObj = XLSX.SSF ? XLSX.SSF.parse_date_code(raw) : null;
+      if (dateObj) {
+        const d = new Date(Date.UTC(dateObj.y, dateObj.m - 1, dateObj.d, dateObj.H || 12, dateObj.M || 0, dateObj.S || 0));
+        if (!isNaN(d.getTime())) return d.toISOString();
+      }
+    } catch (_) {}
+    const jsDate = new Date(Math.round((raw - 25569) * 86400 * 1000));
+    if (!isNaN(jsDate.getTime())) return jsDate.toISOString();
+  }
+
+  const str = String(raw).trim();
+  if (!str) return new Date().toISOString();
+
+  // Match DD/MM/YYYY HH:mm:ss or DD/MM/YYYY
+  const dmyMatch = str.match(/^(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10) - 1;
+    const year = parseInt(dmyMatch[3], 10);
+    const hour = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 12;
+    const min = dmyMatch[5] ? parseInt(dmyMatch[5], 10) : 0;
+    const sec = dmyMatch[6] ? parseInt(dmyMatch[6], 10) : 0;
+    const d = new Date(Date.UTC(year, month, day, hour, min, sec));
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    return parsed.toISOString();
+  }
+
+  return new Date().toISOString();
+}
+
 function mapSpreadsheetRowToGeralCNH(
   row: Record<string, any>,
   index: number,
@@ -1880,39 +2052,113 @@ function mapSpreadsheetRowToGeralCNH(
     else if (sitStr.includes("receb")) situacao = "Recebida";
   }
 
-  const rawResp = getVal([/responsa/, /procurador/, /retirante/]);
-  const responsavel_nome = rawResp ? String(rawResp).trim() : undefined;
+  const rawId = getVal([/^id$/, /^cnh_id$/, /^id_cnh$/]);
+  const id = (rawId && String(rawId).trim() !== "")
+    ? String(rawId).trim()
+    : `cnh-imp-${ordem}-${Math.random().toString(36).substring(2, 7)}`;
 
-  const rawMemo = getVal([/memo/, /memorando/, /remessa/]);
-  const memorando_numero = rawMemo ? String(rawMemo).trim() : undefined;
+  // Responsável (id e nome)
+  const rawRespId = getVal([/^responsavel_id$/, /responsavel_id/, /id_responsavel/, /id_resp/]);
+  const rawRespNome = getVal([/^responsavel_nome$/, /responsavel_nome/, /nome_responsavel/]);
+  const rawRespGeneric = getVal([/^responsavel$/, /procurador/, /retirante/]);
 
-  const rawObs = getVal([/obs/, /observa/, /detalhe/, /nota/]);
-  const observacao = rawObs ? String(rawObs).trim() : undefined;
+  let responsavel_id: string | undefined = rawRespId ? String(rawRespId).trim() : undefined;
+  let responsavel_nome: string | undefined = rawRespNome ? String(rawRespNome).trim() : undefined;
 
-  const rawData = getVal([/data/]);
-  let data_movimento = new Date().toISOString();
-  if (rawData) {
-    const parsedDate = new Date(rawData);
-    if (!isNaN(parsedDate.getTime())) {
-      data_movimento = parsedDate.toISOString();
+  if (!responsavel_id && !responsavel_nome && rawRespGeneric) {
+    const gStr = String(rawRespGeneric).trim();
+    if (/^[0-9a-fA-F]{8}$/.test(gStr)) {
+      responsavel_id = gStr.toLowerCase();
+    } else {
+      responsavel_nome = gStr;
     }
   }
 
+  if (responsavel_nome && /^[0-9a-fA-F]{8}$/.test(responsavel_nome) && (!responsavel_id || responsavel_id === responsavel_nome)) {
+    responsavel_id = responsavel_nome.toLowerCase();
+    responsavel_nome = undefined;
+  }
+
+  if (responsavel_id) {
+    responsavel_id = responsavel_id.toLowerCase();
+    if (!responsavel_nome) {
+      if (responsavel_id === "e2335b1e") {
+        responsavel_nome = "PROPRIETÁRIO(A)";
+      } else {
+        const found = SEED_RESPONSAVEIS.find(r => r.id.toLowerCase() === responsavel_id);
+        if (found) responsavel_nome = found.nome;
+      }
+    }
+  }
+
+  // Data de Movimentação
+  const rawDataMov = getVal([/^data_movimentacao$/, /^data_movimento$/, /^data_mov$/, /data_movim/, /^data$/]);
+  const data_movimento = parseSpreadsheetDate(rawDataMov);
+
+  // Usuário (id e nome)
+  const rawUserId = getVal([/^usuario_id$/, /usuario_id/, /id_usuario/, /user_id/]);
+  const rawUserNome = getVal([/^usuario_nome$/, /usuario_nome/, /nome_usuario/, /operador/]);
+
+  let usuario_id: string = rawUserId ? String(rawUserId).trim() : usuarioId;
+  let usuario_nome: string = rawUserNome ? String(rawUserNome).trim() : usuarioNome;
+
+  const knownUsers: Record<string, { id: string; nome: string }> = {
+    "ba8dff5e": { id: "ba8dff5e", nome: "Amerson Gonçalves Bento" },
+    "2837b0a8": { id: "2837b0a8", nome: "Zedequias Carlos de Melo" },
+    "8bc1be25": { id: "8bc1be25", nome: "Ivanilde Souza" },
+    "51f76373": { id: "51f76373", nome: "Kaio Lohandes Gomes de Melo" },
+    "33a4ab38": { id: "33a4ab38", nome: "Deck Melo" },
+    "a6708d10": { id: "a6708d10", nome: "Dabita de Oliveira Cardoso" },
+    "33aa7d87": { id: "33aa7d87", nome: "Regis Reginaldo" },
+    "33aa7bs56": { id: "33aa7bs56", nome: "Fernado Color" },
+    "a2940ebb": { id: "a2940ebb", nome: "Zedquias Melo" }
+  };
+
+  if (usuario_id && knownUsers[usuario_id.toLowerCase()]) {
+    usuario_id = usuario_id.toLowerCase();
+    if (!rawUserNome) {
+      usuario_nome = knownUsers[usuario_id].nome;
+    }
+  } else if (usuario_nome) {
+    const uLower = usuario_nome.toLowerCase();
+    for (const [idKey, uObj] of Object.entries(knownUsers)) {
+      if (uLower.includes(uObj.nome.split(" ")[0].toLowerCase())) {
+        usuario_id = idKey;
+        usuario_nome = uObj.nome;
+        break;
+      }
+    }
+  }
+
+  const rawMemo = getVal([/^memorando_numero$/, /^memorando$/, /memo/]);
+  const memorando_numero = rawMemo ? String(rawMemo).trim() : undefined;
+
+  const rawRemessa = getVal([/^remessa$/]);
+  const remessa = rawRemessa ? String(rawRemessa).trim() : undefined;
+
+  const rawObs = getVal([/^observacao$/, /observa/, /obs/, /nota/]);
+  const observacao = rawObs ? String(rawObs).trim() : undefined;
+
+  const rawCreated = getVal([/^created_at$/]);
+  const created_at = rawCreated ? parseSpreadsheetDate(rawCreated) : data_movimento;
+
   return {
-    id: `cnh-imp-${ordem}-${Math.random().toString(36).substring(2, 7)}`,
+    id,
     ordem,
     nome,
     cpf,
     gaveta,
     reparticao,
     situacao,
+    responsavel_id,
     responsavel_nome,
     data_movimento,
-    usuario_id: usuarioId,
-    usuario_nome: usuarioNome,
+    usuario_id,
+    usuario_nome,
     memorando_numero,
+    remessa,
     observacao,
-    created_at: data_movimento
+    created_at
   };
 }
 
@@ -1999,20 +2245,57 @@ export async function importSpreadsheetData(
         supabaseError = "Supabase não está configurado. Os dados foram salvos no armazenamento local.";
       } else {
         try {
+          // 1. Auto-upsert any responsaveis from spreadsheet to Supabase table "responsaveis"
+          const respItemsToUpsert = new Map<string, string>();
+          newItems.forEach(g => {
+            if (g.responsavel_id) {
+              respItemsToUpsert.set(g.responsavel_id, g.responsavel_nome || `Responsável ${g.responsavel_id}`);
+            }
+          });
+          if (respItemsToUpsert.size > 0) {
+            const respPayload = Array.from(respItemsToUpsert.entries()).map(([rid, rnome]) => ({
+              id: rid,
+              nome: rnome,
+              ativo: true
+            }));
+            await supabase.from("responsaveis").upsert(respPayload, { onConflict: "id" });
+          }
+
+          // 2. Auto-upsert any usuarios from spreadsheet to Supabase table "usuarios"
+          const userItemsToUpsert = new Map<string, string>();
+          newItems.forEach(g => {
+            if (g.usuario_id) {
+              userItemsToUpsert.set(g.usuario_id, g.usuario_nome || `Usuário ${g.usuario_id}`);
+            }
+          });
+          if (userItemsToUpsert.size > 0) {
+            const userPayload = Array.from(userItemsToUpsert.entries()).map(([uid, unome]) => ({
+              id: uid,
+              nome: unome.split(" ")[0],
+              nome_completo: unome,
+              ativo: true
+            }));
+            await supabase.from("usuarios").upsert(userPayload, { onConflict: "id" });
+          }
+
+          // 3. Upsert into geral_cnhs with exact columns from spreadsheet
           const payload = newItems.map(g => ({
             id: g.id,
             ordem: g.ordem,
             nome: g.nome,
             cpf: g.cpf,
-            gaveta: g.gaveta,
-            reparticao: g.reparticao,
+            gaveta: g.gaveta || "",
+            reparticao: g.reparticao || "",
             situacao: g.situacao,
+            responsavel_id: g.responsavel_id || null,
             responsavel_nome: g.responsavel_nome || null,
             data_movimento: g.data_movimento || new Date().toISOString(),
-            usuario_id: usuarioId,
-            usuario_nome: usuarioNome,
+            usuario_id: g.usuario_id || null,
+            usuario_nome: g.usuario_nome || null,
             memorando_numero: g.memorando_numero || null,
-            observacao: g.observacao || null
+            remessa: g.remessa || null,
+            observacao: g.observacao || null,
+            created_at: g.created_at || g.data_movimento || new Date().toISOString()
           }));
 
           const batchSize = 100;
@@ -2203,11 +2486,10 @@ export async function syncLocalToSupabase(
   const validCandIds = new Set(cands.map(c => c.id));
   const validGeralIds = new Set(geral.map(g => g.id));
 
-  const cleanFK = (id?: string | null, validSet?: Set<string>): string | null => {
+  const cleanFK = (id?: string | null, _validSet?: Set<string>): string | null => {
     if (!id || typeof id !== "string") return null;
     const trimmed = id.trim();
     if (trimmed === "") return null;
-    if (validSet && !validSet.has(trimmed)) return null;
     return trimmed;
   };
 
@@ -2244,10 +2526,11 @@ export async function syncLocalToSupabase(
     log("📦 Sincronizando tabela 'responsaveis'...");
     if (resp.length > 0) {
       const payload = resp.map(r => ({
-        id: r.id || "00000000-0000-0000-0000-000000000001",
+        id: r.id || "e2335b1e",
         nome: r.nome,
-        cpf: r.cpf,
+        cpf: r.cpf || null,
         telefone: r.telefone || null,
+        registro: r.registro || null,
         observacao: r.observacao || null,
         ativo: r.ativo !== false,
         created_at: r.created_at || new Date().toISOString()
@@ -2331,6 +2614,39 @@ export async function syncLocalToSupabase(
   try {
     log(`📦 Sincronizando tabela 'geral_cnhs' (${geral.length} registros em lotes de 250)...`);
     if (geral.length > 0) {
+      // Auto-upsert missing responsaveis into Supabase
+      const respMapToUpsert = new Map<string, string>();
+      geral.forEach(g => {
+        if (g.responsavel_id) {
+          respMapToUpsert.set(g.responsavel_id, g.responsavel_nome || `Responsável ${g.responsavel_id}`);
+        }
+      });
+      if (respMapToUpsert.size > 0) {
+        const respBatch = Array.from(respMapToUpsert.entries()).map(([rid, rnome]) => ({
+          id: rid,
+          nome: rnome,
+          ativo: true
+        }));
+        await upsertInBatches("responsaveis", respBatch, 250, "id");
+      }
+
+      // Auto-upsert missing usuarios into Supabase
+      const userMapToUpsert = new Map<string, string>();
+      geral.forEach(g => {
+        if (g.usuario_id) {
+          userMapToUpsert.set(g.usuario_id, g.usuario_nome || `Usuário ${g.usuario_id}`);
+        }
+      });
+      if (userMapToUpsert.size > 0) {
+        const userBatch = Array.from(userMapToUpsert.entries()).map(([uid, unome]) => ({
+          id: uid,
+          nome: unome.split(" ")[0],
+          nome_completo: unome,
+          ativo: true
+        }));
+        await upsertInBatches("usuarios", userBatch, 250, "id");
+      }
+
       const payload = geral.map(g => ({
         id: g.id || `cnh-${g.ordem}`,
         ordem: g.ordem,

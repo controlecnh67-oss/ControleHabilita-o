@@ -214,6 +214,22 @@ export const GeralPage: React.FC = () => {
     fetchDados();
   }, []);
 
+  const getResponsavelDisplayName = (nome?: string, id?: string) => {
+    if (!nome && !id) return "-";
+    if (nome) {
+      const matchById = responsaveis.find((r) => r.id === nome);
+      if (matchById) return matchById.nome;
+      const matchByName = responsaveis.find((r) => r.nome.trim().toLowerCase() === nome.trim().toLowerCase());
+      if (matchByName) return matchByName.nome;
+    }
+    if (id) {
+      const matchById = responsaveis.find((r) => r.id === id);
+      if (matchById) return matchById.nome;
+    }
+    if (nome && nome !== "-") return nome;
+    return "-";
+  };
+
   // Ordenação e Filtros na memória (TanStack style)
   const filteredData = useMemo(() => {
     const normSearch = normalizeSearch(searchTerm);
@@ -430,7 +446,7 @@ export const GeralPage: React.FC = () => {
     setSelectedCNHForEntrega(item);
     setTipoRetirante("proprietario");
     // Seleciona proprietário por padrão
-    const prop = responsaveis.find((r) => r.nome === "Proprietário");
+    const prop = responsaveis.find((r) => r.nome === "Proprietário" || r.nome === "PROPRIETÁRIO(A)" || r.id === "e2335b1e");
     setSelectedRespId(prop ? prop.id : "");
     setSearchRespTerm("");
     setEntregaObservacao("");
@@ -443,7 +459,7 @@ export const GeralPage: React.FC = () => {
 
     let targetRespId = selectedRespId;
     if (tipoRetirante === "proprietario") {
-      const prop = responsaveis.find((r) => r.nome === "Proprietário");
+      const prop = responsaveis.find((r) => r.nome === "Proprietário" || r.nome === "PROPRIETÁRIO(A)" || r.id === "e2335b1e");
       if (!prop) {
         alert("Erro: Registro padrão Proprietário não encontrado.");
         return;
@@ -717,11 +733,13 @@ export const GeralPage: React.FC = () => {
     }
   };
 
-  const outOfPropes = responsaveis.filter((r) => r.nome !== "Proprietário");
+  const outOfPropes = responsaveis.filter((r) => r.nome !== "Proprietário" && r.nome !== "PROPRIETÁRIO(A)");
   const filteredRespDropdown = outOfPropes.filter(
     (r) =>
+      r.id.toLowerCase().includes(searchRespTerm.toLowerCase()) ||
+      (r.registro && r.registro.toLowerCase().includes(searchRespTerm.toLowerCase())) ||
       r.nome.toLowerCase().includes(searchRespTerm.toLowerCase()) ||
-      r.cpf.includes(searchRespTerm) ||
+      (r.cpf && r.cpf.includes(searchRespTerm)) ||
       (r.observacao && r.observacao.toLowerCase().includes(searchRespTerm.toLowerCase()))
   );
 
@@ -1182,7 +1200,7 @@ export const GeralPage: React.FC = () => {
                     {/* Responsável */}
                     {visibleColumns.responsavel && (
                       <td className="py-2 px-4 font-medium text-slate-700 dark:text-slate-300">
-                        {c.responsavel_nome || "-"}
+                        {getResponsavelDisplayName(c.responsavel_nome, c.responsavel_id)}
                       </td>
                     )}
 
@@ -1552,9 +1570,16 @@ export const GeralPage: React.FC = () => {
                         }`}
                       >
                         <div>
-                          <span>{r.nome}</span>
+                          <div className="flex items-center gap-2">
+                            <span className={`font-semibold ${selectedRespId === r.id ? "text-white" : "text-slate-900 dark:text-white"}`}>{r.nome}</span>
+                            {r.registro && (
+                              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${selectedRespId === r.id ? "bg-blue-700 text-white" : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300"}`}>
+                                Reg: {r.registro}
+                              </span>
+                            )}
+                          </div>
                           <span className={`block text-[10px] font-mono ${selectedRespId === r.id ? "text-blue-100" : "text-slate-400"}`}>
-                            CPF/CNPJ: {r.cpf} {r.telefone ? ` | Fone: ${r.telefone}` : ""}
+                            {r.cpf ? `CPF: ${r.cpf}` : ""} {r.telefone ? `${r.cpf ? " | " : ""}Fone: ${r.telefone}` : ""}
                           </span>
                         </div>
                         {selectedRespId === r.id && <CheckCircle2 className="w-4 h-4 shrink-0 text-white" />}
@@ -2080,7 +2105,7 @@ export const GeralPage: React.FC = () => {
                   <div className="flex justify-between items-center">
                     <span className="text-slate-400">Responsável:</span>
                     <span className="font-bold text-slate-800 dark:text-slate-200">
-                      {selectedCNHDetails.responsavel_nome || "Titular ou Não Registrado"}
+                      {getResponsavelDisplayName(selectedCNHDetails.responsavel_nome, selectedCNHDetails.responsavel_id)}
                     </span>
                   </div>
                   <div className="flex justify-between items-center">

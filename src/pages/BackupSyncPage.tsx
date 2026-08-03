@@ -77,7 +77,9 @@ DROP TABLE IF EXISTS usuarios CASCADE;
 CREATE TABLE usuarios (
   id TEXT PRIMARY KEY,
   nome TEXT NOT NULL,
+  nome_completo TEXT,
   nome_curto TEXT NOT NULL,
+  cpf TEXT,
   fone TEXT,
   email TEXT UNIQUE NOT NULL,
   funcao TEXT,

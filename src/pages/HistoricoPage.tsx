@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { History, Search, ArrowRight, Lock, User, Clock, FileText, Calendar, Filter } from "lucide-react";
-import { HistoricoMovimentacao } from "../types";
-import { getHistoricoList } from "../services/db";
+import { HistoricoMovimentacao, Responsavel } from "../types";
+import { getHistoricoList, getResponsaveis } from "../services/db";
 import { Badge } from "../components/ui/Badge";
 import { formatDateTime, normalizeSearch } from "../lib/utils";
 
 export const HistoricoPage: React.FC = () => {
   const [historico, setHistorico] = useState<HistoricoMovimentacao[]>([]);
+  const [responsaveis, setResponsaveis] = useState<Responsavel[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [filtroSituacao, setFiltroSituacao] = useState<string>("todas");
@@ -14,13 +15,29 @@ export const HistoricoPage: React.FC = () => {
   const fetchDados = async () => {
     setLoading(true);
     try {
-      const data = await getHistoricoList();
+      const [data, dataResp] = await Promise.all([getHistoricoList(), getResponsaveis()]);
       setHistorico(data);
+      setResponsaveis(dataResp);
     } catch (err) {
       console.error("Erro ao carregar histórico:", err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const getRespName = (nome?: string, id?: string) => {
+    if (!nome && !id) return "-";
+    if (nome) {
+      const matchById = responsaveis.find((r) => r.id === nome);
+      if (matchById) return matchById.nome;
+      const matchByName = responsaveis.find((r) => r.nome.trim().toLowerCase() === nome.trim().toLowerCase());
+      if (matchByName) return matchByName.nome;
+    }
+    if (id) {
+      const matchById = responsaveis.find((r) => r.id === id);
+      if (matchById) return matchById.nome;
+    }
+    return nome && nome !== "-" ? nome : "-";
   };
 
   useEffect(() => {
@@ -136,7 +153,7 @@ export const HistoricoPage: React.FC = () => {
                     </td>
 
                     <td className="py-3.5 px-6 font-medium text-slate-700 dark:text-slate-300">
-                      {item.responsavel_nome || "-"}
+                      {getRespName(item.responsavel_nome, item.responsavel_id)}
                     </td>
 
                     <td className="py-3.5 px-6 text-slate-600 dark:text-slate-400">

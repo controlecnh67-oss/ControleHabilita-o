@@ -25,7 +25,7 @@ export function isTabAllowedForProfile(tab: NavTab, perfil?: PerfilUsuario): boo
       return ["dashboard", "geral", "memorandos", "responsaveis", "mapeamento", "historico", "auditoria"].includes(tab);
 
     case "Operador":
-      return ["dashboard", "geral", "memorandos", "responsaveis", "mapeamento", "historico"].includes(tab);
+      return ["dashboard", "geral", "responsaveis", "mapeamento"].includes(tab);
 
     case "Consulta":
       return ["dashboard", "geral", "historico", "auditoria"].includes(tab);
@@ -98,8 +98,9 @@ export function getPermissoesPadrao(perfil: PerfilUsuario): string[] {
 export interface Responsavel {
   id: string;
   nome: string;
-  cpf: string;
+  cpf?: string;
   telefone?: string;
+  registro?: string;
   observacao?: string;
   ativo: boolean;
   created_at: string;
@@ -207,9 +208,10 @@ export const UsuarioSchema = z.object({
 });
 
 export const ResponsavelSchema = z.object({
-  nome: z.string().min(3, "Nome completo obrigatório"),
-  cpf: z.string().min(14, "CPF incompleto").max(14, "CPF inválido"),
+  nome: z.string().min(2, "Nome é obrigatório"),
+  cpf: z.string().optional(),
   telefone: z.string().optional(),
+  registro: z.string().optional(),
   observacao: z.string().optional(),
   ativo: z.boolean().default(true),
 });

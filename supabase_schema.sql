@@ -22,10 +22,12 @@ DROP TABLE IF EXISTS usuarios CASCADE;
 -- 2. CRIAÇÃO DAS TABELAS (TODAS AS CHAVES PRIMÁRIAS E ESTRANGEIRAS EM TEXT PARA TOTAL COMPATIBILIDADE)
 
 -- Tabela de Usuários / Operadores do Sistema
-CREATE TABLE usuarios (
+CREATE TABLE IF NOT EXISTS usuarios (
   id TEXT PRIMARY KEY,
   nome TEXT NOT NULL,
+  nome_completo TEXT,
   nome_curto TEXT NOT NULL,
+  cpf TEXT,
   fone TEXT,
   email TEXT UNIQUE NOT NULL,
   funcao TEXT,
@@ -39,7 +41,7 @@ CREATE TABLE usuarios (
 );
 
 -- Tabela de Responsáveis / Procuradores / Titulares
-CREATE TABLE responsaveis (
+CREATE TABLE IF NOT EXISTS responsaveis (
   id TEXT PRIMARY KEY,
   nome TEXT NOT NULL,
   cpf TEXT NOT NULL,
@@ -50,7 +52,7 @@ CREATE TABLE responsaveis (
 );
 
 -- Tabela de Mapeamento de Localização (Letra Inicial -> Gaveta e Repartição)
-CREATE TABLE mapeamento_localizacao (
+CREATE TABLE IF NOT EXISTS mapeamento_localizacao (
   id TEXT PRIMARY KEY,
   inicial TEXT UNIQUE NOT NULL,
   gaveta TEXT NOT NULL,
@@ -59,7 +61,7 @@ CREATE TABLE mapeamento_localizacao (
 );
 
 -- Tabela de Memorandos e Remessas
-CREATE TABLE memorandos (
+CREATE TABLE IF NOT EXISTS memorandos (
   id TEXT PRIMARY KEY,
   numero TEXT UNIQUE NOT NULL,
   usuario_id TEXT REFERENCES usuarios(id) ON DELETE SET NULL,
@@ -71,7 +73,7 @@ CREATE TABLE memorandos (
 );
 
 -- Tabela de Candidatos vinculados aos Memorandos
-CREATE TABLE candidatos (
+CREATE TABLE IF NOT EXISTS candidatos (
   id TEXT PRIMARY KEY,
   memorando_id TEXT REFERENCES memorandos(id) ON DELETE CASCADE,
   numero TEXT,
@@ -83,7 +85,7 @@ CREATE TABLE candidatos (
 );
 
 -- Tabela Geral de CNHs (Protocolo e Gavetas)
-CREATE TABLE geral_cnhs (
+CREATE TABLE IF NOT EXISTS geral_cnhs (
   id TEXT PRIMARY KEY,
   ordem INTEGER NOT NULL,
   memorando_id TEXT REFERENCES memorandos(id) ON DELETE SET NULL,
@@ -105,7 +107,7 @@ CREATE TABLE geral_cnhs (
 );
 
 -- Tabela de Histórico de Movimentações (Trilha de Auditoria das CNHs)
-CREATE TABLE historico_movimentacoes (
+CREATE TABLE IF NOT EXISTS historico_movimentacoes (
   id TEXT PRIMARY KEY,
   geral_id TEXT REFERENCES geral_cnhs(id) ON DELETE CASCADE,
   geral_ordem INTEGER,
@@ -121,7 +123,7 @@ CREATE TABLE historico_movimentacoes (
 );
 
 -- Tabela de Registros de Auditoria do Sistema
-CREATE TABLE auditoria (
+CREATE TABLE IF NOT EXISTS auditoria (
   id TEXT PRIMARY KEY,
   tabela TEXT NOT NULL,
   registro_id TEXT NOT NULL,

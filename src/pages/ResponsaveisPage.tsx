@@ -18,6 +18,7 @@ export const ResponsaveisPage: React.FC = () => {
   // Form State
   const [nome, setNome] = useState("");
   const [cpf, setCpf] = useState("");
+  const [registro, setRegistro] = useState("");
   const [telefone, setTelefone] = useState("");
   const [observacao, setObservacao] = useState("");
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
@@ -45,13 +46,15 @@ export const ResponsaveisPage: React.FC = () => {
     if (item) {
       setEditingItem(item);
       setNome(item.nome);
-      setCpf(item.cpf);
+      setCpf(item.cpf || "");
+      setRegistro(item.registro || "");
       setTelefone(item.telefone || "");
       setObservacao(item.observacao || "");
     } else {
       setEditingItem(null);
       setNome("");
       setCpf("");
+      setRegistro("");
       setTelefone("");
       setObservacao("");
     }
@@ -64,10 +67,14 @@ export const ResponsaveisPage: React.FC = () => {
     setFormErrors({});
     setMessage(null);
 
+    const formattedCpf = cpf ? formatCPF(cpf) : "";
+    const formattedTel = telefone ? formatPhone(telefone) : "";
+
     const validation = ResponsavelSchema.safeParse({
       nome,
-      cpf: formatCPF(cpf),
-      telefone: formatPhone(telefone),
+      cpf: formattedCpf,
+      registro,
+      telefone: formattedTel,
       observacao,
       ativo: true,
     });
@@ -86,14 +93,14 @@ export const ResponsaveisPage: React.FC = () => {
       if (editingItem) {
         await updateResponsavel(
           editingItem.id,
-          { nome, cpf: formatCPF(cpf), telefone: formatPhone(telefone), observacao },
+          { nome, cpf: formattedCpf, registro, telefone: formattedTel, observacao },
           user.id,
           user.nome_curto
         );
         setMessage({ type: "success", text: "Responsável atualizado com sucesso!" });
       } else {
         await createResponsavel(
-          { nome, cpf: formatCPF(cpf), telefone: formatPhone(telefone), observacao, ativo: true },
+          { nome, cpf: formattedCpf, registro, telefone: formattedTel, observacao, ativo: true },
           user.id,
           user.nome_curto
         );
@@ -110,7 +117,7 @@ export const ResponsaveisPage: React.FC = () => {
 
   const handleDelete = async (item: Responsavel) => {
     if (!user || !canEdit) return;
-    if (item.nome === "Proprietário" || item.cpf === "000.000.000-00") {
+    if (item.nome === "Proprietário" || item.nome === "PROPRIETÁRIO(A)" || item.cpf === "000.000.000-00") {
       alert("⚠️ Ação não permitida: O registro padrão Proprietário não pode ser excluído.");
       return;
     }
@@ -126,15 +133,15 @@ export const ResponsaveisPage: React.FC = () => {
   };
 
   const normSearch = normalizeSearch(searchTerm);
-  const filtered = responsaveis.filter(
-    (r) =>
-      !normSearch ||
-      normalizeSearch(r.nome).includes(normSearch) ||
-      matchDigitsSafe(r.cpf, searchTerm) ||
-      (r.cpf && r.cpf.includes(searchTerm.trim())) ||
-      matchDigitsSafe(r.telefone, searchTerm) ||
-      (r.telefone && r.telefone.includes(searchTerm.trim()))
-  );
+  const filtered = responsaveis.filter((r) => {
+    if (!normSearch) return true;
+    const matchId = r.id.toLowerCase().includes(normSearch);
+    const matchRegistro = r.registro ? r.registro.toLowerCase().includes(normSearch) : false;
+    const matchNome = normalizeSearch(r.nome).includes(normSearch);
+    const matchCpf = r.cpf ? (matchDigitsSafe(r.cpf, searchTerm) || r.cpf.includes(searchTerm.trim())) : false;
+    const matchTel = r.telefone ? (matchDigitsSafe(r.telefone, searchTerm) || r.telefone.includes(searchTerm.trim())) : false;
+    return matchId || matchRegistro || matchNome || matchCpf || matchTel;
+  });
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -210,7 +217,7 @@ export const ResponsaveisPage: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-xs">
                 {filtered.map((r) => {
-                  const isProprietario = r.nome === "Proprietário" || r.cpf === "000.000.000-00";
+                  const isProprietario = r.nome === "Proprietário" || r.nome === "PROPRIETÁRIO(A)" || r.cpf === "000.000.000-00";
                   return (
                     <tr
                       key={r.id}
@@ -219,6 +226,11 @@ export const ResponsaveisPage: React.FC = () => {
                       <td className="py-3.5 px-6 font-semibold text-slate-900 dark:text-white">
                         <div className="flex items-center gap-2">
                           <span>{r.nome}</span>
+                          {r.registro && (
+                            <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-md font-mono text-[10px]">
+                              Reg: {r.registro}
+                            </span>
+                          )}
                           {isProprietario && (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
                               Padrão Intransferível
@@ -226,7 +238,7 @@ export const ResponsaveisPage: React.FC = () => {
                           )}
                         </div>
                       </td>
-                      <td className="py-3.5 px-6 font-mono text-slate-600 dark:text-slate-300">{r.cpf}</td>
+                      <td className="py-3.5 px-6 font-mono text-slate-600 dark:text-slate-300">{r.cpf || "-"}</td>
                       <td className="py-3.5 px-6 text-slate-600 dark:text-slate-300">
                         {r.telefone ? (
                           <span className="inline-flex items-center gap-1.5">
@@ -301,18 +313,31 @@ export const ResponsaveisPage: React.FC = () => {
             {formErrors.nome && <p className="text-[11px] text-rose-500 mt-1">{formErrors.nome}</p>}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                CPF ou CNPJ <span className="text-rose-500">*</span>
+                Registro / Matrícula
+              </label>
+              <input
+                type="text"
+                value={registro}
+                onChange={(e) => setRegistro(e.target.value)}
+                placeholder="ex: 1522"
+                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden transition-all"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                CPF ou CNPJ
               </label>
               <input
                 type="text"
                 value={cpf}
-                onChange={(e) => setCpf(formatCPF(e.target.value))}
+                onChange={(e) => setCpf(e.target.value)}
                 placeholder="000.000.000-00"
                 maxLength={18}
-                disabled={editingItem?.nome === "Proprietário"}
+                disabled={editingItem?.nome === "Proprietário" || editingItem?.nome === "PROPRIETÁRIO(A)"}
                 className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden transition-all disabled:opacity-50"
               />
               {formErrors.cpf && <p className="text-[11px] text-rose-500 mt-1">{formErrors.cpf}</p>}
