@@ -15,6 +15,14 @@ import { getInitialChar, formatDateTime } from "../lib/utils";
 import { supabase, isSupabaseConfigured } from "./supabase";
 import * as XLSX from "xlsx";
 import cnhSeedData from "../data/cnhSeedData.json";
+import {
+  saveLocalGeralCNH,
+  saveLocalGeralCNHsBulk,
+  deleteLocalGeralCNH,
+  deleteLocalGeralCNHsBulk,
+  getLocalGeralCNHs,
+  syncGeralWithSupabase
+} from "./dexieDb";
 
 // Verificação de credenciais Supabase reais via variáveis de ambiente VITE_ ou utilitário
 export function isSupabaseConnected(): boolean {
@@ -1365,23 +1373,24 @@ export async function sincronizarDataMovimentoComCriacao(): Promise<number> {
 
 export async function getGeralCNHs(): Promise<GeralCNH[]> {
   await initStorage();
-  let rawList: GeralCNH[] = [];
+  let rawList: GeralCNH[] = await getLocalGeralCNHs();
 
-  if (isSupabaseConfigured()) {
+  // Se o IndexedDB estiver totalmente vazio e o Supabase configurado, realiza a sincronização paginada inicial
+  if (rawList.length === 0 && isSupabaseConfigured()) {
     try {
-      const data = await fetchAllRowsFromSupabase<GeralCNH>("geral_cnhs", 1000, "ordem", false);
-
-      if (data && data.length > 0) {
-        rawList = data;
-        saveStoredList("geral", rawList);
-      }
+      await syncGeralWithSupabase(true);
+      rawList = await getLocalGeralCNHs();
     } catch (err) {
-      console.warn("Aviso ao buscar CNHs no Supabase, utilizando armazenamento local:", err);
+      console.warn("Aviso ao sincronizar inicialmente com Supabase:", err);
     }
   }
 
+  // Se ainda assim estiver vazio, carrega sementes estáticas
   if (rawList.length === 0) {
     rawList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+    if (rawList.length > 0) {
+      saveLocalGeralCNHsBulk(rawList).catch(() => {});
+    }
   }
 
   const seedByOrdem = new Map(SEED_GERAL.map((s) => [s.ordem, s]));
@@ -1615,6 +1624,7 @@ export async function createGeralManual(
   };
 
   saveStoredList("geral", [nova, ...geralList]);
+  await saveLocalGeralCNH(nova);
   await logHistorico(nova.id, nova.ordem, nova.nome, null, nova.situacao, userId, userNome, nova.observacao);
   await logAuditoria("geral", `Ordem #${nova.ordem}`, "Inclusão", userId, userNome, null, nova);
   return nova;
@@ -1650,6 +1660,7 @@ export async function receberCNH(id: string, userId: string, userNome: string): 
 
   geralList[index] = atualizado;
   saveStoredList("geral", geralList);
+  await saveLocalGeralCNH(atualizado);
 
   await logHistorico(
     atualizado.id,
@@ -1703,6 +1714,7 @@ export async function entregarCNH(
 
   geralList[index] = atualizado;
   saveStoredList("geral", geralList);
+  await saveLocalGeralCNH(atualizado);
 
   await logHistorico(
     atualizado.id,
@@ -1744,6 +1756,7 @@ export async function updateGeralCNH(
   const atualizado = { ...ant, ...data, data_movimento: new Date().toISOString(), usuario_id: userId, usuario_nome: userNome };
   geralList[index] = atualizado;
   saveStoredList("geral", geralList);
+  await saveLocalGeralCNH(atualizado);
 
   if (ant.situacao !== atualizado.situacao) {
     await logHistorico(
@@ -1774,14 +1787,7 @@ export async function deleteGeralCNH(
 
   const updated = geralList.filter((g) => g.id !== id);
   saveStoredList("geral", updated);
-
-  if (isSupabaseConfigured()) {
-    try {
-      await supabase.from("geral_cnhs").delete().eq("id", id);
-    } catch (err) {
-      console.error("Erro ao deletar do Supabase:", err);
-    }
-  }
+  await deleteLocalGeralCNH(id);
 
   await logAuditoria(
     "geral",
@@ -1808,6 +1814,7 @@ export async function deleteMultipleGeralCNHs(
   const targets = geralList.filter((g) => idsSet.has(g.id));
   const updated = geralList.filter((g) => !idsSet.has(g.id));
   saveStoredList("geral", updated);
+  await deleteLocalGeralCNHsBulk(ids);
 
   if (isSupabaseConfigured()) {
     try {
@@ -2400,6 +2407,7 @@ export async function importSpreadsheetData(
     }
 
     saveStoredList("geral", finalGeralList);
+    await saveLocalGeralCNHsBulk(finalGeralList);
 
     let supabaseSyncedCount = 0;
     let supabaseError: string | undefined = undefined;

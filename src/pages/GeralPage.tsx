@@ -49,6 +49,7 @@ import {
   importSpreadsheetData,
   getPublicSearchCount
 } from "../services/db";
+import { subscribeSyncStatus, syncGeralWithSupabase, SyncStats } from "../services/dexieDb";
 import { getPublicShareUrl } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
@@ -60,6 +61,16 @@ export const GeralPage: React.FC = () => {
   const [cnhs, setCnhs] = useState<GeralCNH[]>([]);
   const [loading, setLoading] = useState(true);
   const [responsaveis, setResponsaveis] = useState<Responsavel[]>([]);
+
+  // Estado da Sincronização do IndexedDB (Dexie)
+  const [syncStats, setSyncStats] = useState<SyncStats>({
+    status: "synced",
+    lastSyncAt: null,
+    totalRecords: 0,
+    syncDurationMs: 0,
+    isOffline: false
+  });
+  const [isSyncingManual, setIsSyncingManual] = useState(false);
   
   // Filtros e Busca Instantânea
   const [searchTerm, setSearchTerm] = useState("");
@@ -87,9 +98,9 @@ export const GeralPage: React.FC = () => {
   const [sortColumn, setSortColumn] = useState<keyof GeralCNH>("ordem");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
-  // Paginação
+  // Paginação - Padrão 100 por página conforme especificação
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const [itemsPerPage, setItemsPerPage] = useState(100);
 
   // Feedback Message
   const [message, setMessage] = useState<{ type: "success" | "warning" | "error"; text: string } | null>(null);
@@ -198,7 +209,6 @@ export const GeralPage: React.FC = () => {
   };
 
   const fetchDados = async () => {
-    setLoading(true);
     try {
       const [dataCnhs, dataResp] = await Promise.all([getGeralCNHs(), getResponsaveis()]);
       setCnhs(dataCnhs);
@@ -210,8 +220,56 @@ export const GeralPage: React.FC = () => {
     }
   };
 
+  const handleManualSync = async (forceFull: boolean = false) => {
+    setIsSyncingManual(true);
+    try {
+      const stats = await syncGeralWithSupabase(forceFull);
+      await fetchDados();
+      if (stats.isOffline) {
+        setMessage({
+          type: "warning",
+          text: `Modo Offline ativado: Utilizando dados salvos localmente no navegador (${stats.totalRecords.toLocaleString("pt-BR")} registros).`
+        });
+      } else {
+        setMessage({
+          type: "success",
+          text: `⚡ Banco de dados local sincronizado com sucesso com o Supabase! ${stats.totalRecords.toLocaleString("pt-BR")} registros em ${(stats.syncDurationMs / 1000).toFixed(1)}s.`
+        });
+      }
+    } catch (err: any) {
+      setMessage({
+        type: "error",
+        text: `Erro ao sincronizar com Supabase: ${err.message}`
+      });
+    } finally {
+      setIsSyncingManual(false);
+    }
+  };
+
   useEffect(() => {
+    // 1. Escutar alterações no estado da sincronização do Dexie
+    const unsubscribe = subscribeSyncStatus(setSyncStats);
+
+    // 2. Carregar imediatamente os dados locais do IndexedDB para abertura instantânea (<1s)
     fetchDados();
+
+    // 3. Iniciar a sincronização inteligente em segundo plano
+    syncGeralWithSupabase(false).then(() => {
+      fetchDados();
+    });
+
+    // 4. Executar sincronização automática a cada 5 minutos (300.000 ms)
+    const intervalId = setInterval(() => {
+      console.log("⏰ Executando sincronização automática de 5 minutos...");
+      syncGeralWithSupabase(false).then(() => {
+        fetchDados();
+      });
+    }, 300000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(intervalId);
+    };
   }, []);
 
   const getResponsavelDisplayName = (nome?: string, id?: string) => {
@@ -759,6 +817,47 @@ export const GeralPage: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Indicador de Sincronização IndexedDB */}
+            {syncStats.status === "syncing" || isSyncingManual ? (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30 rounded-xl text-xs font-bold animate-pulse">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>🟡 Sincronizando...</span>
+              </div>
+            ) : syncStats.isOffline || syncStats.status === "offline" ? (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/30 rounded-xl text-xs font-bold">
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                <span>🔴 Modo Offline</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span>🟢 Banco sincronizado</span>
+              </div>
+            )}
+
+            {/* Informações da Sincronização */}
+            <div className="hidden xl:flex flex-col text-[10px] text-slate-500 dark:text-slate-400 leading-tight border-l border-slate-200 dark:border-slate-800 pl-2">
+              <span>
+                <strong>Última sync:</strong>{" "}
+                {syncStats.lastSyncAt ? formatDateTime(syncStats.lastSyncAt) : "Primeira execução"}
+              </span>
+              <span>
+                <strong>Registros:</strong> {syncStats.totalRecords.toLocaleString("pt-BR")} |{" "}
+                <strong>Tempo:</strong> {(syncStats.syncDurationMs / 1000).toFixed(1)}s
+              </span>
+            </div>
+
+            {/* Botão Sincronizar Agora */}
+            <button
+              onClick={() => handleManualSync(false)}
+              disabled={syncStats.status === "syncing" || isSyncingManual}
+              title="Sincronizar Agora com o Supabase em segundo plano"
+              className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-blue-200 dark:border-blue-800 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncStats.status === "syncing" || isSyncingManual ? "animate-spin" : ""}`} />
+              <span>Sincronizar Agora</span>
+            </button>
+
             <button
               onClick={() => setIsCitizenQrModalOpen(true)}
               title="Abrir e compartilhar QR Code / Link de Consulta do Cidadão"
@@ -806,6 +905,25 @@ export const GeralPage: React.FC = () => {
             )}
         </div>
       </div>
+
+      {/* Banner Tratamento Offline */}
+      {(syncStats.isOffline || syncStats.status === "offline") && (
+        <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-xs text-amber-900 dark:text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+            <div>
+              <strong className="font-bold text-amber-950 dark:text-amber-100">Modo Offline — Utilizando banco de dados local (IndexedDB)</strong>
+              <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5">
+                Utilizando dados sincronizados em:{" "}
+                <strong className="font-bold">{syncStats.lastSyncAt ? formatDateTime(syncStats.lastSyncAt) : "Base Local Pré-carregada"}</strong>
+              </p>
+            </div>
+          </div>
+          <span className="px-2.5 py-1 bg-amber-200 dark:bg-amber-900/80 text-amber-900 dark:text-amber-100 text-[10px] font-bold rounded-lg uppercase tracking-wider shrink-0">
+            {syncStats.totalRecords.toLocaleString("pt-BR")} registros
+          </span>
+        </div>
+      )}
 
       {message && (
         <div
@@ -1308,32 +1426,57 @@ export const GeralPage: React.FC = () => {
           </div>
         )}
 
-        {/* Paginação High Density */}
+        {/* Paginação Padrão: 100 registros por página */}
         {!loading && filteredData.length > 0 && (
-          <div className="px-4 py-2 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center text-[11px] text-slate-500">
-            <span>
-              Exibindo <strong>{(currentPage - 1) * itemsPerPage + 1}</strong> a{" "}
-              <strong>{Math.min(currentPage * itemsPerPage, filteredData.length)}</strong> de{" "}
-              <strong>{filteredData.length}</strong> CNHs registradas
-            </span>
-            
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                disabled={currentPage === 1}
-                className="p-1 rounded border border-slate-300 dark:border-slate-700 disabled:opacity-40 hover:bg-white dark:hover:bg-slate-800 transition-colors"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="px-2 font-mono font-semibold text-slate-700 dark:text-slate-300">
-                Pág. {currentPage} de {totalPages}
+          <div className="px-4 py-3 bg-slate-50 dark:bg-slate-800/60 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-center gap-3 text-xs text-slate-600 dark:text-slate-400 font-medium">
+            <div>
+              <span>
+                Página <strong className="text-slate-900 dark:text-white">{currentPage}</strong> de{" "}
+                <strong className="text-slate-900 dark:text-white">{totalPages || 1}</strong>
+                <span className="mx-2 text-slate-300 dark:text-slate-700">|</span>
+                Mostrando <strong>{filteredData.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}</strong> até{" "}
+                <strong>{Math.min(currentPage * itemsPerPage, filteredData.length)}</strong> de{" "}
+                <strong>{filteredData.length}</strong> registros
               </span>
+            </div>
+            
+            <div className="flex items-center gap-1.5 flex-wrap">
               <button
-                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                disabled={currentPage === totalPages}
-                className="p-1 rounded border border-slate-300 dark:border-slate-700 disabled:opacity-40 hover:bg-white dark:hover:bg-slate-800 transition-colors"
+                onClick={() => setCurrentPage(1)}
+                disabled={currentPage === 1}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors font-semibold text-xs cursor-pointer"
               >
-                <ChevronRight className="w-4 h-4" />
+                Primeira
+              </button>
+
+              <button
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors font-semibold text-xs flex items-center gap-1 cursor-pointer"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                Anterior
+              </button>
+
+              <span className="px-3 py-1 font-mono font-bold text-slate-800 dark:text-slate-200 bg-slate-200/60 dark:bg-slate-700/60 rounded-lg text-xs">
+                {currentPage} / {totalPages || 1}
+              </span>
+
+              <button
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages || totalPages === 0}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors font-semibold text-xs flex items-center gap-1 cursor-pointer"
+              >
+                Próxima
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={currentPage === totalPages || totalPages === 0}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors font-semibold text-xs cursor-pointer"
+              >
+                Última
               </button>
             </div>
           </div>
