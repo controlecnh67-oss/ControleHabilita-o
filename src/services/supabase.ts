@@ -99,7 +99,7 @@ export function getPublicShareUrl(cpf?: string): string {
   }
 
   const creds = getSupabaseCredentials();
-  if (creds.source === 'local' && creds.url && creds.key) {
+  if (creds.url && creds.key && creds.source !== 'none') {
     url.searchParams.set("sb_url", creds.url);
     url.searchParams.set("sb_key", creds.key);
   }

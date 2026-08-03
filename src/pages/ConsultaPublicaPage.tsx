@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { consultarCnhPublicaPorCpf, ResultadoConsultaPublica, getPublicSearchCount } from "../services/db";
 import { formatCPF, formatDateTime } from "../lib/utils";
-import { getPublicShareUrl, saveLocalSupabaseConfig } from "../services/supabase";
+import { getPublicShareUrl, saveLocalSupabaseConfig, isSupabaseConfigured } from "../services/supabase";
 
 interface ConsultaPublicaPageProps {
   onBackToLogin?: () => void;
@@ -226,12 +226,24 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
         
         {/* Banner Informativo */}
         <div className="bg-gradient-to-r from-blue-900/60 to-indigo-900/60 border border-blue-500/30 rounded-2xl p-4 shadow-lg backdrop-blur-sm space-y-2">
-          <div className="flex items-center gap-2 text-blue-300 font-bold text-xs uppercase tracking-wider">
-            <Smartphone className="w-4 h-4 text-blue-400 shrink-0 animate-pulse" />
-            <span>Atendimento Rápido sem Login</span>
+          <div className="flex items-center justify-between text-blue-300 font-bold text-xs uppercase tracking-wider">
+            <div className="flex items-center gap-2">
+              <Smartphone className="w-4 h-4 text-blue-400 shrink-0 animate-pulse" />
+              <span>Atendimento Rápido sem Login</span>
+            </div>
+            {isSupabaseConfigured() ? (
+              <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-full text-[10px] font-bold flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Supabase Online
+              </span>
+            ) : (
+              <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-full text-[10px] font-bold">
+                Cache Local
+              </span>
+            )}
           </div>
           <p className="text-xs text-slate-200 leading-relaxed">
-            Informe o seu <strong className="text-white">CPF</strong> abaixo para verificar em tempo real se a sua Carteira Nacional de Habilitação (CNH) já chegou ao balcão de atendimento e está pronta para ser retirada.
+            Informe o seu <strong className="text-white">CPF</strong> abaixo para verificar em tempo real no banco de dados Supabase se a sua Carteira Nacional de Habilitação (CNH) está pronta para ser retirada.
           </p>
         </div>
 

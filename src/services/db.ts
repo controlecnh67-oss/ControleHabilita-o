@@ -1478,13 +1478,41 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
   // Incrementar o contador de consultas efetuadas pelo app público
   incrementPublicSearchCount();
 
-  const todasCNHs = await getGeralCNHs();
-
   const pad11 = (val: string) => val.replace(/\D/g, "").padStart(11, "0");
   const searchPad = pad11(cleanCpf);
+  let directSupabaseCNHs: GeralCNH[] = [];
+
+  // Se o Supabase estiver configurado, busca diretamente e em tempo real na tabela remota do Supabase pelo CPF
+  if (isSupabaseConfigured()) {
+    try {
+      const { data: supData, error: supError } = await supabase
+        .from("geral_cnhs")
+        .select("*")
+        .or(`cpf.ilike.%${cleanCpf}%,cpf.ilike.%${searchPad}%`);
+
+      if (!supError && supData && supData.length > 0) {
+        directSupabaseCNHs = supData as GeralCNH[];
+      }
+    } catch (err) {
+      console.warn("Aviso ao consultar diretamente no Supabase por CPF:", err);
+    }
+  }
+
+  const todasCNHs = await getGeralCNHs();
+
+  // Mesclar dados do Supabase com o cache local
+  const mapById = new Map<string, GeralCNH>();
+  for (const c of todasCNHs) {
+    if (c.id) mapById.set(c.id, c);
+  }
+  for (const c of directSupabaseCNHs) {
+    if (c.id) mapById.set(c.id, c);
+  }
+
+  const cnhsCombinadas = Array.from(mapById.values());
 
   // Filtrar todos os registros de CNH correspondentes ao CPF (suporta zeros à esquerda e formatações distintas)
-  const cnhsDoCidadao = todasCNHs.filter((c) => {
+  const cnhsDoCidadao = cnhsCombinadas.filter((c) => {
     if (!c.cpf) return false;
     const cCpfClean = c.cpf.replace(/\D/g, "");
     if (!cCpfClean) return false;
