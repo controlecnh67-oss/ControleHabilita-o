@@ -594,10 +594,10 @@ export async function logHistorico(
 export async function getMapeamentos(): Promise<MapeamentoLocalizacao[]> {
   if (isSupabaseConfigured()) {
     try {
-      const { data, error } = await supabase.from("mapeamento_localizacao").select("*").order("inicial", { ascending: true });
-      if (!error && data && data.length > 0) {
-        saveStoredList("mapeamento", data as MapeamentoLocalizacao[]);
-        return data as MapeamentoLocalizacao[];
+      const data = await fetchAllRowsFromSupabase<MapeamentoLocalizacao>("mapeamento_localizacao", 1000, "inicial", true);
+      if (data && data.length > 0) {
+        saveStoredList("mapeamento", data);
+        return data;
       }
     } catch (err) {
       console.warn("Aviso ao buscar mapeamentos no Supabase:", err);
@@ -713,9 +713,9 @@ export async function findLocalizacaoPorNome(nome: string): Promise<{ gaveta: st
 export async function getUsuarios(): Promise<Usuario[]> {
   if (isSupabaseConfigured()) {
     try {
-      const { data, error } = await supabase.from("usuarios").select("*").order("created_at", { ascending: false });
-      if (!error && data && data.length > 0) {
-        const activeUsers = (data as Usuario[]).filter((u) => u.ativo !== false);
+      const data = await fetchAllRowsFromSupabase<Usuario>("usuarios", 1000, "created_at", false);
+      if (data && data.length > 0) {
+        const activeUsers = data.filter((u) => u.ativo !== false);
         saveStoredList("usuarios", activeUsers);
         return activeUsers;
       }
@@ -872,10 +872,10 @@ export async function deleteUsuario(id: string, adminId: string, adminNome: stri
 export async function getResponsaveis(): Promise<Responsavel[]> {
   if (isSupabaseConfigured()) {
     try {
-      const { data, error } = await supabase.from("responsaveis").select("*").order("nome", { ascending: true });
-      if (!error && data && data.length > 0) {
-        saveStoredList("responsaveis", data as Responsavel[]);
-        return data as Responsavel[];
+      const data = await fetchAllRowsFromSupabase<Responsavel>("responsaveis", 1000, "nome", true);
+      if (data && data.length > 0) {
+        saveStoredList("responsaveis", data);
+        return data;
       }
     } catch (err) {
       console.warn("Aviso ao buscar responsáveis no Supabase:", err);
@@ -993,9 +993,34 @@ export async function deleteResponsavel(id: string, userId: string, userNome: st
 // MÓDULO DE MEMORANDOS & CANDIDATOS
 // ============================================================================
 
+export async function getCandidatosAll(): Promise<Candidato[]> {
+  if (isSupabaseConfigured()) {
+    try {
+      const data = await fetchAllRowsFromSupabase<Candidato>("candidatos", 1000, "created_at", false);
+      if (data && data.length > 0) {
+        saveStoredList("candidatos", data);
+        return data;
+      }
+    } catch (err) {
+      console.warn("Aviso ao buscar candidatos no Supabase:", err);
+    }
+  }
+  return getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+}
+
 export async function getMemorandos(): Promise<Memorando[]> {
+  if (isSupabaseConfigured()) {
+    try {
+      const data = await fetchAllRowsFromSupabase<Memorando>("memorandos", 1000, "created_at", false);
+      if (data && data.length > 0) {
+        saveStoredList("memorandos", data);
+      }
+    } catch (err) {
+      console.warn("Aviso ao buscar memorandos no Supabase:", err);
+    }
+  }
   const list = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
-  const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+  const cands = await getCandidatosAll();
   return list.map((m) => ({
     ...m,
     candidatos_count: cands.filter((c) => c.memorando_id === m.id).length
@@ -1080,7 +1105,7 @@ export async function deleteMemorando(id: string, userId: string, userNome: stri
 }
 
 export async function getCandidatosByMemorando(memorando_id: string): Promise<Candidato[]> {
-  const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+  const cands = await getCandidatosAll();
   return cands.filter((c) => c.memorando_id === memorando_id);
 }
 
@@ -1252,13 +1277,10 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
 
   if (isSupabaseConfigured()) {
     try {
-      const { data, error } = await supabase
-        .from("geral_cnhs")
-        .select("*")
-        .order("ordem", { ascending: false });
+      const data = await fetchAllRowsFromSupabase<GeralCNH>("geral_cnhs", 1000, "ordem", false);
 
-      if (!error && data && data.length > 0) {
-        rawList = data as GeralCNH[];
+      if (data && data.length > 0) {
+        rawList = data;
         saveStoredList("geral", rawList);
       }
     } catch (err) {
@@ -1696,12 +1718,34 @@ export async function deleteMultipleGeralCNHs(
 // ============================================================================
 
 export async function getHistoricoList(): Promise<HistoricoMovimentacao[]> {
+  if (isSupabaseConfigured()) {
+    try {
+      const data = await fetchAllRowsFromSupabase<HistoricoMovimentacao>("historico_movimentacoes", 1000, "data_hora", false);
+      if (data && data.length > 0) {
+        saveStoredList("historico", data);
+        return data;
+      }
+    } catch (err) {
+      console.warn("Aviso ao buscar histórico no Supabase:", err);
+    }
+  }
   return getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO).sort(
     (a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime()
   );
 }
 
 export async function getAuditoriaList(): Promise<Auditoria[]> {
+  if (isSupabaseConfigured()) {
+    try {
+      const data = await fetchAllRowsFromSupabase<Auditoria>("auditoria", 1000, "data_hora", false);
+      if (data && data.length > 0) {
+        saveStoredList("auditoria", data);
+        return data;
+      }
+    } catch (err) {
+      console.warn("Aviso ao buscar auditoria no Supabase:", err);
+    }
+  }
   return getStoredList<Auditoria>("auditoria", SEED_AUDITORIA).sort(
     (a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime()
   );
@@ -2400,17 +2444,23 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
 }
 
 // Helper para buscar todos os registros de uma tabela do Supabase com paginação (evita limite de 1000 registros do PostgREST)
-export async function fetchAllRowsFromSupabase<T = any>(tableName: string, pageSize = 1000): Promise<T[]> {
+export async function fetchAllRowsFromSupabase<T = any>(
+  tableName: string, 
+  pageSize = 1000,
+  orderColumn?: string,
+  ascending = true
+): Promise<T[]> {
   let allRows: T[] = [];
   let from = 0;
   let hasMore = true;
 
   while (hasMore) {
     const to = from + pageSize - 1;
-    const { data, error } = await supabase
-      .from(tableName)
-      .select("*")
-      .range(from, to);
+    let query = supabase.from(tableName).select("*");
+    if (orderColumn) {
+      query = query.order(orderColumn, { ascending });
+    }
+    const { data, error } = await query.range(from, to);
 
     if (error) {
       throw error;
