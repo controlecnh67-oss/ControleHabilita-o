@@ -1096,9 +1096,13 @@ export async function getCandidatosAll(): Promise<Candidato[]> {
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<Candidato>("candidatos", 1000, "created_at", false);
-      if (data && data.length > 0) {
-        saveStoredList("candidatos", data);
-        return data;
+      if (data && Array.isArray(data)) {
+        const local = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+        const remoteIds = new Set(data.map((d) => d.id));
+        const localOnly = local.filter((c) => !remoteIds.has(c.id));
+        const merged = [...data, ...localOnly];
+        saveStoredList("candidatos", merged);
+        return merged;
       }
     } catch (err) {
       console.warn("Aviso ao buscar candidatos no Supabase:", err);
@@ -1111,8 +1115,12 @@ export async function getMemorandos(): Promise<Memorando[]> {
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<Memorando>("memorandos", 1000, "created_at", false);
-      if (data && data.length > 0) {
-        saveStoredList("memorandos", data);
+      if (data && Array.isArray(data)) {
+        const local = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
+        const remoteIds = new Set(data.map((d) => d.id));
+        const localOnly = local.filter((m) => !remoteIds.has(m.id));
+        const merged = [...data, ...localOnly];
+        saveStoredList("memorandos", merged);
       }
     } catch (err) {
       console.warn("Aviso ao buscar memorandos no Supabase:", err);
@@ -1135,7 +1143,7 @@ export async function createMemorando(
   if (list.some((m) => m.numero.trim().toLowerCase() === data.numero.trim().toLowerCase())) {
     throw new Error("Já existe um memorando com este número.");
   }
-  const novo: Memorando = {
+  let novo: Memorando = {
     id: `memo-${Date.now()}`,
     numero: data.numero,
     usuario_id: userId,
@@ -1145,7 +1153,34 @@ export async function createMemorando(
     created_at: new Date().toISOString(),
     candidatos_count: 0
   };
-  saveStoredList("memorandos", [novo, ...list]);
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { data: inserted, error } = await supabase
+        .from("memorandos")
+        .insert([{
+          id: novo.id,
+          numero: novo.numero,
+          usuario_id: novo.usuario_id,
+          usuario_nome: novo.usuario_nome,
+          remessa: novo.remessa,
+          status: novo.status,
+          created_at: novo.created_at,
+          candidatos_count: 0
+        }])
+        .select()
+        .single();
+      if (error) {
+        console.error("Erro no Supabase ao criar memorando:", error);
+      } else if (inserted) {
+        novo = { ...novo, ...inserted };
+      }
+    } catch (err) {
+      console.warn("Aviso ao criar memorando no Supabase:", err);
+    }
+  }
+
+  saveStoredList("memorandos", [novo, ...list.filter((m) => m.id !== novo.id)]);
   await logAuditoria("memorandos", novo.numero, "Inclusão", userId, userNome, null, novo);
   return novo;
 }
@@ -1162,6 +1197,16 @@ export async function updateMemorando(
   const ant = list[index];
   const atualizado = { ...ant, ...data };
   list[index] = atualizado;
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { error } = await supabase.from("memorandos").update(data).eq("id", id);
+      if (error) console.error("Erro no Supabase ao atualizar memorando:", error);
+    } catch (err) {
+      console.warn("Aviso ao atualizar memorando no Supabase:", err);
+    }
+  }
+
   saveStoredList("memorandos", list);
 
   if (ant.status === "Remetido" && (data.numero || data.remessa !== undefined)) {
@@ -1185,7 +1230,15 @@ export async function deleteMemorando(id: string, userId: string, userNome: stri
   const target = list.find((m) => m.id === id);
   if (!target) return;
 
-  // Remove candidatos vinculados
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("candidatos").delete().eq("memorando_id", id);
+      await supabase.from("memorandos").delete().eq("id", id);
+    } catch (e) {
+      console.warn("Aviso ao deletar memorando no Supabase:", e);
+    }
+  }
+
   const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
   const filtradosCands = cands.filter((c) => c.memorando_id !== id);
   saveStoredList("candidatos", filtradosCands);
@@ -1224,14 +1277,37 @@ export async function addCandidato(
     throw new Error(`Apenas o usuário responsável (${memo.usuario_nome || "autor"}) que está elaborando este memorando pode adicionar candidatos.`);
   }
   const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
-  const novo: Candidato = {
+  let novo: Candidato = {
     ...data,
     id: `cand-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
     memorando_id,
     remessa: memo.remessa,
     created_at: new Date().toISOString()
   };
-  saveStoredList("candidatos", [...cands, novo]);
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { data: inserted, error } = await supabase.from("candidatos").insert([novo]).select().single();
+      if (error) {
+        console.error("Erro no Supabase ao adicionar candidato:", error);
+      } else if (inserted) {
+        novo = { ...novo, ...inserted };
+      }
+    } catch (err) {
+      console.warn("Aviso ao adicionar candidato no Supabase:", err);
+    }
+  }
+
+  saveStoredList("candidatos", [...cands.filter((c) => c.id !== novo.id), novo]);
+
+  const newCount = (memo.candidatos_count || 0) + 1;
+  memo.candidatos_count = newCount;
+  saveStoredList("memorandos", memos);
+
+  if (isSupabaseConfigured()) {
+    supabase.from("memorandos").update({ candidatos_count: newCount }).eq("id", memorando_id).catch(() => {});
+  }
+
   await logAuditoria("candidatos", `${novo.nome} (${memo.numero})`, "Inclusão", userId, userNome, null, novo);
   return novo;
 }
@@ -1245,8 +1321,27 @@ export async function deleteCandidato(id: string, userId: string, userNome: stri
   if (memo && memo.status !== "Em elaboração") {
     throw new Error("Não é possível remover candidato de um memorando remetido.");
   }
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("candidatos").delete().eq("id", id);
+    } catch (e) {
+      console.warn("Aviso ao deletar candidato no Supabase:", e);
+    }
+  }
+
   const filtrados = cands.filter((c) => c.id !== id);
   saveStoredList("candidatos", filtrados);
+
+  if (memo) {
+    const newCount = Math.max(0, (memo.candidatos_count || 1) - 1);
+    memo.candidatos_count = newCount;
+    saveStoredList("memorandos", memos);
+    if (isSupabaseConfigured()) {
+      supabase.from("memorandos").update({ candidatos_count: newCount }).eq("id", memo.id).catch(() => {});
+    }
+  }
+
   await logAuditoria("candidatos", target.nome, "Exclusão", userId, userNome, target, null);
 }
 
@@ -1266,16 +1361,22 @@ export async function updateCandidato(
     throw new Error("Não é possível editar candidato de um memorando remetido.");
   }
   const atualizado = { ...target, ...data };
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { error } = await supabase.from("candidatos").update(data).eq("id", id);
+      if (error) console.error("Erro no Supabase ao atualizar candidato:", error);
+    } catch (err) {
+      console.warn("Aviso ao atualizar candidato no Supabase:", err);
+    }
+  }
+
   cands[index] = atualizado;
   saveStoredList("candidatos", cands);
   await logAuditoria("candidatos", atualizado.nome, "Alteração", userId, userNome, target, atualizado);
   return atualizado;
 }
 
-// Ao clicar em Remeter:
-// Copiar automaticamente todos os candidatos para a tabela Geral.
-// Preencher: próxima Ordem, Situação = Remetida, Data = hoje, Usuário = usuário logado
-// Impedir remessa duplicada do mesmo memorando.
 export async function remeterMemorando(memorando_id: string, userId: string, userNome: string): Promise<number> {
   const memos = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
   const memoIndex = memos.findIndex((m) => m.id === memorando_id);
@@ -1319,9 +1420,17 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
 
   saveStoredList("geral", [...geralList, ...novasCNHs]);
 
-  // Atualiza status do memorando
   memos[memoIndex] = { ...memo, status: "Remetido" };
   saveStoredList("memorandos", memos);
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("memorandos").update({ status: "Remetido" }).eq("id", memorando_id);
+      await supabase.from("geral_cnhs").upsert(novasCNHs, { onConflict: "id" });
+    } catch (e) {
+      console.warn("Aviso ao remeter memorando no Supabase:", e);
+    }
+  }
 
   await logAuditoria("memorandos", memo.numero, "Remessa", userId, userNome, { status: "Em elaboração" }, { status: "Remetido", total_remetidas: novasCNHs.length });
   return novasCNHs.length;
