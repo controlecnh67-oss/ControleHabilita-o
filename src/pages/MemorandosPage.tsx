@@ -15,7 +15,8 @@ import {
   X, 
   ShieldAlert,
   ArrowRight,
-  Download
+  Download,
+  ArrowDownAZ
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -80,6 +81,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
   const [candErrors, setCandErrors] = useState<Record<string, string>>({});
   const [candSuccess, setCandSuccess] = useState<string | null>(null);
   const [submittingCand, setSubmittingCand] = useState(false);
+  const [sortingCands, setSortingCands] = useState(false);
 
   const fetchDados = async (targetId?: string | null) => {
     setLoading(true);
@@ -328,6 +330,34 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
       message: `Deseja realmente remover o candidato "${cand.nome}" deste memorando?`,
       target: cand
     });
+  };
+
+  const handleSortCandidatosAZ = async () => {
+    if (!candidatos || candidatos.length <= 1) return;
+    setSortingCands(true);
+    try {
+      const sorted = [...candidatos].sort((a, b) =>
+        (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })
+      );
+
+      const renumbered = sorted.map((cand, idx) => ({
+        ...cand,
+        numero: String(idx + 1).padStart(2, "0")
+      }));
+
+      setCandidatos(renumbered);
+
+      if (selectedMemo && selectedMemo.status === "Em elaboração" && canEdit) {
+        for (const cand of renumbered) {
+          await updateCandidato(cand.id, { numero: cand.numero }, user!.id, user!.nome_curto);
+        }
+      }
+      setMessage({ type: "success", text: "Lista de candidatos ordenada de A a Z com sucesso!" });
+    } catch (err: any) {
+      console.error("Erro ao ordenar candidatos:", err);
+    } finally {
+      setSortingCands(false);
+    }
   };
 
   // Ação REMETER
@@ -750,10 +780,24 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
 
               {/* Lista de Candidatos */}
               <div className="flex-1 p-5 overflow-y-auto">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                    Candidatos / Titulares da CNH ({candidatos.length})
-                  </h4>
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      Candidatos / Titulares da CNH ({candidatos.length})
+                    </h4>
+                    {candidatos.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={handleSortCandidatosAZ}
+                        disabled={sortingCands}
+                        className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/70 dark:hover:bg-blue-900/80 text-blue-700 dark:text-blue-300 font-semibold rounded-lg text-xs border border-blue-200/80 dark:border-blue-800/80 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                        title="Ordenar lista de candidatos de A a Z por Nome"
+                      >
+                        <ArrowDownAZ className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                        <span>{sortingCands ? "Ordenando..." : "Ordenar de A a Z"}</span>
+                      </button>
+                    )}
+                  </div>
                   {selectedMemo.status === "Em elaboração" && (
                     <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
                       ⚠️ Clique em &quot;Remeter para Protocolo&quot; para enviar ao balcão Geral.
@@ -788,7 +832,22 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
                       <thead>
                         <tr className="bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-800 text-[10px] uppercase font-bold text-slate-500 tracking-wider">
                           <th className="py-2.5 px-4 w-16 text-center">Nº</th>
-                          <th className="py-2.5 px-4">Nome do Candidato</th>
+                          <th className="py-2.5 px-4">
+                            <div className="flex items-center gap-2">
+                              <span>Nome do Candidato</span>
+                              {candidatos.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={handleSortCandidatosAZ}
+                                  disabled={sortingCands}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-colors text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                                  title="Ordenar lista de A a Z por Nome"
+                                >
+                                  <ArrowDownAZ className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </th>
                           <th className="py-2.5 px-4">CPF</th>
                           <th className="py-2.5 px-4">Telefone</th>
                           {canEdit && selectedMemo.status === "Em elaboração" && (
