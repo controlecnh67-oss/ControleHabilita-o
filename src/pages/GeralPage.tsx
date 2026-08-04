@@ -1182,7 +1182,7 @@ export const GeralPage: React.FC = () => {
                     </th>
                   )}
                   {visibleColumns.cpf && (
-                    <th onClick={() => handleSort("cpf")} className="py-2 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors">
+                    <th onClick={() => handleSort("cpf")} className="py-2 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors whitespace-nowrap min-w-[170px]">
                       <div className="flex items-center gap-1.5">
                         <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                         <span>CPF</span>
@@ -1272,10 +1272,10 @@ export const GeralPage: React.FC = () => {
 
                     {/* CPF */}
                     {visibleColumns.cpf && (
-                      <td className="py-2 px-4">
-                        <div className="flex items-center gap-1.5 font-mono text-sm font-extrabold text-slate-800 dark:text-slate-100">
+                      <td className="py-2 px-4 whitespace-nowrap min-w-[170px]">
+                        <div className="flex items-center gap-1.5 font-mono text-sm font-extrabold text-slate-800 dark:text-slate-100 whitespace-nowrap">
                           <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-                          <span className="tracking-wide">{c.cpf ? formatCPF(c.cpf) : "-"}</span>
+                          <span className="tracking-wide whitespace-nowrap">{c.cpf ? formatCPF(c.cpf) : "-"}</span>
                         </div>
                       </td>
                     )}

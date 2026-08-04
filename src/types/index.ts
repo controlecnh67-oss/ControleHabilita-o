@@ -151,6 +151,7 @@ export interface GeralCNH {
   remessa?: string;
   observacao?: string;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface HistoricoMovimentacao {
