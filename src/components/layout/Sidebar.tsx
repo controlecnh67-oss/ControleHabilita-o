@@ -49,7 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   const visibleNavItems = navItems.filter((item) =>
-    isTabAllowedForProfile(item.id, user?.perfil)
+    isTabAllowedForProfile(item.id, user?.perfil, user?.permissoes)
   );
 
   const handleNavClick = (tab: NavTab) => {

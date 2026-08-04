@@ -14,18 +14,60 @@ export type NavTab =
   | "usuarios"
   | "backup";
 
-export function isTabAllowedForProfile(tab: NavTab, perfil?: PerfilUsuario): boolean {
+export function isTabAllowedForProfile(
+  tab: NavTab, 
+  perfil?: PerfilUsuario, 
+  permissoes?: string[]
+): boolean {
   if (!perfil) return false;
 
-  switch (perfil) {
-    case "Administrador":
-      return true;
+  if (perfil === "Administrador") return true;
 
+  // Se a aba for "memorandos" (Memorandos e Remessas): libera se tiver a permissão de criar ou remeter memorandos
+  if (tab === "memorandos") {
+    if (permissoes && Array.isArray(permissoes)) {
+      if (permissoes.includes("memorandos:criar") || permissoes.includes("memorandos:remeter")) {
+        return true;
+      }
+    }
+    const defPerms = getPermissoesPadrao(perfil);
+    if (defPerms.includes("memorandos:criar") || defPerms.includes("memorandos:remeter")) {
+      return true;
+    }
+    return ["Administrador", "Supervisor", "Operador"].includes(perfil);
+  }
+
+  // Se permissões forem fornecidas explicitamente, verifica autorizações para as outras abas
+  if (permissoes && Array.isArray(permissoes) && permissoes.length > 0) {
+    if (tab === "geral" && (permissoes.includes("cnh:receber") || permissoes.includes("cnh:entregar") || permissoes.includes("cnh:editar"))) {
+      return true;
+    }
+    if (tab === "mapeamento" && permissoes.includes("mapeamento:gerenciar")) {
+      return true;
+    }
+    if (tab === "responsaveis" && permissoes.includes("responsaveis:gerenciar")) {
+      return true;
+    }
+    if (tab === "usuarios" && permissoes.includes("usuarios:gerenciar")) {
+      return true;
+    }
+    if (tab === "auditoria" && permissoes.includes("auditoria:visualizar")) {
+      return true;
+    }
+    if (tab === "dashboard" || tab === "historico") {
+      return true;
+    }
+    if (tab === "backup") {
+      return perfil === "Administrador";
+    }
+  }
+
+  switch (perfil) {
     case "Supervisor":
       return ["dashboard", "geral", "memorandos", "responsaveis", "mapeamento", "historico", "auditoria"].includes(tab);
 
     case "Operador":
-      return ["dashboard", "geral", "responsaveis", "mapeamento"].includes(tab);
+      return ["dashboard", "geral", "memorandos", "responsaveis", "mapeamento"].includes(tab);
 
     case "Consulta":
       return ["dashboard", "geral", "historico", "auditoria"].includes(tab);

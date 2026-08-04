@@ -71,12 +71,12 @@ const MainLayout: React.FC = () => {
 
   const activeTab = activeTabState;
 
-  // Redireciona se a aba ativa não for permitida para o perfil do usuário logado
+  // Redireciona se a aba ativa não for permitida para o perfil e permissões do usuário logado
   useEffect(() => {
-    if (user && !isTabAllowedForProfile(activeTab, user.perfil)) {
+    if (user && !isTabAllowedForProfile(activeTab, user.perfil, user.permissoes)) {
       setActiveTab("dashboard");
     }
-  }, [user?.perfil, activeTab]);
+  }, [user?.perfil, user?.permissoes, activeTab]);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     return typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
@@ -127,15 +127,15 @@ const MainLayout: React.FC = () => {
 
         <main className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-100 dark:bg-slate-950 flex flex-col gap-6">
           <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col">
-            {activeTab === "dashboard" && isTabAllowedForProfile("dashboard", user?.perfil) && <DashboardPage />}
-            {activeTab === "geral" && isTabAllowedForProfile("geral", user?.perfil) && <GeralPage />}
-            {activeTab === "memorandos" && isTabAllowedForProfile("memorandos", user?.perfil) && <MemorandosPage onNavigateToGeral={() => setActiveTab("geral")} />}
-            {activeTab === "responsaveis" && isTabAllowedForProfile("responsaveis", user?.perfil) && <ResponsaveisPage />}
-            {activeTab === "historico" && isTabAllowedForProfile("historico", user?.perfil) && <HistoricoPage />}
-            {activeTab === "auditoria" && isTabAllowedForProfile("auditoria", user?.perfil) && <AuditoriaPage />}
-            {activeTab === "mapeamento" && isTabAllowedForProfile("mapeamento", user?.perfil) && <MapeamentoPage />}
-            {activeTab === "usuarios" && isTabAllowedForProfile("usuarios", user?.perfil) && <UsuariosPage />}
-            {activeTab === "backup" && isTabAllowedForProfile("backup", user?.perfil) && <BackupSyncPage />}
+            {activeTab === "dashboard" && isTabAllowedForProfile("dashboard", user?.perfil, user?.permissoes) && <DashboardPage />}
+            {activeTab === "geral" && isTabAllowedForProfile("geral", user?.perfil, user?.permissoes) && <GeralPage />}
+            {activeTab === "memorandos" && isTabAllowedForProfile("memorandos", user?.perfil, user?.permissoes) && <MemorandosPage onNavigateToGeral={() => setActiveTab("geral")} />}
+            {activeTab === "responsaveis" && isTabAllowedForProfile("responsaveis", user?.perfil, user?.permissoes) && <ResponsaveisPage />}
+            {activeTab === "historico" && isTabAllowedForProfile("historico", user?.perfil, user?.permissoes) && <HistoricoPage />}
+            {activeTab === "auditoria" && isTabAllowedForProfile("auditoria", user?.perfil, user?.permissoes) && <AuditoriaPage />}
+            {activeTab === "mapeamento" && isTabAllowedForProfile("mapeamento", user?.perfil, user?.permissoes) && <MapeamentoPage />}
+            {activeTab === "usuarios" && isTabAllowedForProfile("usuarios", user?.perfil, user?.permissoes) && <UsuariosPage />}
+            {activeTab === "backup" && isTabAllowedForProfile("backup", user?.perfil, user?.permissoes) && <BackupSyncPage />}
           </div>
         </main>
 
