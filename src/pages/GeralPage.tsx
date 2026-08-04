@@ -701,63 +701,36 @@ export const GeralPage: React.FC = () => {
     document.body.removeChild(link);
   };
 
-  // Geração de Impressão / PDF Oficial via jsPDF (Paisagem com cabeçalhos repetidos)
+  // Geração de Impressão / PDF Oficial via jsPDF (Vertical / Portrait com cabeçalhos repetidos em todas as páginas)
   const handleGeneratePDF = () => {
     try {
       const doc = new jsPDF({
-        orientation: "landscape",
+        orientation: "portrait",
         unit: "mm",
         format: "a4",
       });
 
-      // Cabeçalho Oficial
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(13);
-      doc.setTextColor(15, 23, 42); // slate-900
-      doc.text("DETRAN/PA — Setor Operacional de Protocolo e Entregas", 14, 14);
-
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(51, 65, 85); // slate-700
-      doc.text("Lista de Conferência e Retirada de CNHs no Protocolo Geral", 14, 20);
-
-      // Metadados à direita
-      doc.setFontSize(8.5);
-      doc.setTextColor(100, 116, 139); // slate-500
       const dataStr = `Emissão: ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
-      doc.text(dataStr, 283, 14, { align: "right" });
-      doc.text(`Total listado: ${reportData.length} CNH(s)`, 283, 19, { align: "right" });
-      if (filtroOrdemInicial || filtroOrdemFinal) {
-        doc.text(`Filtro Ordem: #${filtroOrdemInicial || "1"} até #${filtroOrdemFinal || "Fim"}`, 283, 24, { align: "right" });
-      }
 
-      // Linha divisória
-      doc.setDrawColor(203, 213, 225); // slate-300
-      doc.setLineWidth(0.4);
-      doc.line(14, 26, 283, 26);
-
-      // Corpo da tabela
-      const tableData = reportData.map((c) => {
-        const remessaText = c.remessa || c.memorando_numero || (c.memorando_id ? `Memo #${c.memorando_id}` : "Avulsa");
-        return [
-          `#${c.ordem}`,
-          c.nome,
-          formatCPF(c.cpf),
-          remessaText,
-          "___/___/202___",
-          ""
-        ];
-      });
+      // Corpo da tabela sem a coluna de Remessa
+      const tableData = reportData.map((c) => [
+        `#${c.ordem}`,
+        c.nome,
+        formatCPF(c.cpf),
+        "___/___/202___",
+        ""
+      ]);
 
       autoTable(doc, {
-        startY: 30,
-        head: [["Ordem", "Nome do Titular", "CPF", "Remessa", "Data", "Responsável pelo Recebimento"]],
+        startY: 28,
+        margin: { top: 28, bottom: 14, left: 14, right: 14 },
+        head: [["Ordem", "Nome do Titular", "CPF", "Data", "Responsável pelo Recebimento"]],
         body: tableData,
         theme: "grid",
         styles: {
           font: "helvetica",
           fontSize: 8,
-          cellPadding: 1.4,
+          cellPadding: 1.5,
           textColor: [30, 41, 59],
           lineColor: [203, 213, 225],
           lineWidth: 0.2,
@@ -770,19 +743,48 @@ export const GeralPage: React.FC = () => {
           halign: "center",
         },
         columnStyles: {
-          0: { halign: "center", cellWidth: 18, fontStyle: "bold" },
-          1: { cellWidth: 68 },
-          2: { halign: "center", cellWidth: 32 },
-          3: { halign: "center", cellWidth: 36 },
-          4: { halign: "center", cellWidth: 28 },
-          5: { cellWidth: "auto" },
+          0: { halign: "center", cellWidth: 16, fontStyle: "bold" },
+          1: { cellWidth: 72 },
+          2: { halign: "center", cellWidth: 30 },
+          3: { halign: "center", cellWidth: 26 },
+          4: { cellWidth: "auto" },
         },
-        didDrawPage: () => {
-          const pageStr = `Página ${(doc.internal as any).getNumberOfPages()}`;
+        didDrawPage: (data) => {
+          const pageWidth = doc.internal.pageSize.getWidth(); // 210mm
+          const pageHeight = doc.internal.pageSize.getHeight(); // 297mm
+          const rightMarginX = pageWidth - 14; // 196mm
+
+          // Cabeçalho Oficial Repetido em TODAS as páginas
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(11);
+          doc.setTextColor(15, 23, 42); // slate-900
+          doc.text("DETRAN/PA — Setor Operacional de Protocolo e Entregas", 14, 11);
+
+          doc.setFontSize(9);
+          doc.setFont("helvetica", "normal");
+          doc.setTextColor(51, 65, 85); // slate-700
+          doc.text("Lista de Conferência e Retirada de CNHs no Protocolo Geral", 14, 16);
+
+          // Metadados à direita
+          doc.setFontSize(8);
+          doc.setTextColor(100, 116, 139); // slate-500
+          doc.text(dataStr, rightMarginX, 11, { align: "right" });
+          doc.text(`Total listado: ${reportData.length} CNH(s)`, rightMarginX, 15, { align: "right" });
+          if (filtroOrdemInicial || filtroOrdemFinal) {
+            doc.text(`Filtro Ordem: #${filtroOrdemInicial || "1"} até #${filtroOrdemFinal || "Fim"}`, rightMarginX, 19, { align: "right" });
+          }
+
+          // Linha divisória
+          doc.setDrawColor(203, 213, 225); // slate-300
+          doc.setLineWidth(0.4);
+          doc.line(14, 21, rightMarginX, 21);
+
+          // Rodapé em TODAS as páginas
+          const pageStr = `Página ${data.pageNumber}`;
           doc.setFontSize(7.5);
           doc.setTextColor(148, 163, 184);
-          doc.text("Sistema DETRAN-PROT — Controle Operacional de Protocolo e Entregas (Orientação Paisagem)", 14, doc.internal.pageSize.getHeight() - 7);
-          doc.text(pageStr, doc.internal.pageSize.getWidth() - 14, doc.internal.pageSize.getHeight() - 7, { align: "right" });
+          doc.text("Sistema DETRAN-PROT — Controle Operacional de Protocolo e Entregas (Orientação Vertical)", 14, pageHeight - 6);
+          doc.text(pageStr, rightMarginX, pageHeight - 6, { align: "right" });
         },
       });
 
@@ -791,7 +793,7 @@ export const GeralPage: React.FC = () => {
       setIsPrintModalOpen(false);
       setMessage({
         type: "success",
-        text: `✅ Arquivo PDF gerado e baixado com sucesso! (${reportData.length} registros em formato Paisagem, ordenados de A a Z).`
+        text: `✅ Arquivo PDF gerado e baixado com sucesso! (${reportData.length} registros em formato Vertical, com cabeçalho em todas as páginas e sem coluna de remessa).`
       });
     } catch (err: any) {
       console.error("Erro ao gerar PDF:", err);
@@ -2020,7 +2022,7 @@ export const GeralPage: React.FC = () => {
       <Modal
         isOpen={isPrintModalOpen}
         onClose={() => setIsPrintModalOpen(false)}
-        title="🖨️ Impressão de Lista de Protocolo (PDF Paisagem)"
+        title="🖨️ Impressão de Lista de Protocolo (PDF Vertical)"
       >
         <div className="space-y-4 text-slate-800 dark:text-slate-200">
           <div className="p-4 bg-purple-50 dark:bg-purple-950/50 border border-purple-200 dark:border-purple-800 rounded-xl text-xs space-y-1.5">
@@ -2032,9 +2034,9 @@ export const GeralPage: React.FC = () => {
               Devido a restrições de segurança de navegadores no modo de visualização (onde o comando de impressão do sistema pode ser silenciado ou bloqueado), implementamos a <strong>geração nativa do arquivo PDF oficial</strong> pronto para salvar, imprimir ou enviar pelo WhatsApp!
             </p>
             <ul className="list-disc pl-5 text-[11px] text-slate-600 dark:text-slate-400 space-y-0.5 pt-1">
-              <li><strong>Orientação do Papel:</strong> Horizontal (Paisagem / Landscape) parametrizada em formato A4.</li>
-              <li><strong>Ordenação Alfabética:</strong> Lista ordenada de <strong>A a Z pelo Nome do Titular</strong>.</li>
-              <li><strong>Espaçamento Estreito:</strong> Linhas compactas sem subtítulos desnecessários para otimizar papel.</li>
+              <li><strong>Orientação do Papel:</strong> Vertical (Retrato / Portrait) em formato A4.</li>
+              <li><strong>Cabeçalho em Todas as Páginas:</strong> Título, data de emissão e metadados repetidos no topo de cada folha.</li>
+              <li><strong>Sem Coluna de Remessa:</strong> Tabela otimizada com foco em Ordem, Nome, CPF, Data e Assinatura.</li>
               <li><strong>Total Listado:</strong> {reportData.length} registro(s) refletindo exatamente os filtros aplicados na tela.</li>
             </ul>
           </div>
@@ -2047,7 +2049,6 @@ export const GeralPage: React.FC = () => {
                   <th className="py-1 px-1">Ordem</th>
                   <th className="py-1 px-2">Nome</th>
                   <th className="py-1 px-2">CPF</th>
-                  <th className="py-1 px-2">Remessa</th>
                   <th className="py-1 px-2">Data</th>
                   <th className="py-1 px-2">Assinatura / Responsável</th>
                 </tr>
@@ -2056,16 +2057,15 @@ export const GeralPage: React.FC = () => {
                 {reportData.slice(0, 5).map((c, idx) => (
                   <tr key={idx} className="text-slate-700 dark:text-slate-300">
                     <td className="py-1 px-1 font-bold">#{c.ordem}</td>
-                    <td className="py-1 px-2 font-medium truncate max-w-[120px]">{c.nome}</td>
+                    <td className="py-1 px-2 font-medium truncate max-w-[140px]">{c.nome}</td>
                     <td className="py-1 px-2 font-mono">{formatCPF(c.cpf)}</td>
-                    <td className="py-1 px-2 font-mono">{c.remessa || c.memorando_numero || (c.memorando_id ? `Memo #${c.memorando_id}` : "Avulsa")}</td>
                     <td className="py-1 px-2 text-slate-400 font-mono">___/___/___</td>
                     <td className="py-1 px-2"></td>
                   </tr>
                 ))}
                 {reportData.length > 5 && (
                   <tr>
-                    <td colSpan={6} className="py-1.5 text-center text-[10px] text-slate-400 italic font-semibold">
+                    <td colSpan={5} className="py-1.5 text-center text-[10px] text-slate-400 italic font-semibold">
                       + {reportData.length - 5} outras CNHs incluídas na impressão...
                     </td>
                   </tr>
@@ -2103,7 +2103,7 @@ export const GeralPage: React.FC = () => {
               className="flex items-center gap-2 px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl shadow-md shadow-purple-600/20 text-xs transition-all cursor-pointer"
             >
               <Download className="w-4 h-4" />
-              <span>📥 Baixar Arquivo PDF Oficial (Paisagem)</span>
+              <span>📥 Baixar Arquivo PDF Oficial (Vertical)</span>
             </button>
           </div>
         </div>
@@ -2509,57 +2509,55 @@ export const GeralPage: React.FC = () => {
       </Modal>
       </div>
 
-      {/* Relatório Oculto Exclusivo para Impressão (Paisagem, Cabeçalho repetido em todas as páginas) */}
-      <div id="printable-cnh-report" className="hidden print:block font-sans text-black p-6 bg-white w-full">
-        <div className="border-b-2 border-black pb-3 mb-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-bold uppercase tracking-wider text-black">
-              DETRAN/PA — Setor Operacional de Protocolo e Entregas
-            </h1>
-            <h2 className="text-sm font-semibold text-black mt-0.5">
-              Lista de Conferência e Retirada de CNHs no Protocolo Geral
-            </h2>
-          </div>
-          <div className="text-right text-[11px] text-black">
-            <p><strong>Data de Emissão:</strong> {new Date().toLocaleDateString("pt-BR")} às {new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>
-            <p><strong>Total Listado:</strong> {reportData.length} registro(s)</p>
-            {(filtroOrdemInicial || filtroOrdemFinal) && (
-              <p><strong>Filtro de Ordem:</strong> #{filtroOrdemInicial || "1"} até #{filtroOrdemFinal || "Fim"}</p>
-            )}
-          </div>
-        </div>
-
+      {/* Relatório Oculto Exclusivo para Impressão (Vertical, Cabeçalho repetido em todas as páginas) */}
+      <div id="printable-cnh-report" className="hidden print:block font-sans text-black p-4 bg-white w-full">
         <table className="w-full text-left border-collapse border border-black text-xs">
-          <thead>
+          <thead className="table-header-group">
+            <tr>
+              <th colSpan={5} className="border-b-2 border-black pb-3 mb-2 font-normal text-left">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h1 className="text-base font-bold uppercase tracking-wider text-black">
+                      DETRAN/PA — Setor Operacional de Protocolo e Entregas
+                    </h1>
+                    <h2 className="text-xs font-semibold text-black mt-0.5">
+                      Lista de Conferência e Retirada de CNHs no Protocolo Geral
+                    </h2>
+                  </div>
+                  <div className="text-right text-[10px] text-black">
+                    <p><strong>Data de Emissão:</strong> {new Date().toLocaleDateString("pt-BR")} às {new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>
+                    <p><strong>Total Listado:</strong> {reportData.length} registro(s)</p>
+                    {(filtroOrdemInicial || filtroOrdemFinal) && (
+                      <p><strong>Filtro de Ordem:</strong> #{filtroOrdemInicial || "1"} até #{filtroOrdemFinal || "Fim"}</p>
+                    )}
+                  </div>
+                </div>
+              </th>
+            </tr>
             <tr className="bg-gray-100 border-b-2 border-black font-bold uppercase text-[10px] text-black">
               <th className="border border-black py-1.5 px-2 w-16 text-center">Ordem</th>
               <th className="border border-black py-1.5 px-3">Nome</th>
               <th className="border border-black py-1.5 px-2 w-32 text-center">CPF</th>
-              <th className="border border-black py-1.5 px-2 w-36 text-center">Remessa</th>
               <th className="border border-black py-1.5 px-2 w-32 text-center">Data</th>
-              <th className="border border-black py-1.5 px-3 w-72">Responsável pelo recebimento</th>
+              <th className="border border-black py-1.5 px-3">Responsável pelo recebimento</th>
             </tr>
           </thead>
           <tbody>
-            {reportData.map((c, idx) => {
-              const remessaText = c.remessa || c.memorando_numero || (c.memorando_id ? `Memo #${c.memorando_id}` : "Avulsa");
-              return (
-                <tr key={c.id || idx} className="border-b border-black text-black">
-                  <td className="border border-black py-1 px-2 font-bold text-center font-mono">#{c.ordem}</td>
-                  <td className="border border-black py-1 px-3 font-semibold text-black">{c.nome}</td>
-                  <td className="border border-black py-1 px-2 font-mono text-center text-black">{formatCPF(c.cpf)}</td>
-                  <td className="border border-black py-1 px-2 text-center font-medium text-black">{remessaText}</td>
-                  <td className="border border-black py-1 px-2 text-center text-gray-400 font-mono">___/___/202___</td>
-                  <td className="border border-black py-1 px-3 text-black"></td>
-                </tr>
-              );
-            })}
+            {reportData.map((c, idx) => (
+              <tr key={c.id || idx} className="border-b border-black text-black">
+                <td className="border border-black py-1 px-2 font-bold text-center font-mono">#{c.ordem}</td>
+                <td className="border border-black py-1 px-3 font-semibold text-black">{c.nome}</td>
+                <td className="border border-black py-1 px-2 font-mono text-center text-black">{formatCPF(c.cpf)}</td>
+                <td className="border border-black py-1 px-2 text-center text-gray-400 font-mono">___/___/202___</td>
+                <td className="border border-black py-1 px-3 text-black"></td>
+              </tr>
+            ))}
           </tbody>
         </table>
 
-        <div className="mt-6 pt-3 border-t border-black flex justify-between items-center text-[9px] text-gray-600">
+        <div className="mt-4 pt-2 border-t border-black flex justify-between items-center text-[9px] text-gray-600">
           <span>Sistema DETRAN-PROT — Controle Operacional de Protocolo e Entregas</span>
-          <span>Orientação: Horizontal (Paisagem) | Página gerada com cabeçalho repetitivo (@page)</span>
+          <span>Orientação: Vertical (Retrato) | Cabeçalho repetido em todas as páginas</span>
         </div>
       </div>
 

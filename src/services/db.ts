@@ -9,6 +9,7 @@ import {
   MapeamentoLocalizacao,
   SituacaoGeral,
   AcaoAuditoria,
+  AcessoCidadaoLog,
   getPermissoesPadrao
 } from "../types";
 import { getInitialChar, formatDateTime } from "../lib/utils";
@@ -1305,7 +1306,11 @@ export async function addCandidato(
   saveStoredList("memorandos", memos);
 
   if (isSupabaseConfigured()) {
-    supabase.from("memorandos").update({ candidatos_count: newCount }).eq("id", memorando_id).catch(() => {});
+    try {
+      await supabase.from("memorandos").update({ candidatos_count: newCount }).eq("id", memorando_id);
+    } catch {
+      // ignore
+    }
   }
 
   await logAuditoria("candidatos", `${novo.nome} (${memo.numero})`, "Inclusão", userId, userNome, null, novo);
@@ -1338,7 +1343,11 @@ export async function deleteCandidato(id: string, userId: string, userNome: stri
     memo.candidatos_count = newCount;
     saveStoredList("memorandos", memos);
     if (isSupabaseConfigured()) {
-      supabase.from("memorandos").update({ candidatos_count: newCount }).eq("id", memo.id).catch(() => {});
+      try {
+        await supabase.from("memorandos").update({ candidatos_count: newCount }).eq("id", memo.id);
+      } catch {
+        // ignore
+      }
     }
   }
 
@@ -1579,6 +1588,118 @@ export function incrementPublicSearchCount(): number {
   return next;
 }
 
+// ============================================================================
+// LOGS DE ACESSO DO CIDADÃO PELO APLICATIVO E CONSULTA PÚBLICA
+// ============================================================================
+
+export function getAcessosCidadaoLogs(): AcessoCidadaoLog[] {
+  if (typeof window === "undefined") return [];
+  const stored = localStorage.getItem("detran_acessos_cidadao_logs");
+  if (stored) {
+    try {
+      return JSON.parse(stored);
+    } catch {
+      // fallback
+    }
+  }
+
+  const seeded = generateSeedAcessosCidadaoLogs();
+  if (typeof window !== "undefined") {
+    localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(seeded));
+  }
+  return seeded;
+}
+
+export function registrarAcessoCidadaoLog(logData: Omit<AcessoCidadaoLog, "id" | "data_hora">): AcessoCidadaoLog {
+  const currentLogs = getAcessosCidadaoLogs();
+  const newLog: AcessoCidadaoLog = {
+    id: `log-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+    data_hora: new Date().toISOString(),
+    ...logData
+  };
+  const updated = [newLog, ...currentLogs];
+  if (typeof window !== "undefined") {
+    localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(updated.slice(0, 500)));
+  }
+  incrementPublicSearchCount();
+  return newLog;
+}
+
+function generateSeedAcessosCidadaoLogs(): AcessoCidadaoLog[] {
+  const nomesSample = [
+    { nome: "ABDIS BRITO DOS SANTOS", cpf: "045.181.162-32", situacao: "Recebida", status: "DISPONIVEL" },
+    { nome: "ABEDIAS DA SILVA LEAL", cpf: "792.633.802-87", situacao: "Recebida", status: "DISPONIVEL" },
+    { nome: "ABEL DE SOUSA ARAUJO", cpf: "042.898.372-39", situacao: "Remetida", status: "EM_PROCESSAMENTO" },
+    { nome: "ABIDIAS PACHECO NUNES", cpf: "717.244.602-00", situacao: "Recebida", status: "DISPONIVEL" },
+    { nome: "ABIMAEL DE BRITO LIBORIO", cpf: "706.503.232-97", situacao: "Entregue", status: "ENTREGUE" },
+    { nome: "ABIMAEL REGO MORAES", cpf: "029.001.052-77", situacao: "Recebida", status: "DISPONIVEL" },
+    { nome: "ABIMAEL SOUSA", cpf: "019.964.462-40", situacao: "Pendente", status: "EM_PROCESSAMENTO" },
+    { nome: "ABRAAO CORREA LIMA", cpf: "043.521.803-43", situacao: "Recebida", status: "DISPONIVEL" },
+    { nome: "ABRAAO DA SILVA GOMES", cpf: "046.824.702-56", situacao: "Entregue", status: "ENTREGUE" },
+    { nome: "ACICLEIA PEREIRA SILVA", cpf: "006.878.212-82", situacao: "Recebida", status: "DISPONIVEL" },
+    { nome: "ACIR FAGUNDES DE OLIVEIRA", cpf: "834.656.189-04", situacao: "Remetida", status: "EM_PROCESSAMENTO" },
+    { nome: "ACLEI CIRINO DE OLIVEIRA SANTOS", cpf: "044.179.016-00", situacao: "Pendente", status: "EM_PROCESSAMENTO" },
+    { nome: "ADAILSON BORGES GOMES", cpf: "034.863.472-25", situacao: "Recebida", status: "DISPONIVEL" },
+    { nome: "ADAILSON MARTINS SOUZA", cpf: "702.345.582-53", situacao: "Entregue", status: "ENTREGUE" },
+    { nome: "ADAILTON SANTOS CAMPELO", cpf: "056.268.833-12", situacao: "Recebida", status: "DISPONIVEL" },
+    { nome: "ADAISE DA SILVA LIMA", cpf: "033.526.552-94", situacao: "Remetida", status: "EM_PROCESSAMENTO" },
+    { nome: "ADALBERTO PEREIRA SOARES", cpf: "032.727.622-30", situacao: "Recebida", status: "DISPONIVEL" },
+    { nome: "ADALBERTO VIANA AVINTE", cpf: "739.181.992-15", situacao: "Entregue", status: "ENTREGUE" },
+    { nome: "ADALTO GERALDO ALENCAR", cpf: "495.902.512-34", situacao: "Não Encontrada", status: "NAO_ENCONTRADA" },
+  ];
+
+  const canais: ("App Android" | "App iOS" | "PWA Web Mobile" | "QR Code Totem" | "Web Browser")[] = [
+    "App Android", "App Android", "App iOS", "PWA Web Mobile", "QR Code Totem", "Web Browser"
+  ];
+
+  const dispositivos = [
+    "Samsung Galaxy S23", "iPhone 14 Pro", "Motorola Edge 40", "Xiaomi Redmi Note 12",
+    "iPhone 13", "Chrome Mobile (Android)", "Safari Mobile (iOS)", "Totem DETRAN Sede"
+  ];
+
+  const cidades = [
+    "Belém", "Ananindeua", "Marituba", "Santarém", "Castanhal", "Paragominas", "Altamira", "Marabá", "Tucuruí"
+  ];
+
+  const now = new Date();
+  const logs: AcessoCidadaoLog[] = [];
+
+  for (let i = 0; i < 120; i++) {
+    const item = nomesSample[i % nomesSample.length];
+    const canal = canais[i % canais.length];
+    const disp = dispositivos[i % dispositivos.length];
+    const cidade = cidades[i % cidades.length];
+
+    let hoursAgo = 0;
+    if (i < 35) {
+      hoursAgo = Math.floor(Math.random() * 12);
+    } else if (i < 60) {
+      hoursAgo = 24 + Math.floor(Math.random() * 20);
+    } else if (i < 90) {
+      hoursAgo = (2 + Math.floor(Math.random() * 5)) * 24 + Math.floor(Math.random() * 20);
+    } else {
+      hoursAgo = (8 + Math.floor(Math.random() * 32)) * 24 + Math.floor(Math.random() * 20);
+    }
+
+    const logDate = new Date(now.getTime() - hoursAgo * 3600 * 1000);
+
+    logs.push({
+      id: `seed-log-${i + 1}`,
+      data_hora: logDate.toISOString(),
+      cpf: item.cpf,
+      nome_titular: item.nome,
+      situacao: item.situacao as any,
+      resultado_status: item.status as any,
+      canal: canal,
+      dispositivo: disp,
+      cidade_origem: cidade,
+      ip_mascarado: `177.136.${Math.floor(Math.random() * 200)}.${Math.floor(Math.random() * 250)}`
+    });
+  }
+
+  return logs.sort((a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime());
+}
+
 export interface ResultadoConsultaPublica {
   cpfConsultado: string;
   cnhEncontrada: GeralCNH | null;
@@ -1645,6 +1766,14 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
   });
 
   if (cnhsDoCidadao.length === 0) {
+    registrarAcessoCidadaoLog({
+      cpf: cleanCpf,
+      situacao: "Não Encontrada",
+      resultado_status: "NAO_ENCONTRADA",
+      canal: "App Android",
+      dispositivo: "Navegador Web / Mobile",
+      cidade_origem: "Belém"
+    });
     return {
       cpfConsultado: cleanCpf,
       cnhEncontrada: null,
@@ -1661,6 +1790,15 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
   const cnhRecebida = ordenadas.find((c) => c.situacao === "Recebida");
 
   if (cnhRecebida) {
+    registrarAcessoCidadaoLog({
+      cpf: cleanCpf,
+      nome_titular: cnhRecebida.nome,
+      situacao: "Recebida",
+      resultado_status: "DISPONIVEL",
+      canal: "App Android",
+      dispositivo: "Navegador Web / Mobile",
+      cidade_origem: "Belém"
+    });
     return {
       cpfConsultado: cleanCpf,
       cnhEncontrada: cnhRecebida,
@@ -1674,6 +1812,15 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
   const ultimaCNH = ordenadas[0];
 
   if (ultimaCNH.situacao === "Entregue") {
+    registrarAcessoCidadaoLog({
+      cpf: cleanCpf,
+      nome_titular: ultimaCNH.nome,
+      situacao: "Entregue",
+      resultado_status: "ENTREGUE",
+      canal: "App Android",
+      dispositivo: "Navegador Web / Mobile",
+      cidade_origem: "Belém"
+    });
     return {
       cpfConsultado: cleanCpf,
       cnhEncontrada: ultimaCNH,
@@ -1682,6 +1829,16 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
       mensagem: "ℹ️ A sua CNH consta como ENTREGUE no balcão."
     };
   }
+
+  registrarAcessoCidadaoLog({
+    cpf: cleanCpf,
+    nome_titular: ultimaCNH.nome,
+    situacao: (ultimaCNH.situacao as any) || "Pendente",
+    resultado_status: "EM_PROCESSAMENTO",
+    canal: "App Android",
+    dispositivo: "Navegador Web / Mobile",
+    cidade_origem: "Belém"
+  });
 
   return {
     cpfConsultado: cleanCpf,

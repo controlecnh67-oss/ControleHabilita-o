@@ -7,6 +7,7 @@ export type NavTab =
   | "dashboard" 
   | "geral" 
   | "memorandos" 
+  | "acessos_cidadao"
   | "responsaveis" 
   | "mapeamento" 
   | "historico" 
@@ -22,6 +23,8 @@ export function isTabAllowedForProfile(
   if (!perfil) return false;
 
   if (perfil === "Administrador") return true;
+
+  if (tab === "acessos_cidadao") return true;
 
   // Se a aba for "memorandos" (Memorandos e Remessas): libera se tiver a permissão de criar ou remeter memorandos
   if (tab === "memorandos") {
@@ -58,19 +61,19 @@ export function isTabAllowedForProfile(
       return true;
     }
     if (tab === "backup") {
-      return perfil === "Administrador";
+      return false;
     }
   }
 
   switch (perfil) {
     case "Supervisor":
-      return ["dashboard", "geral", "memorandos", "responsaveis", "mapeamento", "historico", "auditoria"].includes(tab);
+      return ["dashboard", "geral", "memorandos", "acessos_cidadao", "responsaveis", "mapeamento", "historico", "auditoria"].includes(tab);
 
     case "Operador":
-      return ["dashboard", "geral", "memorandos", "responsaveis", "mapeamento"].includes(tab);
+      return ["dashboard", "geral", "memorandos", "acessos_cidadao", "responsaveis", "mapeamento"].includes(tab);
 
     case "Consulta":
-      return ["dashboard", "geral", "historico", "auditoria"].includes(tab);
+      return ["dashboard", "geral", "acessos_cidadao", "historico", "auditoria"].includes(tab);
 
     default:
       return false;
@@ -285,3 +288,16 @@ export const EntregaCNHSchema = z.object({
   responsavel_id: z.string().optional(),
   observacao: z.string().optional(),
 });
+
+export interface AcessoCidadaoLog {
+  id: string;
+  data_hora: string;
+  cpf: string;
+  nome_titular?: string;
+  situacao: "Recebida" | "Remetida" | "Entregue" | "Pendente" | "Não Encontrada";
+  resultado_status: "DISPONIVEL" | "ENTREGUE" | "EM_PROCESSAMENTO" | "NAO_ENCONTRADA";
+  canal: "App Android" | "App iOS" | "PWA Web Mobile" | "QR Code Totem" | "Web Browser";
+  dispositivo?: string;
+  cidade_origem?: string;
+  ip_mascarado?: string;
+}

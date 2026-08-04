@@ -13,6 +13,7 @@ import { MapeamentoPage } from "./pages/MapeamentoPage";
 import { UsuariosPage } from "./pages/UsuariosPage";
 import { BackupSyncPage } from "./pages/BackupSyncPage";
 import { ConsultaPublicaPage } from "./pages/ConsultaPublicaPage";
+import { AcessosCidadaoPage } from "./pages/AcessosCidadaoPage";
 import { isTabAllowedForProfile, NavTab } from "./types";
 
 const MainLayout: React.FC = () => {
@@ -130,6 +131,7 @@ const MainLayout: React.FC = () => {
             {activeTab === "dashboard" && isTabAllowedForProfile("dashboard", user?.perfil, user?.permissoes) && <DashboardPage />}
             {activeTab === "geral" && isTabAllowedForProfile("geral", user?.perfil, user?.permissoes) && <GeralPage />}
             {activeTab === "memorandos" && isTabAllowedForProfile("memorandos", user?.perfil, user?.permissoes) && <MemorandosPage onNavigateToGeral={() => setActiveTab("geral")} />}
+            {activeTab === "acessos_cidadao" && isTabAllowedForProfile("acessos_cidadao", user?.perfil, user?.permissoes) && <AcessosCidadaoPage />}
             {activeTab === "responsaveis" && isTabAllowedForProfile("responsaveis", user?.perfil, user?.permissoes) && <ResponsaveisPage />}
             {activeTab === "historico" && isTabAllowedForProfile("historico", user?.perfil, user?.permissoes) && <HistoricoPage />}
             {activeTab === "auditoria" && isTabAllowedForProfile("auditoria", user?.perfil, user?.permissoes) && <AuditoriaPage />}

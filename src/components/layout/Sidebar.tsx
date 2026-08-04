@@ -40,6 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "dashboard" as NavTab, label: "Dashboard", icon: LayoutDashboard },
     { id: "geral" as NavTab, label: "Protocolo Geral (CNHs)", icon: FolderArchive },
     { id: "memorandos" as NavTab, label: "Memorandos e Remessas", icon: FileText },
+    { id: "acessos_cidadao" as NavTab, label: "Consulta Cidadão (App)", icon: Smartphone },
     { id: "responsaveis" as NavTab, label: "Responsáveis e CFCs", icon: Users },
     { id: "mapeamento" as NavTab, label: "Mapeamento (A-Z)", icon: MapPin },
     { id: "historico" as NavTab, label: "Histórico de Movimento", icon: History },
