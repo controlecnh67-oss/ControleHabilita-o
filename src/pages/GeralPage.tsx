@@ -7,6 +7,8 @@ import {
   FileSpreadsheet, 
   Filter, 
   ArrowUpDown, 
+  ArrowUp,
+  ArrowDown,
   Inbox, 
   Send, 
   CheckCircle2, 
@@ -308,15 +310,21 @@ export const GeralPage: React.FC = () => {
 
       return matchSearch && matchSituacao && matchOrdemInicial && matchOrdemFinal;
     }).sort((a, b) => {
-      const valA = a[sortColumn] || "";
-      const valB = b[sortColumn] || "";
+      const valA = a[sortColumn];
+      const valB = b[sortColumn];
+
+      if (sortColumn === "data_movimento") {
+        const timeA = valA ? new Date(valA as string).getTime() : 0;
+        const timeB = valB ? new Date(valB as string).getTime() : 0;
+        return sortDirection === "asc" ? timeA - timeB : timeB - timeA;
+      }
 
       if (typeof valA === "number" && typeof valB === "number") {
         return sortDirection === "asc" ? valA - valB : valB - valA;
       }
       return sortDirection === "asc"
-        ? String(valA).localeCompare(String(valB))
-        : String(valB).localeCompare(String(valA));
+        ? String(valA || "").localeCompare(String(valB || ""))
+        : String(valB || "").localeCompare(String(valA || ""));
     });
   }, [cnhs, searchTerm, filtroSituacao, filtroOrdemInicial, filtroOrdemFinal, sortColumn, sortDirection]);
 
@@ -1055,6 +1063,46 @@ export const GeralPage: React.FC = () => {
             Situação Geral de CNHs no Protocolo
           </h3>
           <div className="flex items-center gap-3 relative">
+            {/* Atalho de Ordenação por Data Mov. com Setas */}
+            <div className="flex items-center gap-1 bg-white dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700 shadow-2xs text-xs">
+              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 px-1 flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-blue-500" />
+                Data Mov:
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSortColumn("data_movimento");
+                  setSortDirection("asc");
+                }}
+                className={`px-2 py-0.5 rounded flex items-center gap-1 text-[11px] font-bold transition-all cursor-pointer ${
+                  sortColumn === "data_movimento" && sortDirection === "asc"
+                    ? "bg-blue-600 text-white shadow-2xs"
+                    : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                }`}
+                title="Visualizar por Data Movimento (Mais antiga primeiro ⬆)"
+              >
+                <ArrowUp className="w-3.5 h-3.5" />
+                <span>Mais Antiga</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSortColumn("data_movimento");
+                  setSortDirection("desc");
+                }}
+                className={`px-2 py-0.5 rounded flex items-center gap-1 text-[11px] font-bold transition-all cursor-pointer ${
+                  sortColumn === "data_movimento" && sortDirection === "desc"
+                    ? "bg-blue-600 text-white shadow-2xs"
+                    : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                }`}
+                title="Visualizar por Data Movimento (Mais recente primeiro ⬇)"
+              >
+                <ArrowDown className="w-3.5 h-3.5" />
+                <span>Mais Recente</span>
+              </button>
+            </div>
+
             <button
               onClick={() => setShowColumnFilter(!showColumnFilter)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-semibold shadow-2xs transition-all cursor-pointer"
@@ -1217,8 +1265,33 @@ export const GeralPage: React.FC = () => {
                     <th className="py-2 px-4">Responsável Retirada</th>
                   )}
                   {visibleColumns.data_movimento && (
-                    <th onClick={() => handleSort("data_movimento")} className="py-2 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors">
-                      <span>Data Mov.</span>
+                    <th
+                      onClick={() => handleSort("data_movimento")}
+                      className="py-2 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors select-none"
+                      title="Clique para ordenar por Data de Movimentação (Mais Antiga / Mais Recente)"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span>Data Mov.</span>
+                        <div className="inline-flex items-center gap-0.5">
+                          {sortColumn === "data_movimento" ? (
+                            sortDirection === "asc" ? (
+                              <span className="inline-flex items-center text-blue-600 dark:text-blue-400 font-bold bg-blue-100 dark:bg-blue-900/60 px-1 py-0.5 rounded text-[10px]" title="Ordenado: Mais Antiga (⬆)">
+                                <ArrowUp className="w-3.5 h-3.5 stroke-[2.5]" />
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center text-blue-600 dark:text-blue-400 font-bold bg-blue-100 dark:bg-blue-900/60 px-1 py-0.5 rounded text-[10px]" title="Ordenado: Mais Recente (⬇)">
+                                <ArrowDown className="w-3.5 h-3.5 stroke-[2.5]" />
+                              </span>
+                            )
+                          ) : (
+                            <div className="inline-flex items-center text-slate-400 opacity-70 hover:opacity-100">
+                              <ArrowUp className="w-3 h-3 -mr-1" />
+                              <ArrowDown className="w-3 h-3" />
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </th>
                   )}
                   {visibleColumns.usuario && (
