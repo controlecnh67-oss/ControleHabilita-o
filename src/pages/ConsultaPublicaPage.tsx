@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { consultarCnhPublicaPorCpf, ResultadoConsultaPublica, getPublicSearchCount } from "../services/db";
 import { formatCPF, formatDateTime } from "../lib/utils";
-import { getPublicShareUrl, saveLocalSupabaseConfig, isSupabaseConfigured } from "../services/supabase";
+import { getPublicShareUrl, saveLocalSupabaseConfig } from "../services/supabase";
 
 interface ConsultaPublicaPageProps {
   onBackToLogin?: () => void;
@@ -226,50 +226,14 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
         
         {/* Banner Informativo */}
         <div className="bg-gradient-to-r from-blue-900/60 to-indigo-900/60 border border-blue-500/30 rounded-2xl p-4 shadow-lg backdrop-blur-sm space-y-2">
-          <div className="flex items-center justify-between text-blue-300 font-bold text-xs uppercase tracking-wider">
-            <div className="flex items-center gap-2">
-              <Smartphone className="w-4 h-4 text-blue-400 shrink-0 animate-pulse" />
-              <span>Atendimento Rápido sem Login</span>
-            </div>
-            {isSupabaseConfigured() ? (
-              <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-full text-[10px] font-bold flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Supabase Online
-              </span>
-            ) : (
-              <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-full text-[10px] font-bold">
-                Cache Local
-              </span>
-            )}
+          <div className="flex items-center gap-2 text-blue-300 font-bold text-xs uppercase tracking-wider">
+            <Smartphone className="w-4 h-4 text-blue-400 shrink-0 animate-pulse" />
+            <span>Atendimento Rápido sem Login</span>
           </div>
           <p className="text-xs text-slate-200 leading-relaxed">
-            Informe o seu <strong className="text-white">CPF</strong> abaixo para verificar em tempo real no banco de dados Supabase se a sua Carteira Nacional de Habilitação (CNH) está pronta para ser retirada.
+            Informe o seu <strong className="text-white">CPF</strong> abaixo para verificar em tempo real se a sua Carteira Nacional de Habilitação (CNH) está pronta para ser retirada.
           </p>
         </div>
-
-        {/* Botão / Banner de Instalação do App no Dispositivo */}
-        {!isStandalone && (
-          <button
-            type="button"
-            onClick={handleInstallApp}
-            className="w-full py-3 px-4 bg-gradient-to-r from-emerald-950/90 via-slate-800 to-teal-950/90 border-2 border-emerald-500/60 hover:border-emerald-400 rounded-2xl shadow-lg text-emerald-100 flex items-center justify-between gap-3 group transition-all cursor-pointer hover:shadow-emerald-950/50"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-400 shrink-0 group-hover:scale-110 transition-transform">
-                <Download className="w-5 h-5 animate-bounce" />
-              </div>
-              <div className="text-left">
-                <span className="text-xs font-black text-white block">
-                  📲 Instalar App no Dispositivo
-                </span>
-                <span className="text-[11px] text-emerald-300 font-medium">Crie um atalho na tela inicial do seu celular</span>
-              </div>
-            </div>
-            <span className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-[11px] font-black uppercase tracking-wider rounded-xl shadow-md shrink-0">
-              Instalar
-            </span>
-          </button>
-        )}
 
         {/* Card do Formulário de Consulta */}
         <div className="bg-slate-800/90 border border-slate-700 rounded-3xl p-5 shadow-xl space-y-4">
