@@ -98,7 +98,7 @@ export const GeralPage: React.FC = () => {
 
   // Ordenação
   const [sortColumn, setSortColumn] = useState<keyof GeralCNH>("ordem");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
   // Paginação - Padrão 100 por página conforme especificação
   const [currentPage, setCurrentPage] = useState(1);
@@ -335,9 +335,9 @@ export const GeralPage: React.FC = () => {
     return filteredData.slice(start, start + itemsPerPage);
   }, [filteredData, currentPage, itemsPerPage]);
 
-  // Lista para Impressão e PDF Oficial obedecendo a ordem e os filtros aplicados na tela
+  // Lista para Impressão e PDF Oficial em ordem crescente por número de Ordem (do menor para o maior)
   const reportData = useMemo(() => {
-    return filteredData;
+    return [...filteredData].sort((a, b) => a.ordem - b.ordem);
   }, [filteredData]);
 
   const handleSort = (col: keyof GeralCNH) => {
@@ -345,7 +345,7 @@ export const GeralPage: React.FC = () => {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
       setSortColumn(col);
-      setSortDirection("asc");
+      setSortDirection("desc");
     }
   };
 

@@ -505,7 +505,7 @@ export async function initStorage(): Promise<void> {
   for (const k of keys) {
     try {
       const idbVal = await idbGet<any[]>(`detran_cnh_${k}`);
-      if (idbVal && Array.isArray(idbVal) && idbVal.length > 0) {
+      if (idbVal && Array.isArray(idbVal)) {
         memoryStore[k] = idbVal;
       }
     } catch (e) {
@@ -517,15 +517,13 @@ export async function initStorage(): Promise<void> {
 
 // Helper para obter/salvar com cache em memória e IndexedDB + LocalStorage
 function getStoredList<T extends { id?: string }>(key: string, seed: T[]): T[] {
-  if (memoryStore[key] && memoryStore[key].length > 0) {
+  if (memoryStore[key] && Array.isArray(memoryStore[key])) {
     return memoryStore[key] as T[];
   }
 
   try {
     const storageKey = `detran_cnh_${key}`;
-    const versionKey = `detran_cnh_${key}_v5`;
     const raw = localStorage.getItem(storageKey);
-    const hasV5 = localStorage.getItem(versionKey);
 
     if (!raw) {
       memoryStore[key] = seed;
@@ -534,32 +532,12 @@ function getStoredList<T extends { id?: string }>(key: string, seed: T[]): T[] {
     }
 
     let parsed: T[] = JSON.parse(raw);
-
-    if (!hasV5 || (key === "responsaveis" && parsed.length < seed.length)) {
-      const seedIds = new Set(seed.map((s) => s.id));
-      const customItems = parsed.filter(
-        (item) => item.id && !seedIds.has(item.id) && item.id !== "00000000-0000-0000-0000-000000000001" && item.id !== "00000000-0000-0000-0000-000000000002" && item.id !== "00000000-0000-0000-0000-000000000003"
-      );
-      parsed = [...seed, ...customItems];
-      memoryStore[key] = parsed;
+    if (!Array.isArray(parsed)) {
+      parsed = seed;
       saveStoredList(key, parsed);
-      return parsed;
+    } else {
+      memoryStore[key] = parsed;
     }
-
-    if (seed && seed.length > 0) {
-      let updated = false;
-      const existingIds = new Set(parsed.map((item) => item.id));
-      for (const s of seed) {
-        if (s.id && !existingIds.has(s.id)) {
-          parsed.push(s);
-          updated = true;
-        }
-      }
-      if (updated) {
-        saveStoredList(key, parsed);
-      }
-    }
-    memoryStore[key] = parsed;
     return parsed;
   } catch {
     memoryStore[key] = seed;

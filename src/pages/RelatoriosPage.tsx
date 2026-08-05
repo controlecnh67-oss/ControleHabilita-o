@@ -396,13 +396,16 @@ export const RelatoriosPage: React.FC = () => {
       recebidas: number;
       entregues: number;
       memorandos: number;
-      historicos: number;
+      remetidas: number;
       totalAcoes: number;
     }> = {};
 
-    // Inicializar com a lista oficial de usuários do sistema
+    // Criar mapa de correspondência apenas dos usuários oficiais ativos da lista de usuários
+    const userLookupMap: Record<string, string> = {};
+
     usuarios.forEach((u) => {
-      const key = u.nome_curto || u.nome || u.login;
+      if (u.ativo === false) return;
+      const key = u.id;
       mapServidores[key] = {
         id: u.id,
         nome: u.nome_curto || u.nome || u.login,
@@ -412,79 +415,58 @@ export const RelatoriosPage: React.FC = () => {
         recebidas: 0,
         entregues: 0,
         memorandos: 0,
-        historicos: 0,
+        remetidas: 0,
         totalAcoes: 0
       };
+
+      if (u.id) userLookupMap[u.id] = key;
+      if (u.login) userLookupMap[u.login.trim().toLowerCase()] = key;
+      if (u.nome) userLookupMap[u.nome.trim().toLowerCase()] = key;
+      if (u.nome_curto) userLookupMap[u.nome_curto.trim().toLowerCase()] = key;
     });
 
-    // Processar CNHs recebidas no período
+    // Função de busca estrita contra a lista oficial de usuários
+    const findUserId = (rawNameOrId?: string) => {
+      if (!rawNameOrId) return null;
+      const lower = rawNameOrId.trim().toLowerCase();
+      return userLookupMap[rawNameOrId] || userLookupMap[lower] || null;
+    };
+
+    // Processar CNHs recebidas ou remetidas no período
     cnhsFiltradasPeriodo.forEach((c) => {
-      const key = c.usuario_nome || "Servidor DETRAN";
-      if (!mapServidores[key]) {
-        mapServidores[key] = {
-          id: c.usuario_id || key,
-          nome: key,
-          login: key.toLowerCase().replace(/\s+/g, "."),
-          perfil: "Operador",
-          setor: c.reparticao || "Protocolo",
-          recebidas: 0,
-          entregues: 0,
-          memorandos: 0,
-          historicos: 0,
-          totalAcoes: 0
-        };
-      }
-      if (c.situacao === "Recebida") {
-        mapServidores[key].recebidas += 1;
+      const uId = findUserId(c.usuario_id) || findUserId(c.usuario_nome);
+      if (uId && mapServidores[uId]) {
+        if (c.situacao === "Recebida") {
+          mapServidores[uId].recebidas += 1;
+        } else if (c.situacao === "Remetida") {
+          mapServidores[uId].remetidas += 1;
+        }
       }
     });
 
-    // Processar Histórico de movimentações (Entregas e Ações)
+    // Processar Histórico de movimentações (Entregas e Remessas)
     histFiltradoPeriodo.forEach((h) => {
-      const key = h.usuario_nome || "Servidor DETRAN";
-      if (!mapServidores[key]) {
-        mapServidores[key] = {
-          id: h.usuario_id || key,
-          nome: key,
-          login: key.toLowerCase().replace(/\s+/g, "."),
-          perfil: "Operador",
-          setor: "Protocolo",
-          recebidas: 0,
-          entregues: 0,
-          memorandos: 0,
-          historicos: 0,
-          totalAcoes: 0
-        };
-      }
-      mapServidores[key].historicos += 1;
-      if (h.situacao_nova === "Entregue") {
-        mapServidores[key].entregues += 1;
+      const uId = findUserId(h.usuario_id) || findUserId(h.usuario_nome);
+      if (uId && mapServidores[uId]) {
+        if (h.situacao_nova === "Entregue") {
+          mapServidores[uId].entregues += 1;
+        } else if (h.situacao_nova === "Remetida" && h.situacao_anterior !== "Remetida") {
+          mapServidores[uId].remetidas += 1;
+        }
       }
     });
 
     // Processar Memorandos
     memorandosPeriodo.forEach((m) => {
-      const key = m.usuario_nome || "Servidor DETRAN";
-      if (!mapServidores[key]) {
-        mapServidores[key] = {
-          id: m.usuario_id || key,
-          nome: key,
-          login: key.toLowerCase().replace(/\s+/g, "."),
-          perfil: "Operador",
-          setor: "Protocolo",
-          recebidas: 0,
-          entregues: 0,
-          memorandos: 0,
-          historicos: 0,
-          totalAcoes: 0
-        };
+      const uId = findUserId(m.usuario_id) || findUserId(m.usuario_nome);
+      if (uId && mapServidores[uId]) {
+        mapServidores[uId].memorandos += 1;
       }
-      mapServidores[key].memorandos += 1;
     });
 
-    // Calular totais e percentuais
+    // Calcular totais e percentuais
     const list = Object.values(mapServidores).map((s) => {
-      const totalAcoes = s.recebidas + s.entregues + s.memorandos + s.historicos;
+      const totalAcoes = s.recebidas + s.entregues + s.memorandos + s.remetidas;
       return { ...s, totalAcoes };
     });
 
@@ -593,13 +575,14 @@ export const RelatoriosPage: React.FC = () => {
         `${s.recebidas}`,
         `${s.entregues}`,
         `${s.memorandos}`,
+        `${s.remetidas}`,
         `${s.totalAcoes}`,
         `${s.percentual}%`
       ]);
 
       autoTable(doc, {
         startY: currentY,
-        head: [["Servidor", "Login", "Perfil / Setor", "Recebidas", "Entregues", "Memorandos", "Total Ações", "% Participação"]],
+        head: [["Servidor", "Login", "Perfil / Setor", "Recebidas", "Entregues", "Memorandos", "CNHs Remetidas", "Total Operações", "% Participação"]],
         body: bodyServidores,
         theme: "grid",
         headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: "bold", fontSize: 8.5 },
@@ -722,7 +705,7 @@ export const RelatoriosPage: React.FC = () => {
       CNHs_Recebidas: s.recebidas,
       CNHs_Entregues: s.entregues,
       Memorandos_Elaborados: s.memorandos,
-      Acoes_No_Historico: s.historicos,
+      CNHs_Remetidas: s.remetidas,
       Total_Operacoes: s.totalAcoes,
       Participacao_Percentual: `${s.percentual}%`
     }));
@@ -1226,7 +1209,7 @@ export const RelatoriosPage: React.FC = () => {
             <div className="text-xl font-black text-purple-600 dark:text-purple-400">
               {desempenhoServidores.reduce((acc, s) => acc + s.totalAcoes, 0)}
             </div>
-            <p className="text-[10px] text-slate-400">Recebimentos + Entregas + Memorandos</p>
+            <p className="text-[10px] text-slate-400">Recebimentos + Entregas + Memorandos + Remessas</p>
           </div>
         </div>
 
@@ -1248,6 +1231,7 @@ export const RelatoriosPage: React.FC = () => {
                   <Bar dataKey="recebidas" name="CNHs Recebidas" fill="#2563eb" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="entregues" name="CNHs Entregues" fill="#059669" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="memorandos" name="Memorandos" fill="#9333ea" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="remetidas" name="CNHs Remetidas" fill="#d97706" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1264,7 +1248,7 @@ export const RelatoriosPage: React.FC = () => {
                 <th className="px-4 py-3 text-center">CNHs Recebidas</th>
                 <th className="px-4 py-3 text-center">Entregas no Balcão</th>
                 <th className="px-4 py-3 text-center">Memorandos</th>
-                <th className="px-4 py-3 text-center">Histórico Ações</th>
+                <th className="px-4 py-3 text-center">CNHs Remetidas</th>
                 <th className="px-4 py-3 text-center">Total Operações</th>
                 <th className="px-4 py-3 text-right">% Participação</th>
               </tr>
@@ -1304,8 +1288,8 @@ export const RelatoriosPage: React.FC = () => {
                     <td className="px-4 py-3 text-center font-semibold text-purple-600 dark:text-purple-400">
                       {s.memorandos}
                     </td>
-                    <td className="px-4 py-3 text-center font-mono text-slate-500">
-                      {s.historicos}
+                    <td className="px-4 py-3 text-center font-semibold text-amber-600 dark:text-amber-400">
+                      {s.remetidas}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className="inline-flex px-2.5 py-1 bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-black text-xs rounded-lg shadow-xs">
