@@ -175,7 +175,7 @@ export const RelatoriosPage: React.FC = () => {
       d.getFullYear() === today.getFullYear();
   };
 
-  // CNHs filtradas por período e repartição
+  // CNHs filtradas por período e repartição/setor
   const cnhsFiltradasPeriodo = useMemo(() => {
     return cnhs.filter((c) => {
       // Checa data de movimento ou data de criação
@@ -183,8 +183,20 @@ export const RelatoriosPage: React.FC = () => {
       const inPeriod = isDateInPeriod(dataRef);
       if (!inPeriod) return false;
 
-      if (reparticaoFiltro !== "todas" && c.reparticao !== reparticaoFiltro) {
-        return false;
+      if (reparticaoFiltro !== "todas") {
+        if (reparticaoFiltro === "Protocolo") {
+          // Setor Protocolo: responsável pelo recebimento em gaveta e entrega ao cidadão
+          const isProtocoloRep = !c.reparticao || c.reparticao.toLowerCase().includes("protocolo") || c.reparticao === "DETRAN Central - Sede";
+          const isProtocoloAction = c.situacao === "Recebida" || c.situacao === "Entregue";
+          if (!isProtocoloRep && !isProtocoloAction) return false;
+        } else if (reparticaoFiltro === "Retaguarda") {
+          // Setor Retaguarda: responsável por elaboração de memorandos e remessas expedidas
+          const isRetaguardaRep = c.reparticao?.toLowerCase().includes("retaguarda");
+          const isRetaguardaAction = c.situacao === "Remetida" || c.situacao === "Pendente" || Boolean(c.memorando_numero);
+          if (!isRetaguardaRep && !isRetaguardaAction) return false;
+        } else if (c.reparticao !== reparticaoFiltro) {
+          return false;
+        }
       }
 
       if (situacaoFiltro !== "todas" && c.situacao !== situacaoFiltro) {
@@ -210,10 +222,27 @@ export const RelatoriosPage: React.FC = () => {
     return historico.filter((h) => isDateInPeriod(h.data_hora));
   }, [historico, dateRange]);
 
-  // Memorandos no periodo
+  // Memorandos no periodo (filtrados por setor de origem/destino se aplicável)
   const memorandosPeriodo = useMemo(() => {
-    return memorandos.filter((m) => isDateInPeriod(m.created_at));
-  }, [memorandos, dateRange]);
+    return memorandos.filter((m) => {
+      const inPeriod = isDateInPeriod(m.created_at);
+      if (!inPeriod) return false;
+
+      if (reparticaoFiltro !== "todas") {
+        if (reparticaoFiltro === "Protocolo") {
+          // Memorandos recebidos ou destinados ao Protocolo
+          const isProtocolo = m.origem?.toLowerCase().includes("protocolo") || m.setor_destino?.toLowerCase().includes("protocolo") || m.setor_origem?.toLowerCase().includes("protocolo");
+          if (!isProtocolo) return false;
+        } else if (reparticaoFiltro === "Retaguarda") {
+          // Retaguarda elabora os memorandos e remessas
+          const isRetaguarda = !m.origem || m.origem?.toLowerCase().includes("retaguarda") || m.setor_origem?.toLowerCase().includes("retaguarda");
+          if (!isRetaguarda) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [memorandos, dateRange, reparticaoFiltro]);
 
   // Logs Cidadao no periodo
   const logsCidadaoPeriodo = useMemo(() => {
@@ -356,6 +385,119 @@ export const RelatoriosPage: React.FC = () => {
     return Object.entries(mapRep).map(([name, total]) => ({ name, total }));
   }, [cnhsFiltradasPeriodo]);
 
+  // 5. Desempenho e Quantidades por Usuário (Servidor) no Período
+  const desempenhoServidores = useMemo(() => {
+    const mapServidores: Record<string, {
+      id: string;
+      nome: string;
+      login: string;
+      perfil: string;
+      setor: string;
+      recebidas: number;
+      entregues: number;
+      memorandos: number;
+      historicos: number;
+      totalAcoes: number;
+    }> = {};
+
+    // Inicializar com a lista oficial de usuários do sistema
+    usuarios.forEach((u) => {
+      const key = u.nome_curto || u.nome || u.login;
+      mapServidores[key] = {
+        id: u.id,
+        nome: u.nome_curto || u.nome || u.login,
+        login: u.login || (u.nome ? u.nome.toLowerCase().replace(/\s+/g, ".") : "servidor"),
+        perfil: u.perfil || "Operador",
+        setor: u.setor || "Protocolo",
+        recebidas: 0,
+        entregues: 0,
+        memorandos: 0,
+        historicos: 0,
+        totalAcoes: 0
+      };
+    });
+
+    // Processar CNHs recebidas no período
+    cnhsFiltradasPeriodo.forEach((c) => {
+      const key = c.usuario_nome || "Servidor DETRAN";
+      if (!mapServidores[key]) {
+        mapServidores[key] = {
+          id: c.usuario_id || key,
+          nome: key,
+          login: key.toLowerCase().replace(/\s+/g, "."),
+          perfil: "Operador",
+          setor: c.reparticao || "Protocolo",
+          recebidas: 0,
+          entregues: 0,
+          memorandos: 0,
+          historicos: 0,
+          totalAcoes: 0
+        };
+      }
+      if (c.situacao === "Recebida") {
+        mapServidores[key].recebidas += 1;
+      }
+    });
+
+    // Processar Histórico de movimentações (Entregas e Ações)
+    histFiltradoPeriodo.forEach((h) => {
+      const key = h.usuario_nome || "Servidor DETRAN";
+      if (!mapServidores[key]) {
+        mapServidores[key] = {
+          id: h.usuario_id || key,
+          nome: key,
+          login: key.toLowerCase().replace(/\s+/g, "."),
+          perfil: "Operador",
+          setor: "Protocolo",
+          recebidas: 0,
+          entregues: 0,
+          memorandos: 0,
+          historicos: 0,
+          totalAcoes: 0
+        };
+      }
+      mapServidores[key].historicos += 1;
+      if (h.situacao_nova === "Entregue") {
+        mapServidores[key].entregues += 1;
+      }
+    });
+
+    // Processar Memorandos
+    memorandosPeriodo.forEach((m) => {
+      const key = m.usuario_nome || "Servidor DETRAN";
+      if (!mapServidores[key]) {
+        mapServidores[key] = {
+          id: m.usuario_id || key,
+          nome: key,
+          login: key.toLowerCase().replace(/\s+/g, "."),
+          perfil: "Operador",
+          setor: "Protocolo",
+          recebidas: 0,
+          entregues: 0,
+          memorandos: 0,
+          historicos: 0,
+          totalAcoes: 0
+        };
+      }
+      mapServidores[key].memorandos += 1;
+    });
+
+    // Calular totais e percentuais
+    const list = Object.values(mapServidores).map((s) => {
+      const totalAcoes = s.recebidas + s.entregues + s.memorandos + s.historicos;
+      return { ...s, totalAcoes };
+    });
+
+    const totalGeralOperacoes = list.reduce((acc, curr) => acc + curr.totalAcoes, 0);
+
+    return list
+      .map((s) => ({
+        ...s,
+        percentual: totalGeralOperacoes > 0 ? Math.round((s.totalAcoes / totalGeralOperacoes) * 100) : 0
+      }))
+      .sort((a, b) => b.totalAcoes - a.totalAcoes);
+  }, [usuarios, cnhsFiltradasPeriodo, histFiltradoPeriodo, memorandosPeriodo]);
+
   // ---- IMPRESSÃO DE PDF GERENCIAL SETORIAL ----
   const handlePrintPDF = () => {
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
@@ -388,7 +530,15 @@ export const RelatoriosPage: React.FC = () => {
     doc.setTextColor(100, 116, 139);
 
     const periodoStr = `${dateRange.start.toLocaleDateString("pt-BR")} até ${dateRange.end.toLocaleDateString("pt-BR")}`;
-    doc.text(`Período de Análise: ${periodoStr} | Filtro Repartição: ${reparticaoFiltro === "todas" ? "Todas" : reparticaoFiltro}`, 14, 40);
+    const reparticaoLabel = reparticaoFiltro === "todas" 
+      ? "Todas as Repartições e Setores" 
+      : reparticaoFiltro === "Protocolo" 
+      ? "Setor Protocolo (Recebimento & Entrega)" 
+      : reparticaoFiltro === "Retaguarda" 
+      ? "Setor Retaguarda (Elaboração de Memorandos & Remessas)" 
+      : reparticaoFiltro;
+
+    doc.text(`Período de Análise: ${periodoStr} | Setor / Repartição: ${reparticaoLabel}`, 14, 40);
     doc.text(`Emissão: ${new Date().toLocaleString("pt-BR")} | Emitido por: ${user?.nome_curto || user?.nome || "Servidor DETRAN"}`, 14, 45);
 
     let currentY = 50;
@@ -423,7 +573,44 @@ export const RelatoriosPage: React.FC = () => {
 
     currentY = (doc as any).lastAutoTable.finalY + 8;
 
-    // Tabela 2: Memorandos do Período
+    // Tabela 2: Resumo de Produtividade por Servidor (Usuário)
+    if (desempenhoServidores.length > 0) {
+      if (currentY > 230) {
+        doc.addPage();
+        currentY = 20;
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(15, 23, 42);
+      doc.text("2. RESUMO DE PRODUÇÃO POR SERVIDOR (USUÁRIO)", 14, currentY);
+      currentY += 3;
+
+      const bodyServidores = desempenhoServidores.map((s) => [
+        s.nome,
+        s.login,
+        `${s.perfil} (${s.setor})`,
+        `${s.recebidas}`,
+        `${s.entregues}`,
+        `${s.memorandos}`,
+        `${s.totalAcoes}`,
+        `${s.percentual}%`
+      ]);
+
+      autoTable(doc, {
+        startY: currentY,
+        head: [["Servidor", "Login", "Perfil / Setor", "Recebidas", "Entregues", "Memorandos", "Total Ações", "% Participação"]],
+        body: bodyServidores,
+        theme: "grid",
+        headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: "bold", fontSize: 8.5 },
+        bodyStyles: { fontSize: 8, textColor: [51, 65, 85] },
+        margin: { left: 14, right: 14 }
+      });
+
+      currentY = (doc as any).lastAutoTable.finalY + 8;
+    }
+
+    // Tabela 3: Memorandos do Período
     if (memorandosPeriodo.length > 0) {
       if (currentY > 230) {
         doc.addPage();
@@ -433,7 +620,7 @@ export const RelatoriosPage: React.FC = () => {
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
       doc.setTextColor(15, 23, 42);
-      doc.text("2. DEMONSTRATIVO DE MEMORANDOS E REMESSAS EXPEDIDAS", 14, currentY);
+      doc.text("3. DEMONSTRATIVO DE MEMORANDOS E REMESSAS EXPEDIDAS", 14, currentY);
       currentY += 3;
 
       const bodyMemos = memorandosPeriodo.map((m) => [
@@ -458,44 +645,7 @@ export const RelatoriosPage: React.FC = () => {
       currentY = (doc as any).lastAutoTable.finalY + 8;
     }
 
-    // Tabela 3: Amostra Detalhada das CNHs Movimentadas
-    if (cnhsFiltradasPeriodo.length > 0) {
-      if (currentY > 230) {
-        doc.addPage();
-        currentY = 20;
-      }
 
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(15, 23, 42);
-      doc.text(`3. RELAÇÃO INDIVIDUALIZADA DE CNHs (${cnhsFiltradasPeriodo.length} Registros)`, 14, currentY);
-      currentY += 3;
-
-      // Limitar a 150 itens no PDF para evitar estouro de arquivo
-      const itensPdf = cnhsFiltradasPeriodo.slice(0, 150);
-      const bodyCnhs = itensPdf.map((c) => [
-        c.ordem ? String(c.ordem) : "-",
-        c.nome,
-        formatCPF(c.cpf),
-        c.reparticao || "DETRAN Sede",
-        c.gaveta || "-",
-        c.situacao,
-        c.responsavel_nome || "Titular",
-        c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "-"
-      ]);
-
-      autoTable(doc, {
-        startY: currentY,
-        head: [["Ordem", "Titular CNH", "CPF", "Repartição", "Gaveta", "Situação", "Responsável/Retirante", "Data Mov."]],
-        body: bodyCnhs,
-        theme: "grid",
-        headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: "bold", fontSize: 8 },
-        bodyStyles: { fontSize: 7.5, textColor: [51, 65, 85] },
-        margin: { left: 14, right: 14 }
-      });
-
-      currentY = (doc as any).lastAutoTable.finalY + 12;
-    }
 
     // Assinaturas Institucionais
     if (currentY > 240) {
@@ -563,7 +713,23 @@ export const RelatoriosPage: React.FC = () => {
     const wsResumo = XLSX.utils.aoa_to_sheet(resumoData);
     XLSX.utils.book_append_sheet(wb, wsResumo, "Resumo Executivo");
 
-    // Planilha 2: CNHs no Período
+    // Planilha 2: Resumo por Servidor
+    const servidoresExport = desempenhoServidores.map((s) => ({
+      Servidor: s.nome,
+      Login: s.login,
+      Perfil: s.perfil,
+      Setor: s.setor,
+      CNHs_Recebidas: s.recebidas,
+      CNHs_Entregues: s.entregues,
+      Memorandos_Elaborados: s.memorandos,
+      Acoes_No_Historico: s.historicos,
+      Total_Operacoes: s.totalAcoes,
+      Participacao_Percentual: `${s.percentual}%`
+    }));
+    const wsServidores = XLSX.utils.json_to_sheet(servidoresExport);
+    XLSX.utils.book_append_sheet(wb, wsServidores, "Resumo por Servidor");
+
+    // Planilha 3: CNHs no Período
     const cnhsExport = cnhsFiltradasPeriodo.map((c) => ({
       Ordem: c.ordem,
       Titular: c.nome,
@@ -699,9 +865,11 @@ export const RelatoriosPage: React.FC = () => {
             <select
               value={reparticaoFiltro}
               onChange={(e) => setReparticaoFiltro(e.target.value)}
-              className="w-full text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
             >
-              <option value="todas">Todas as Repartições</option>
+              <option value="todas">Todas as Repartições e Setores</option>
+              <option value="Protocolo">Setor Protocolo (Recebimento & Entrega ao Cidadão)</option>
+              <option value="Retaguarda">Setor Retaguarda (Elaboração de Memorandos & Remessas)</option>
               <option value="DETRAN Central - Sede">DETRAN Central - Sede</option>
               <option value="Posto Avançado 01 - Z. Sul">Posto Avançado 01 - Z. Sul</option>
               <option value="Posto Avançado 02 - Z. Norte">Posto Avançado 02 - Z. Norte</option>
@@ -742,6 +910,17 @@ export const RelatoriosPage: React.FC = () => {
               />
             </div>
           </div>
+        </div>
+
+        {/* Legenda Informativa dos Escopos dos Setores */}
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px]">
+          <span className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[10px]">Escopo dos Setores:</span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-medium border border-blue-100 dark:border-blue-900/40">
+            <Inbox className="w-3 h-3 text-blue-600" /> <strong>Protocolo:</strong> Recebimento em gavetas e entrega direta de CNHs aos cidadãos
+          </span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-medium border border-purple-100 dark:border-purple-900/40">
+            <FileText className="w-3 h-3 text-purple-600" /> <strong>Retaguarda:</strong> Elaboração e expedição de memorandos e remessas
+          </span>
         </div>
 
         {/* Inputs de Data Customizada */}
@@ -992,7 +1171,166 @@ export const RelatoriosPage: React.FC = () => {
         </div>
       </div>
 
-      {/* SEÇÃO 3: RELATÓRIO SETORIAL DE MEMORANDOS E REMESSAS */}
+      {/* SEÇÃO 3: QUANTIDADES E INDICADORES POR USUÁRIO (SERVIDOR) - TABELA RESUMO */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden p-5 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
+              <Users className="w-4 h-4 text-blue-600" />
+              Quantidades e Produção por Usuário (Servidor)
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Tabela resumo da produção individual dos servidores no período selecionado (Recebimentos, Entregas e Memorandos).
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="px-3 py-1 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-semibold rounded-xl">
+              {desempenhoServidores.filter(s => s.totalAcoes > 0).length} Servidores com Atividade no Período
+            </span>
+          </div>
+        </div>
+
+        {/* CARDS DE INDICADORES POR SERVIDOR */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 space-y-1">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Total de Servidores</span>
+            <div className="text-xl font-black text-slate-900 dark:text-white">
+              {desempenhoServidores.length} Cadastrados
+            </div>
+            <p className="text-[10px] text-slate-400">{desempenhoServidores.filter(s => s.totalAcoes > 0).length} ativos no período selecionado</p>
+          </div>
+
+          <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 space-y-1">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Servidor Mais Ativo</span>
+            <div className="text-base font-bold text-blue-600 dark:text-blue-400 truncate">
+              {desempenhoServidores[0]?.nome || "Nenhum"}
+            </div>
+            <p className="text-[10px] text-slate-400">
+              {desempenhoServidores[0]?.totalAcoes || 0} operações ({desempenhoServidores[0]?.percentual || 0}% do total do setor)
+            </p>
+          </div>
+
+          <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 space-y-1">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Média de Ações por Servidor</span>
+            <div className="text-xl font-black text-emerald-600 dark:text-emerald-400">
+              {desempenhoServidores.filter(s => s.totalAcoes > 0).length > 0 
+                ? Math.round(desempenhoServidores.reduce((acc, s) => acc + s.totalAcoes, 0) / desempenhoServidores.filter(s => s.totalAcoes > 0).length) 
+                : 0} op.
+            </div>
+            <p className="text-[10px] text-slate-400">Média de produtividade individual</p>
+          </div>
+
+          <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 space-y-1">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Total de Operações Efetuadas</span>
+            <div className="text-xl font-black text-purple-600 dark:text-purple-400">
+              {desempenhoServidores.reduce((acc, s) => acc + s.totalAcoes, 0)}
+            </div>
+            <p className="text-[10px] text-slate-400">Recebimentos + Entregas + Memorandos</p>
+          </div>
+        </div>
+
+        {/* GRÁFICO DE PRODUÇÃO DOS SERVIDORES */}
+        {desempenhoServidores.some(s => s.totalAcoes > 0) && (
+          <div className="p-4 bg-slate-50/60 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800">
+            <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+              <BarChart3 className="w-3.5 h-3.5 text-blue-600" />
+              Comparativo de Produção por Servidor no Período
+            </h4>
+            <div className="h-56 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={desempenhoServidores.filter(s => s.totalAcoes > 0).slice(0, 8)}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#33415522" />
+                  <XAxis dataKey="nome" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+                  <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} allowDecimals={false} />
+                  <Tooltip contentStyle={{ backgroundColor: "#0f172a", borderRadius: "12px", color: "#fff", fontSize: "11px", border: "none" }} />
+                  <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "5px" }} />
+                  <Bar dataKey="recebidas" name="CNHs Recebidas" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="entregues" name="CNHs Entregues" fill="#059669" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="memorandos" name="Memorandos" fill="#9333ea" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        {/* TABELA RESUMO DE SERVIDORES */}
+        <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
+          <table className="w-full text-left text-xs text-slate-600 dark:text-slate-300">
+            <thead className="bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-bold uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
+              <tr>
+                <th className="px-4 py-3">Servidor / Usuário</th>
+                <th className="px-4 py-3">Perfil / Setor</th>
+                <th className="px-4 py-3 text-center">CNHs Recebidas</th>
+                <th className="px-4 py-3 text-center">Entregas no Balcão</th>
+                <th className="px-4 py-3 text-center">Memorandos</th>
+                <th className="px-4 py-3 text-center">Histórico Ações</th>
+                <th className="px-4 py-3 text-center">Total Operações</th>
+                <th className="px-4 py-3 text-right">% Participação</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {desempenhoServidores.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
+                    Nenhum servidor registrado no sistema.
+                  </td>
+                </tr>
+              ) : (
+                desempenhoServidores.map((s, idx) => (
+                  <tr key={s.id || idx} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold text-xs flex items-center justify-center border border-blue-200 dark:border-blue-800">
+                          {s.nome.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="font-bold text-slate-900 dark:text-white">{s.nome}</div>
+                          <div className="text-[10px] text-slate-400 font-mono">@{s.login}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                        {s.perfil} • {s.setor}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center font-semibold text-blue-600 dark:text-blue-400">
+                      {s.recebidas}
+                    </td>
+                    <td className="px-4 py-3 text-center font-semibold text-emerald-600 dark:text-emerald-400">
+                      {s.entregues}
+                    </td>
+                    <td className="px-4 py-3 text-center font-semibold text-purple-600 dark:text-purple-400">
+                      {s.memorandos}
+                    </td>
+                    <td className="px-4 py-3 text-center font-mono text-slate-500">
+                      {s.historicos}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className="inline-flex px-2.5 py-1 bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-black text-xs rounded-lg shadow-xs">
+                        {s.totalAcoes}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <span className="font-bold text-slate-800 dark:text-slate-200 min-w-[36px]">
+                          {s.percentual}%
+                        </span>
+                        <div className="w-16 bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                          <div className="bg-blue-600 h-full rounded-full" style={{ width: `${s.percentual}%` }} />
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* SEÇÃO 4: RELATÓRIO SETORIAL DE MEMORANDOS E REMESSAS */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
@@ -1130,84 +1468,6 @@ export const RelatoriosPage: React.FC = () => {
         </div>
       </div>
 
-      {/* SEÇÃO 5: DETALHAMENTO ANALÍTICO DA MOVIMENTAÇÃO (LISTAGEM) */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
-        <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
-              <Layers className="w-4 h-4 text-blue-600" />
-              Listagem de Movimentações Registradas ({cnhsFiltradasPeriodo.length})
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Relação nominal individualizada conforme os filtros de período e setor aplicados.
-            </p>
-          </div>
-        </div>
-
-        {cnhsFiltradasPeriodo.length === 0 ? (
-          <div className="p-12 text-center text-xs text-slate-500 dark:text-slate-400">
-            Nenhuma CNH encontrada com os filtros de período e busca informados.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-600 dark:text-slate-300">
-              <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 font-bold uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
-                <tr>
-                  <th className="px-4 py-3">Ordem</th>
-                  <th className="px-4 py-3">Titular da CNH</th>
-                  <th className="px-4 py-3">CPF</th>
-                  <th className="px-4 py-3">Repartição / Gaveta</th>
-                  <th className="px-4 py-3">Situação</th>
-                  <th className="px-4 py-3">Responsável Retirante</th>
-                  <th className="px-4 py-3 text-right">Data Movimento</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {cnhsFiltradasPeriodo.slice(0, 100).map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
-                    <td className="px-4 py-3 font-mono font-bold text-slate-900 dark:text-white">
-                      #{c.ordem || "-"}
-                    </td>
-                    <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">
-                      {c.nome}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-slate-500">
-                      {formatCPF(c.cpf)}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
-                      {c.reparticao || "DETRAN Sede"} • Gaveta <strong className="text-slate-800 dark:text-slate-200">{c.gaveta || "-"}</strong>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold ${
-                        c.situacao === "Entregue"
-                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
-                          : c.situacao === "Recebida"
-                          ? "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300"
-                          : c.situacao === "Remetida"
-                          ? "bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300"
-                          : "bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
-                      }`}>
-                        {c.situacao}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
-                      {c.responsavel_nome || "Titular Direto"}
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-500 font-mono">
-                      {c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "-"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {cnhsFiltradasPeriodo.length > 100 && (
-              <div className="p-3 bg-slate-50 dark:bg-slate-800/40 text-center text-xs text-slate-500 border-t border-slate-100 dark:border-slate-800">
-                Exibindo os primeiros 100 de {cnhsFiltradasPeriodo.length} registros. Use a opção de Impressão PDF ou Exportar Excel para ver a relação completa.
-              </div>
-            )}
-          </div>
-        )}
-      </div>
     </div>
   );
 };
