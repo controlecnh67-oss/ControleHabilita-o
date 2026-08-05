@@ -265,6 +265,35 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
       return;
     }
 
+    // Checar duplicidade de candidato na lista deste memorando
+    const formattedCpf = formatCPF(candCpf);
+    const cleanCpf = formattedCpf.replace(/\D/g, "");
+    const cleanNome = candNome.trim().toLowerCase();
+
+    const otherCands = editingCand
+      ? candidatos.filter((c) => c.id !== editingCand.id)
+      : candidatos;
+
+    if (cleanCpf.length >= 11) {
+      const dupCpf = otherCands.find((c) => (c.cpf || "").replace(/\D/g, "") === cleanCpf);
+      if (dupCpf) {
+        setCandErrors({
+          cpf: `O candidato com CPF ${dupCpf.cpf} ("${dupCpf.nome}") já consta na lista deste memorando.`,
+        });
+        return;
+      }
+    }
+
+    if (cleanNome) {
+      const dupNome = otherCands.find((c) => (c.nome || "").trim().toLowerCase() === cleanNome);
+      if (dupNome) {
+        setCandErrors({
+          nome: `O candidato "${dupNome.nome}" já foi adicionado a este memorando.`,
+        });
+        return;
+      }
+    }
+
     setSubmittingCand(true);
     try {
       if (editingCand) {

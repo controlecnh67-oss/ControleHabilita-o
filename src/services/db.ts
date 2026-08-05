@@ -1278,6 +1278,26 @@ export async function addCandidato(
     throw new Error(`Apenas o usuário responsável (${memo.usuario_nome || "autor"}) que está elaborando este memorando pode adicionar candidatos.`);
   }
   const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+
+  // Verificar se o candidato já existe na lista deste memorando
+  const candsDoMemo = cands.filter((c) => c.memorando_id === memorando_id);
+  const cleanNewCpf = (data.cpf || "").replace(/\D/g, "");
+  const cleanNewNome = (data.nome || "").trim().toLowerCase();
+
+  if (cleanNewCpf.length >= 11) {
+    const dupCpf = candsDoMemo.find((c) => (c.cpf || "").replace(/\D/g, "") === cleanNewCpf);
+    if (dupCpf) {
+      throw new Error(`O candidato com CPF ${dupCpf.cpf} ("${dupCpf.nome}") já foi adicionado a este memorando.`);
+    }
+  }
+
+  if (cleanNewNome) {
+    const dupNome = candsDoMemo.find((c) => (c.nome || "").trim().toLowerCase() === cleanNewNome);
+    if (dupNome) {
+      throw new Error(`O candidato "${dupNome.nome}" já consta na lista deste memorando.`);
+    }
+  }
+
   let novo: Candidato = {
     ...data,
     id: `cand-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -1369,6 +1389,26 @@ export async function updateCandidato(
   if (memo && memo.status !== "Em elaboração") {
     throw new Error("Não é possível editar candidato de um memorando remetido.");
   }
+
+  // Verificar se a edição causa duplicidade no mesmo memorando
+  const candsDoMemo = cands.filter((c) => c.memorando_id === target.memorando_id && c.id !== id);
+  const cleanNewCpf = ((data.cpf !== undefined ? data.cpf : target.cpf) || "").replace(/\D/g, "");
+  const cleanNewNome = ((data.nome !== undefined ? data.nome : target.nome) || "").trim().toLowerCase();
+
+  if (cleanNewCpf.length >= 11) {
+    const dupCpf = candsDoMemo.find((c) => (c.cpf || "").replace(/\D/g, "") === cleanNewCpf);
+    if (dupCpf) {
+      throw new Error(`Outro candidato com CPF ${dupCpf.cpf} ("${dupCpf.nome}") já existe neste memorando.`);
+    }
+  }
+
+  if (cleanNewNome) {
+    const dupNome = candsDoMemo.find((c) => (c.nome || "").trim().toLowerCase() === cleanNewNome);
+    if (dupNome) {
+      throw new Error(`Outro candidato com o nome "${dupNome.nome}" já existe neste memorando.`);
+    }
+  }
+
   const atualizado = { ...target, ...data };
 
   if (isSupabaseConfigured()) {
