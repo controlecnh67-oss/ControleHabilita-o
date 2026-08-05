@@ -335,9 +335,9 @@ export const GeralPage: React.FC = () => {
     return filteredData.slice(start, start + itemsPerPage);
   }, [filteredData, currentPage, itemsPerPage]);
 
-  // Lista de conferência e retirada ordenada de A a Z por Nome do Titular para Impressão e PDF Oficial
+  // Lista para Impressão e PDF Oficial obedecendo a ordem e os filtros aplicados na tela
   const reportData = useMemo(() => {
-    return [...filteredData].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    return filteredData;
   }, [filteredData]);
 
   const handleSort = (col: keyof GeralCNH) => {
