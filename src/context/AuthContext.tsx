@@ -40,19 +40,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } else {
             sessionStorage.removeItem("detran_active_user_id");
           }
-        } else {
-          // No modo demo, opcionalmente inicia com o Administrador se não houver sessão para facilitar a visualização imediata
-          const autoLogin = localStorage.getItem("detran_auto_logged");
-          if (!autoLogin) {
-            const usuarios = await getUsuarios();
-            const admin = usuarios.find((u) => u.perfil === "Administrador");
-            if (admin) {
-              setUser(admin);
-              sessionStorage.setItem("detran_active_user_id", admin.id);
-              localStorage.setItem("detran_auto_logged", "true");
-              await logAuditoria("usuarios", admin.login, "Login", admin.id, admin.nome_curto, null, { modo: "Auto Login Inicial" });
-            }
-          }
+        }
+        // Exclui chave antiga de autologin se existir para evitar login indesejado
+        if (typeof localStorage !== "undefined") {
+          localStorage.removeItem("detran_auto_logged");
         }
       } catch (err) {
         console.error("Erro ao verificar sessão Auth:", err);

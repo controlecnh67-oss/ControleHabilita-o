@@ -212,10 +212,10 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
             <button
               onClick={onBackToLogin}
               title="Acesso de Servidores / Login"
-              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl border border-slate-700 transition-colors cursor-pointer text-xs flex items-center gap-1"
+              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl border border-slate-700 transition-colors cursor-pointer text-xs flex items-center gap-1.5 font-semibold"
             >
-              <ArrowLeft className="w-4 h-4" />
-              <span className="hidden sm:inline font-semibold">Login Servidor</span>
+              <ArrowLeft className="w-4 h-4 text-slate-400" />
+              <span>Login Servidor</span>
             </button>
           )}
         </div>

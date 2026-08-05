@@ -18,7 +18,7 @@ import { RelatoriosPage } from "./pages/RelatoriosPage";
 import { isTabAllowedForProfile, NavTab } from "./types";
 
 const MainLayout: React.FC = () => {
-  const { user, isAuthenticated, isLoading, timeRemaining } = useAuth();
+  const { user, isAuthenticated, isLoading, timeRemaining, logout } = useAuth();
   
   const [isPublicConsulta, setIsPublicConsulta] = useState(() => {
     if (typeof window !== "undefined") {
@@ -43,7 +43,13 @@ const MainLayout: React.FC = () => {
     return () => window.removeEventListener("popstate", handleUrlChange);
   }, []);
 
-  const closePublicConsulta = () => {
+  const openPublicConsulta = async () => {
+    await logout();
+    setIsPublicConsulta(true);
+  };
+
+  const closePublicConsulta = async () => {
+    await logout();
     setIsPublicConsulta(false);
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
@@ -104,7 +110,7 @@ const MainLayout: React.FC = () => {
   }
 
   if (!isAuthenticated) {
-    return <LoginPage onOpenConsultaPublica={() => setIsPublicConsulta(true)} />;
+    return <LoginPage onOpenConsultaPublica={openPublicConsulta} />;
   }
 
   return (
