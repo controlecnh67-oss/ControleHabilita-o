@@ -98,7 +98,7 @@ export const GeralPage: React.FC = () => {
 
   // Ordenação
   const [sortColumn, setSortColumn] = useState<keyof GeralCNH>("ordem");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   // Paginação - Padrão 100 por página conforme especificação
   const [currentPage, setCurrentPage] = useState(1);
@@ -345,7 +345,7 @@ export const GeralPage: React.FC = () => {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
       setSortColumn(col);
-      setSortDirection("desc");
+      setSortDirection("asc");
     }
   };
 
