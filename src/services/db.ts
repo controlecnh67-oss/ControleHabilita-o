@@ -2948,10 +2948,11 @@ export async function syncLocalToSupabase(
   const validCandIds = new Set(cands.map(c => c.id));
   const validGeralIds = new Set(geral.map(g => g.id));
 
-  const cleanFK = (id?: string | null, _validSet?: Set<string>): string | null => {
+  const cleanFK = (id?: string | null, validSet?: Set<string>): string | null => {
     if (!id || typeof id !== "string") return null;
     const trimmed = id.trim();
     if (trimmed === "") return null;
+    if (validSet && !validSet.has(trimmed)) return null;
     return trimmed;
   };
 
@@ -2975,6 +2976,7 @@ export async function syncLocalToSupabase(
         created_at: u.created_at || new Date().toISOString()
       }));
       const synced = await upsertInBatches("usuarios", payload, 250);
+      payload.forEach(u => validUserIds.add(u.id));
       log(`✅ Tabela 'usuarios' sincronizada (${synced} registros).`);
       totalSynced += synced;
     }
@@ -2990,7 +2992,7 @@ export async function syncLocalToSupabase(
       const payload = resp.map(r => ({
         id: r.id || "e2335b1e",
         nome: r.nome,
-        cpf: r.cpf || null,
+        cpf: r.cpf || "",
         telefone: r.telefone || null,
         registro: r.registro || null,
         observacao: r.observacao || null,
@@ -2998,6 +3000,7 @@ export async function syncLocalToSupabase(
         created_at: r.created_at || new Date().toISOString()
       }));
       const synced = await upsertInBatches("responsaveis", payload, 250);
+      payload.forEach(r => validRespIds.add(r.id));
       log(`✅ Tabela 'responsaveis' sincronizada (${synced} registros).`);
       totalSynced += synced;
     }
@@ -3087,9 +3090,11 @@ export async function syncLocalToSupabase(
         const respBatch = Array.from(respMapToUpsert.entries()).map(([rid, rnome]) => ({
           id: rid,
           nome: rnome,
+          cpf: "000.000.000-00",
           ativo: true
         }));
         await upsertInBatches("responsaveis", respBatch, 250, "id");
+        respBatch.forEach(r => validRespIds.add(r.id));
       }
 
       // Auto-upsert missing usuarios into Supabase
@@ -3100,13 +3105,22 @@ export async function syncLocalToSupabase(
         }
       });
       if (userMapToUpsert.size > 0) {
-        const userBatch = Array.from(userMapToUpsert.entries()).map(([uid, unome]) => ({
-          id: uid,
-          nome: unome.split(" ")[0],
-          nome_completo: unome,
-          ativo: true
-        }));
+        const userBatch = Array.from(userMapToUpsert.entries()).map(([uid, unome]) => {
+          const cleanName = unome.split(" ")[0] || unome || "Operador";
+          const sanitized = uid.toLowerCase().replace(/[^a-z0-9]/g, "_");
+          return {
+            id: uid,
+            nome: cleanName,
+            nome_curto: cleanName,
+            nome_completo: unome,
+            email: `${sanitized}@detran.local`,
+            login: sanitized,
+            perfil: "Operador",
+            ativo: true
+          };
+        });
         await upsertInBatches("usuarios", userBatch, 250, "id");
+        userBatch.forEach(u => validUserIds.add(u.id));
       }
 
       const payload = geral.map(g => ({
@@ -3133,6 +3147,7 @@ export async function syncLocalToSupabase(
       const synced = await upsertInBatches("geral_cnhs", payload, 250, "id", (synced, total) => {
         log(` ⏳ Progresso geral_cnhs: ${synced}/${total} registros enviados...`);
       });
+      payload.forEach(g => validGeralIds.add(g.id));
       log(`✅ Tabela 'geral_cnhs' sincronizada totalmente (${synced} registros).`);
       totalSynced += synced;
     }

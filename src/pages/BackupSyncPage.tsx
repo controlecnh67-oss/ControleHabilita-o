@@ -95,8 +95,9 @@ CREATE TABLE usuarios (
 CREATE TABLE responsaveis (
   id TEXT PRIMARY KEY,
   nome TEXT NOT NULL,
-  cpf TEXT NOT NULL,
+  cpf TEXT,
   telefone TEXT,
+  registro TEXT,
   observacao TEXT,
   ativo BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
