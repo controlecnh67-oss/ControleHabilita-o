@@ -13,7 +13,8 @@ import {
   LogOut,
   ShieldCheck,
   Smartphone,
-  QrCode
+  QrCode,
+  BarChart3
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { cn } from "../../lib/utils";
@@ -41,6 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "geral" as NavTab, label: "Protocolo Geral (CNHs)", icon: FolderArchive },
     { id: "memorandos" as NavTab, label: "Memorandos e Remessas", icon: FileText },
     { id: "acessos_cidadao" as NavTab, label: "Consulta Cidadão (App)", icon: Smartphone },
+    { id: "relatorios" as NavTab, label: "Relatórios Setoriais", icon: BarChart3 },
     { id: "responsaveis" as NavTab, label: "Responsáveis e CFCs", icon: Users },
     { id: "mapeamento" as NavTab, label: "Mapeamento (A-Z)", icon: MapPin },
     { id: "historico" as NavTab, label: "Histórico de Movimento", icon: History },

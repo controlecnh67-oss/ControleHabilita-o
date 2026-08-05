@@ -8,6 +8,7 @@ export type NavTab =
   | "geral" 
   | "memorandos" 
   | "acessos_cidadao"
+  | "relatorios"
   | "responsaveis" 
   | "mapeamento" 
   | "historico" 
@@ -24,7 +25,7 @@ export function isTabAllowedForProfile(
 
   if (perfil === "Administrador") return true;
 
-  if (tab === "acessos_cidadao") return true;
+  if (tab === "acessos_cidadao" || tab === "relatorios") return true;
 
   // Se a aba for "memorandos" (Memorandos e Remessas): libera se tiver a permissão de criar ou remeter memorandos
   if (tab === "memorandos") {
