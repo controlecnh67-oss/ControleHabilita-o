@@ -1432,6 +1432,7 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
       candidato_id: cand.id,
       nome: cand.nome,
       cpf: cand.cpf,
+      telefone: cand.telefone || "",
       gaveta: "",
       reparticao: "",
       situacao: "Remetida",
@@ -1588,22 +1589,19 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
 
 // Interface e Função para Contador de Consultas Públicas Mobile por Cidadão
 export function getPublicSearchCount(): number {
-  if (typeof window === "undefined") return 128;
-  const val = localStorage.getItem("detran_public_search_count");
-  if (!val) {
-    localStorage.setItem("detran_public_search_count", "128");
-    return 128;
+  if (typeof window === "undefined") return 120;
+  const logs = getAcessosCidadaoLogs();
+  const count = logs.length;
+  try {
+    localStorage.setItem("detran_public_search_count", count.toString());
+  } catch {
+    // ignore
   }
-  return parseInt(val, 10) || 0;
+  return count;
 }
 
 export function incrementPublicSearchCount(): number {
-  const current = getPublicSearchCount();
-  const next = current + 1;
-  if (typeof window !== "undefined") {
-    localStorage.setItem("detran_public_search_count", next.toString());
-  }
-  return next;
+  return getPublicSearchCount();
 }
 
 // ============================================================================
@@ -1630,8 +1628,10 @@ export function getAcessosCidadaoLogs(): AcessoCidadaoLog[] {
 
 export function registrarAcessoCidadaoLog(logData: Omit<AcessoCidadaoLog, "id" | "data_hora">): AcessoCidadaoLog {
   const currentLogs = getAcessosCidadaoLogs();
+  const maxNum = currentLogs.reduce((max, l) => Math.max(max, l.numero || 0), currentLogs.length);
   const newLog: AcessoCidadaoLog = {
     id: `log-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+    numero: maxNum + 1,
     data_hora: new Date().toISOString(),
     ...logData
   };
@@ -1714,6 +1714,12 @@ function generateSeedAcessosCidadaoLogs(): AcessoCidadaoLog[] {
       ip_mascarado: `177.136.${Math.floor(Math.random() * 200)}.${Math.floor(Math.random() * 250)}`
     });
   }
+
+  // Sort chronologically ascending to assign sequence number 1..N
+  logs.sort((a, b) => new Date(a.data_hora).getTime() - new Date(b.data_hora).getTime());
+  logs.forEach((log, idx) => {
+    log.numero = idx + 1;
+  });
 
   return logs.sort((a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime());
 }

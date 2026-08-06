@@ -15,12 +15,13 @@ import {
   RefreshCw, 
   TrendingUp, 
   Users, 
-  MapPin, 
   QrCode, 
   ShieldCheck, 
   ChevronDown, 
   X, 
   ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   PieChart as PieIcon,
   BarChart2,
   Activity
@@ -49,6 +50,13 @@ export const AcessosCidadaoPage: React.FC = () => {
   const [filtroSituacao, setFiltroSituacao] = useState<string>("TODAS");
   const [filtroCanal, setFiltroCanal] = useState<string>("TODOS");
 
+  // Ordenação da Tabela
+  type SortField = "numero" | "data_hora" | "cpf" | "nome_titular" | "situacao" | "canal" | "resultado_status";
+  type SortOrder = "asc" | "desc";
+
+  const [sortField, setSortField] = useState<SortField>("numero");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
+
   // Paginação
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(15);
@@ -57,7 +65,22 @@ export const AcessosCidadaoPage: React.FC = () => {
   const loadLogs = () => {
     setLoading(true);
     const data = getAcessosCidadaoLogs();
-    setLogs(data);
+
+    // Organiza cronologicamente ascendente para garantir que cada acesso possua seu número sequencial único
+    const sortedAsc = [...data].sort(
+      (a, b) => new Date(a.data_hora).getTime() - new Date(b.data_hora).getTime()
+    );
+    const indexedMap = new Map<string, number>();
+    sortedAsc.forEach((log, idx) => {
+      indexedMap.set(log.id, log.numero || (idx + 1));
+    });
+
+    const indexed = data.map((log) => ({
+      ...log,
+      numero: log.numero || indexedMap.get(log.id) || 1
+    }));
+
+    setLogs(indexed);
     setLoading(false);
   };
 
@@ -137,14 +160,17 @@ export const AcessosCidadaoPage: React.FC = () => {
       let matchSearch = true;
       if (searchTerm.trim()) {
         const term = searchTerm.toLowerCase().replace(/\D/g, "");
-        const termRaw = searchTerm.toLowerCase();
+        const termRaw = searchTerm.toLowerCase().trim();
         const cpfClean = log.cpf.replace(/\D/g, "");
         const nomeClean = (log.nome_titular || "").toLowerCase();
         const dispClean = (log.dispositivo || "").toLowerCase();
         const cidClean = (log.cidade_origem || "").toLowerCase();
+        const numStr = (log.numero || "").toString();
 
         matchSearch = 
           (term && cpfClean.includes(term)) ||
+          numStr === termRaw ||
+          numStr === termRaw.replace("#", "") ||
           nomeClean.includes(termRaw) ||
           dispClean.includes(termRaw) ||
           cidClean.includes(termRaw);
@@ -184,29 +210,63 @@ export const AcessosCidadaoPage: React.FC = () => {
     };
   }, [filteredLogs]);
 
+  // Manipulador de Ordenação
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortOrder(field === "data_hora" || field === "numero" ? "desc" : "asc");
+    }
+  };
+
+  // Ordenação dos logs filtrados
+  const sortedLogs = useMemo(() => {
+    const list = [...filteredLogs];
+    return list.sort((a, b) => {
+      let cmp = 0;
+      if (sortField === "numero") {
+        cmp = (a.numero || 0) - (b.numero || 0);
+      } else if (sortField === "data_hora") {
+        cmp = new Date(a.data_hora).getTime() - new Date(b.data_hora).getTime();
+      } else if (sortField === "cpf") {
+        cmp = (a.cpf || "").localeCompare(b.cpf || "");
+      } else if (sortField === "nome_titular") {
+        cmp = (a.nome_titular || "").localeCompare(b.nome_titular || "", "pt-BR");
+      } else if (sortField === "situacao") {
+        cmp = (a.situacao || "").localeCompare(b.situacao || "", "pt-BR");
+      } else if (sortField === "canal") {
+        cmp = (a.canal || "").localeCompare(b.canal || "", "pt-BR");
+      } else if (sortField === "resultado_status") {
+        cmp = (a.resultado_status || "").localeCompare(b.resultado_status || "", "pt-BR");
+      }
+      return sortOrder === "asc" ? cmp : -cmp;
+    });
+  }, [filteredLogs, sortField, sortOrder]);
+
   // Paginação
-  const totalPages = Math.ceil(filteredLogs.length / itemsPerPage) || 1;
+  const totalPages = Math.ceil(sortedLogs.length / itemsPerPage) || 1;
   const paginatedLogs = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
-    return filteredLogs.slice(start, start + itemsPerPage);
-  }, [filteredLogs, currentPage, itemsPerPage]);
+    return sortedLogs.slice(start, start + itemsPerPage);
+  }, [sortedLogs, currentPage, itemsPerPage]);
 
-  // Resetar página ao mudar filtros
+  // Resetar página ao mudar filtros ou ordenação
   useEffect(() => {
     setCurrentPage(1);
-  }, [dataInicio, dataFim, filtroSituacao, filtroCanal, searchTerm, itemsPerPage]);
+  }, [dataInicio, dataFim, filtroSituacao, filtroCanal, searchTerm, itemsPerPage, sortField, sortOrder]);
 
   // Exportar Excel
   const handleExportXLSX = () => {
-    const rows = filteredLogs.map((l) => ({
+    const rows = sortedLogs.map((l, index) => ({
+      "Nº": l.numero || index + 1,
       "Data e Hora": formatDateTime(l.data_hora),
       "CPF Consultado": formatCPF(l.cpf),
       "Nome do Titular": l.nome_titular || "Não identificado",
       "Situação CNH": l.situacao,
       "Status Resultado": l.resultado_status,
       "Canal de Acesso": l.canal,
-      "Dispositivo": l.dispositivo || "-",
-      "Cidade Origem": l.cidade_origem || "-"
+      "Dispositivo": l.dispositivo || "-"
     }));
 
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -222,7 +282,8 @@ export const AcessosCidadaoPage: React.FC = () => {
     const pageHeight = doc.internal.pageSize.getHeight();
     const rightMarginX = pageWidth - 14;
 
-    const tableData = filteredLogs.map((l) => [
+    const tableData = sortedLogs.map((l, index) => [
+      l.numero || index + 1,
       formatDateTime(l.data_hora),
       formatCPF(l.cpf),
       l.nome_titular || "N/A",
@@ -233,17 +294,18 @@ export const AcessosCidadaoPage: React.FC = () => {
     autoTable(doc, {
       startY: 28,
       margin: { top: 28, bottom: 14, left: 14, right: 14 },
-      head: [["Data/Hora", "CPF", "Titular", "Situação CNH", "Canal de Acesso"]],
+      head: [["Nº", "Data/Hora", "CPF", "Titular", "Situação CNH", "Canal de Acesso"]],
       body: tableData,
       theme: "grid",
       styles: { fontSize: 8, cellPadding: 1.5, textColor: [30, 41, 59] },
       headStyles: { fillColor: [14, 116, 144], textColor: [255, 255, 255], fontStyle: "bold" },
       columnStyles: {
-        0: { cellWidth: 32 },
-        1: { cellWidth: 28, halign: "center" },
-        2: { cellWidth: 65 },
-        3: { cellWidth: 25, halign: "center" },
-        4: { cellWidth: "auto" }
+        0: { cellWidth: 12, halign: "center" },
+        1: { cellWidth: 32 },
+        2: { cellWidth: 28, halign: "center" },
+        3: { cellWidth: 55 },
+        4: { cellWidth: 25, halign: "center" },
+        5: { cellWidth: "auto" }
       },
       didDrawPage: (data) => {
         doc.setFont("helvetica", "bold");
@@ -293,6 +355,31 @@ export const AcessosCidadaoPage: React.FC = () => {
     const dIn = dataInicio ? new Date(`${dataInicio}T00:00:00`).toLocaleDateString("pt-BR") : "...";
     const dFi = dataFim ? new Date(`${dataFim}T00:00:00`).toLocaleDateString("pt-BR") : "...";
     return `${dIn} - ${dFi}`;
+  };
+
+  // Helper para cabeçalho ordenável com setas
+  const renderSortHeader = (label: string, field: SortField, className = "", alignCenter = false) => {
+    const isActive = sortField === field;
+    return (
+      <th 
+        onClick={() => handleSort(field)}
+        className={`py-3 px-4 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors group ${className}`}
+        title={`Clique para ordenar por ${label}`}
+      >
+        <div className={`flex items-center gap-1.5 ${alignCenter ? "justify-center" : ""}`}>
+          <span>{label}</span>
+          {isActive ? (
+            sortOrder === "asc" ? (
+              <ArrowUp className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 font-bold shrink-0" />
+            ) : (
+              <ArrowDown className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 font-bold shrink-0" />
+            )
+          ) : (
+            <ArrowUpDown className="w-3 h-3 text-slate-400 opacity-40 group-hover:opacity-100 transition-opacity shrink-0" />
+          )}
+        </div>
+      </th>
+    );
   };
 
   return (
@@ -477,7 +564,7 @@ export const AcessosCidadaoPage: React.FC = () => {
             <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
             <input
               type="text"
-              placeholder="Buscar por CPF, Nome, Cidade..."
+              placeholder="Buscar por CPF ou Nome..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-9 pr-8 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500"
@@ -792,13 +879,13 @@ export const AcessosCidadaoPage: React.FC = () => {
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider text-[11px]">
-                <th className="py-3 px-4">Data e Hora</th>
-                <th className="py-3 px-4">CPF Consultado</th>
-                <th className="py-3 px-4">Nome do Titular</th>
-                <th className="py-3 px-4 text-center">Situação CNH</th>
-                <th className="py-3 px-4">Canal / Dispositivo</th>
-                <th className="py-3 px-4">Cidade Origem</th>
-                <th className="py-3 px-4 text-center">Status no Balcão</th>
+                {renderSortHeader("Nº", "numero", "px-3 text-center w-12", true)}
+                {renderSortHeader("Data e Hora", "data_hora")}
+                {renderSortHeader("CPF Consultado", "cpf")}
+                {renderSortHeader("Nome do Titular", "nome_titular")}
+                {renderSortHeader("Situação CNH", "situacao", "", true)}
+                {renderSortHeader("Canal / Dispositivo", "canal")}
+                {renderSortHeader("Status no Balcão", "resultado_status", "", true)}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -830,6 +917,9 @@ export const AcessosCidadaoPage: React.FC = () => {
                       key={log.id} 
                       className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors text-slate-700 dark:text-slate-200"
                     >
+                      <td className="py-3 px-3 text-center font-mono font-bold text-slate-500 dark:text-slate-400">
+                        {log.numero}
+                      </td>
                       <td className="py-3 px-4 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">
                         {formatDateTime(log.data_hora)}
                       </td>
@@ -849,12 +939,6 @@ export const AcessosCidadaoPage: React.FC = () => {
                           <span className="font-semibold text-slate-800 dark:text-slate-200">{log.canal}</span>
                           <span className="text-[10px] text-slate-400">{log.dispositivo || "Navegador Web"}</span>
                         </div>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300 font-medium">
-                          <MapPin className="w-3 h-3 text-cyan-500" />
-                          {log.cidade_origem || "Belém"}
-                        </span>
                       </td>
                       <td className="py-3 px-4 text-center">
                         {log.resultado_status === "DISPONIVEL" && (

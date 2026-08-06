@@ -185,6 +185,7 @@ export interface GeralCNH {
   candidato_id?: string;
   nome: string;
   cpf: string;
+  telefone?: string;
   gaveta: string;
   reparticao: string;
   situacao: SituacaoGeral;
@@ -273,7 +274,7 @@ export const CandidatoSchema = z.object({
   numero: z.string().optional(),
   nome: z.string().min(3, "Nome do candidato obrigatório"),
   cpf: z.string().min(14, "CPF incompleto").max(14, "CPF inválido"),
-  telefone: z.string().optional(),
+  telefone: z.string().min(10, "Telefone Celular / Contato é obrigatório"),
   remessa: z.string().optional(),
 });
 
@@ -292,6 +293,7 @@ export const EntregaCNHSchema = z.object({
 
 export interface AcessoCidadaoLog {
   id: string;
+  numero?: number;
   data_hora: string;
   cpf: string;
   nome_titular?: string;
