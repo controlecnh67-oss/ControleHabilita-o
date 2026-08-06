@@ -41,6 +41,7 @@ import {
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { getOrgaoConfig, addPDFHeaderLogo } from "../services/orgaoService";
 import { GeralCNH, Responsavel, SituacaoGeral, CadastroManualCNHSchema, EntregaCNHSchema, ResponsavelSchema } from "../types";
 import { 
   getGeralCNHs, 
@@ -799,6 +800,8 @@ export const GeralPage: React.FC = () => {
   // Geração de Impressão / PDF Oficial via jsPDF (Vertical / Portrait com cabeçalhos repetidos em todas as páginas)
   const handleGeneratePDF = () => {
     try {
+      const cfg = getOrgaoConfig();
+
       const doc = new jsPDF({
         orientation: "portrait",
         unit: "mm",
@@ -849,16 +852,20 @@ export const GeralPage: React.FC = () => {
           const pageHeight = doc.internal.pageSize.getHeight(); // 297mm
           const rightMarginX = pageWidth - 14; // 196mm
 
+          // Tenta desenhar a logo oficial no lado esquerdo do cabeçalho
+          const hasLogo = addPDFHeaderLogo(doc, 14, 5, 14, 14);
+          const startTextX = hasLogo ? 32 : 14;
+
           // Cabeçalho Oficial Repetido em TODAS as páginas
           doc.setFont("helvetica", "bold");
           doc.setFontSize(11);
           doc.setTextColor(15, 23, 42); // slate-900
-          doc.text("DETRAN/PA — Setor Operacional de Protocolo e Entregas", 14, 11);
+          doc.text(`${cfg.sigla} — Setor Operacional de Protocolo e Entregas`, startTextX, 11);
 
-          doc.setFontSize(9);
+          doc.setFontSize(8.5);
           doc.setFont("helvetica", "normal");
           doc.setTextColor(51, 65, 85); // slate-700
-          doc.text("Lista de Conferência e Retirada de CNHs no Protocolo Geral", 14, 16);
+          doc.text(`Lista de Conferência e Retirada - ${cfg.orgao}`, startTextX, 16);
 
           // Metadados à direita
           doc.setFontSize(8);

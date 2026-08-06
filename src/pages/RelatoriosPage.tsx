@@ -44,6 +44,7 @@ import {
 } from "recharts";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { getOrgaoConfig, addPDFHeaderLogo } from "../services/orgaoService";
 import * as XLSX from "xlsx";
 import { 
   getGeralCNHs, 
@@ -482,6 +483,7 @@ export const RelatoriosPage: React.FC = () => {
 
   // ---- IMPRESSÃO DE PDF GERENCIAL SETORIAL ----
   const handlePrintPDF = () => {
+    const cfg = getOrgaoConfig();
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
 
@@ -489,13 +491,16 @@ export const RelatoriosPage: React.FC = () => {
     doc.setFillColor(15, 23, 42); // slate-900
     doc.rect(0, 0, pageWidth, 24, "F");
 
+    // Tenta desenhar a logo dentro do bloco azul/slate
+    addPDFHeaderLogo(doc, 10, 3, 18, 18);
+
     doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
-    doc.text("DEPARTAMENTO ESTADUAL DE TRÂNSITO DO AMAPÁ - DETRAN/AP", pageWidth / 2, 10, { align: "center" });
-    doc.setFontSize(9);
+    doc.setFontSize(11);
+    doc.text(`${cfg.orgao.toUpperCase()} - ${cfg.sigla}`, pageWidth / 2, 10, { align: "center" });
+    doc.setFontSize(8.5);
     doc.setFont("helvetica", "normal");
-    doc.text("COORDENADORIA DE HABILITAÇÃO & PROTOCOLO GERAL DE CNHs", pageWidth / 2, 16, { align: "center" });
+    doc.text((cfg.subtitulo_relatorio || "COORDENADORIA DE HABILITAÇÃO & PROTOCOLO GERAL DE CNHs").toUpperCase(), pageWidth / 2, 16, { align: "center" });
 
     // Faixa amarela institucional
     doc.setFillColor(234, 179, 8); // amber-500

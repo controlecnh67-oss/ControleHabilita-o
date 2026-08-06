@@ -11,6 +11,7 @@ import { HistoricoPage } from "./pages/HistoricoPage";
 import { AuditoriaPage } from "./pages/AuditoriaPage";
 import { MapeamentoPage } from "./pages/MapeamentoPage";
 import { UsuariosPage } from "./pages/UsuariosPage";
+import { ConfigOrgaoPage } from "./pages/ConfigOrgaoPage";
 import { BackupSyncPage } from "./pages/BackupSyncPage";
 import { ConsultaPublicaPage } from "./pages/ConsultaPublicaPage";
 import { AcessosCidadaoPage } from "./pages/AcessosCidadaoPage";
@@ -145,6 +146,7 @@ const MainLayout: React.FC = () => {
             {activeTab === "auditoria" && isTabAllowedForProfile("auditoria", user?.perfil, user?.permissoes) && <AuditoriaPage />}
             {activeTab === "mapeamento" && isTabAllowedForProfile("mapeamento", user?.perfil, user?.permissoes) && <MapeamentoPage />}
             {activeTab === "usuarios" && isTabAllowedForProfile("usuarios", user?.perfil, user?.permissoes) && <UsuariosPage />}
+            {activeTab === "orgao" && isTabAllowedForProfile("orgao", user?.perfil, user?.permissoes) && <ConfigOrgaoPage />}
             {activeTab === "backup" && isTabAllowedForProfile("backup", user?.perfil, user?.permissoes) && <BackupSyncPage />}
           </div>
         </main>

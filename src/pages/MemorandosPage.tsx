@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { getOrgaoConfig, addPDFHeaderLogo } from "../services/orgaoService";
 import { Memorando, Candidato, MemorandoSchema, CandidatoSchema } from "../types";
 import { 
   getMemorandos, 
@@ -453,25 +454,30 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
   const handleGeneratePDF = () => {
     if (!selectedMemo) return;
     try {
+      const cfg = getOrgaoConfig();
+
       const doc = new jsPDF({
         orientation: "portrait",
         unit: "mm",
         format: "a4",
       });
 
+      // Tenta desenhar a logo oficial no lado esquerdo do cabeçalho
+      addPDFHeaderLogo(doc, 14, 8, 22, 22);
+
       // Cabeçalho Oficial
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(13);
+      doc.setFontSize(12);
       doc.setTextColor(15, 23, 42); // slate-900
-      doc.text("GOVERNO DO ESTADO DO PARÁ", 105, 14, { align: "center" });
-      doc.setFontSize(11);
-      doc.text("SECRETARIA DE ESTADO DE SEGURANÇA PÚBLICA", 105, 20, { align: "center" });
-      doc.text("DEPARTAMENTO DE TRÂNSITO DO ESTADO DO PARÁ", 105, 26, { align: "center" });
+      doc.text(cfg.governo.toUpperCase(), 112, 13, { align: "center" });
+      doc.setFontSize(10);
+      doc.text(cfg.secretaria.toUpperCase(), 112, 19, { align: "center" });
+      doc.text(cfg.orgao.toUpperCase(), 112, 25, { align: "center" });
 
       // Linha divisória do cabeçalho
       doc.setDrawColor(30, 41, 59); // slate-800
       doc.setLineWidth(0.5);
-      doc.line(14, 31, 196, 31);
+      doc.line(14, 32, 196, 32);
 
       // Informações do Memorando
       doc.setFontSize(10);
@@ -499,11 +505,11 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
       doc.setFont("helvetica", "normal");
       doc.text(selectedMemo.usuario_nome || "Não informado", 148, 45);
 
-      // Abaixo de Lote / Remessa
+      // Origem e Destino do Órgão
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
-      doc.text("DA AGÊNCIA DO DETRAN DE ITAITUBA-PA", 14, 53);
-      doc.text("PARA AGÊNCIA DO DETRAN DE SANTARÉM-PA", 14, 59);
+      doc.text(cfg.origem_padrao, 14, 53);
+      doc.text(cfg.destino_padrao, 14, 59);
 
       // Parágrafo introdutório
       doc.setFontSize(10);
@@ -1125,10 +1131,15 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
 
             <div className="p-8 bg-white text-slate-900 border-2 border-slate-300 rounded-xl shadow-inner font-serif">
               {/* Cabeçalho Oficial */}
-              <div className="text-center border-b-2 border-slate-800 pb-4 mb-6">
-                <h2 className="text-lg font-bold tracking-wide uppercase">GOVERNO DO ESTADO DO PARÁ</h2>
-                <h3 className="text-base font-bold uppercase mt-1">SECRETARIA DE ESTADO DE SEGURANÇA PÚBLICA</h3>
-                <h4 className="text-sm font-bold uppercase mt-1 text-slate-800">DEPARTAMENTO DE TRÂNSITO DO ESTADO DO PARÁ</h4>
+              <div className="border-b-2 border-slate-800 pb-4 mb-6 flex items-center justify-between gap-4">
+                {getOrgaoConfig().logo && (
+                  <img src={getOrgaoConfig().logo} alt="Logo" className="h-16 w-auto object-contain shrink-0" />
+                )}
+                <div className="text-center flex-1">
+                  <h2 className="text-base font-bold tracking-wide uppercase">{getOrgaoConfig().governo}</h2>
+                  <h3 className="text-xs font-bold uppercase mt-0.5">{getOrgaoConfig().secretaria}</h3>
+                  <h4 className="text-xs font-bold uppercase mt-0.5 text-slate-800">{getOrgaoConfig().orgao}</h4>
+                </div>
               </div>
 
               {/* Informações do Memorando */}
@@ -1144,8 +1155,8 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
               </div>
 
               <div className="mb-6 font-sans text-sm font-bold text-slate-800 space-y-1">
-                <p>DA AGÊNCIA DO DETRAN DE ITAITUBA-PA</p>
-                <p>PARA AGÊNCIA DO DETRAN DE SANTARÉM-PA</p>
+                <p>{getOrgaoConfig().origem_padrao}</p>
+                <p>{getOrgaoConfig().destino_padrao}</p>
               </div>
 
               <div className="mb-6 font-sans text-sm leading-relaxed">

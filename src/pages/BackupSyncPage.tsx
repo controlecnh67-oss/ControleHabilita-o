@@ -55,6 +55,7 @@ export const BackupSyncPage: React.FC = () => {
   const [logs, setLogs] = useState<string[]>([]);
   const [copiedSql, setCopiedSql] = useState<boolean>(false);
   const [copiedFullSql, setCopiedFullSql] = useState<boolean>(false);
+  const [copiedImagesSql, setCopiedImagesSql] = useState<boolean>(false);
   const [pingStatus, setPingStatus] = useState<{ status: 'idle' | 'testing' | 'success' | 'error'; message?: string; latency?: number }>({ status: 'idle' });
 
   const handleCopyFullSchemaSql = () => {
@@ -72,6 +73,8 @@ DROP TABLE IF EXISTS memorandos CASCADE;
 DROP TABLE IF EXISTS mapeamento_localizacao CASCADE;
 DROP TABLE IF EXISTS responsaveis CASCADE;
 DROP TABLE IF EXISTS usuarios CASCADE;
+DROP TABLE IF EXISTS imagens_sync CASCADE;
+DROP TABLE IF EXISTS orgao_config CASCADE;
 
 -- CRIAÇÃO DAS TABELAS
 CREATE TABLE usuarios (
@@ -182,6 +185,36 @@ CREATE TABLE auditoria (
   valores_novos JSONB
 );
 
+CREATE TABLE orgao_config (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  governo TEXT,
+  secretaria TEXT,
+  orgao TEXT,
+  sigla TEXT,
+  origem_padrao TEXT,
+  destino_padrao TEXT,
+  cidade_uf TEXT,
+  telefone TEXT,
+  email TEXT,
+  endereco TEXT,
+  subtitulo_relatorio TEXT,
+  logo TEXT,
+  updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
+);
+
+CREATE TABLE imagens_sync (
+  id TEXT PRIMARY KEY,
+  tabela_ref TEXT,
+  registro_id TEXT,
+  nome TEXT NOT NULL,
+  tipo TEXT,
+  tamanho INTEGER,
+  dados_base64 TEXT,
+  url_publica TEXT,
+  usuario_id TEXT REFERENCES usuarios(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
+);
+
 -- HABILITAR RLS
 ALTER TABLE usuarios ENABLE ROW LEVEL SECURITY;
 ALTER TABLE responsaveis ENABLE ROW LEVEL SECURITY;
@@ -191,8 +224,10 @@ ALTER TABLE candidatos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE geral_cnhs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE historico_movimentacoes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auditoria ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orgao_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE imagens_sync ENABLE ROW LEVEL SECURITY;
 
--- POLÍTICAS DE PERMISSÃO
+-- POLÍTICAS DE PERMISSÃO (RLS)
 DROP POLICY IF EXISTS "Permitir acesso total em usuarios" ON usuarios;
 CREATE POLICY "Permitir acesso total em usuarios" ON usuarios FOR ALL USING (true) WITH CHECK (true);
 
@@ -217,11 +252,40 @@ CREATE POLICY "Permitir acesso total em historico_movimentacoes" ON historico_mo
 DROP POLICY IF EXISTS "Permitir acesso total em auditoria" ON auditoria;
 CREATE POLICY "Permitir acesso total em auditoria" ON auditoria FOR ALL USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Permitir acesso total em orgao_config" ON orgao_config;
+CREATE POLICY "Permitir acesso total em orgao_config" ON orgao_config FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permitir acesso total em imagens_sync" ON imagens_sync;
+CREATE POLICY "Permitir acesso total em imagens_sync" ON imagens_sync FOR ALL USING (true) WITH CHECK (true);
+
+-- BUCKET E POLÍTICAS DE ARMAZENAMENTO NO SUPABASE STORAGE (app_images)
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'app_images', 
+  'app_images', 
+  true, 
+  10485760,
+  ARRAY['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'application/pdf']
+)
+ON CONFLICT (id) DO UPDATE SET public = true;
+
+DROP POLICY IF EXISTS "Permitir Leitura Publica de Imagens" ON storage.objects;
+CREATE POLICY "Permitir Leitura Publica de Imagens" ON storage.objects FOR SELECT USING (bucket_id = 'app_images');
+
+DROP POLICY IF EXISTS "Permitir Upload de Imagens" ON storage.objects;
+CREATE POLICY "Permitir Upload de Imagens" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'app_images');
+
+DROP POLICY IF EXISTS "Permitir Atualizacao de Imagens" ON storage.objects;
+CREATE POLICY "Permitir Atualizacao de Imagens" ON storage.objects FOR UPDATE USING (bucket_id = 'app_images');
+
+DROP POLICY IF EXISTS "Permitir Delecao de Imagens" ON storage.objects;
+CREATE POLICY "Permitir Delecao de Imagens" ON storage.objects FOR DELETE USING (bucket_id = 'app_images');
+
 -- HABILITAR REALTIME
 DO $$
 DECLARE
   t text;
-  tabelas text[] := ARRAY['usuarios', 'responsaveis', 'mapeamento_localizacao', 'memorandos', 'candidatos', 'geral_cnhs', 'historico_movimentacoes', 'auditoria'];
+  tabelas text[] := ARRAY['usuarios', 'responsaveis', 'mapeamento_localizacao', 'memorandos', 'candidatos', 'geral_cnhs', 'historico_movimentacoes', 'auditoria', 'orgao_config', 'imagens_sync'];
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
     CREATE PUBLICATION supabase_realtime;
@@ -242,6 +306,92 @@ END $$;
     navigator.clipboard.writeText(sql);
     setCopiedFullSql(true);
     setTimeout(() => setCopiedFullSql(false), 3000);
+  };
+
+  const handleCopyImagesAndStorageSql = () => {
+    const sql = `-- ============================================================================
+-- SCRIPT DE MÍDIA, LOGOMARCA E ARMAZENAMENTO (SUPABASE STORAGE & POLÍTICAS)
+-- Sistema de Controle DETRAN/PA
+-- ============================================================================
+
+-- 1. TABELA DE CONFIGURAÇÃO DO ÓRGÃO E LOGOMARCA
+CREATE TABLE IF NOT EXISTS orgao_config (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  governo TEXT,
+  secretaria TEXT,
+  orgao TEXT,
+  sigla TEXT,
+  origem_padrao TEXT,
+  destino_padrao TEXT,
+  cidade_uf TEXT,
+  telefone TEXT,
+  email TEXT,
+  endereco TEXT,
+  subtitulo_relatorio TEXT,
+  logo TEXT,
+  updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
+);
+
+-- 2. TABELA DE IMAGENS E ANEXOS SINCRONIZADOS
+CREATE TABLE IF NOT EXISTS imagens_sync (
+  id TEXT PRIMARY KEY,
+  tabela_ref TEXT,
+  registro_id TEXT,
+  nome TEXT NOT NULL,
+  tipo TEXT,
+  tamanho INTEGER,
+  dados_base64 TEXT,
+  url_publica TEXT,
+  usuario_id TEXT REFERENCES usuarios(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
+);
+
+-- HABILITAR RLS NAS TABELAS DE IMAGEM
+ALTER TABLE orgao_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE imagens_sync ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Permitir acesso total em orgao_config" ON orgao_config;
+CREATE POLICY "Permitir acesso total em orgao_config" ON orgao_config FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permitir acesso total em imagens_sync" ON imagens_sync;
+CREATE POLICY "Permitir acesso total em imagens_sync" ON imagens_sync FOR ALL USING (true) WITH CHECK (true);
+
+-- 3. BUCKET DE IMAGENS NO SUPABASE STORAGE (storage.buckets)
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'app_images', 
+  'app_images', 
+  true, 
+  10485760,
+  ARRAY['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'application/pdf']
+)
+ON CONFLICT (id) DO UPDATE SET public = true;
+
+-- POLÍTICAS DE SEGURANÇA (RLS) PARA ARQUIVOS NO SUPABASE STORAGE (storage.objects)
+DROP POLICY IF EXISTS "Permitir Leitura Publica de Imagens" ON storage.objects;
+CREATE POLICY "Permitir Leitura Publica de Imagens"
+ON storage.objects FOR SELECT
+USING (bucket_id = 'app_images');
+
+DROP POLICY IF EXISTS "Permitir Upload de Imagens" ON storage.objects;
+CREATE POLICY "Permitir Upload de Imagens"
+ON storage.objects FOR INSERT
+WITH CHECK (bucket_id = 'app_images');
+
+DROP POLICY IF EXISTS "Permitir Atualizacao de Imagens" ON storage.objects;
+CREATE POLICY "Permitir Atualizacao de Imagens"
+ON storage.objects FOR UPDATE
+USING (bucket_id = 'app_images');
+
+DROP POLICY IF EXISTS "Permitir Delecao de Imagens" ON storage.objects;
+CREATE POLICY "Permitir Delecao de Imagens"
+ON storage.objects FOR DELETE
+USING (bucket_id = 'app_images');
+`;
+
+    navigator.clipboard.writeText(sql);
+    setCopiedImagesSql(true);
+    setTimeout(() => setCopiedImagesSql(false), 3000);
   };
   const [showResetModal, setShowResetModal] = useState<boolean>(false);
   const [importResult, setImportResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -969,13 +1119,21 @@ END $$;`;
             Copie os scripts SQL para configurar a replicação em tempo real no Supabase ou redefina o banco local para as configurações iniciais do DETRAN.
           </p>
 
-          <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex flex-col sm:flex-row flex-wrap gap-3">
             <button
               onClick={handleCopyFullSchemaSql}
-              className="flex-1 py-2.5 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/50 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-2 border border-blue-200 dark:border-blue-800 cursor-pointer"
+              className="flex-1 min-w-[200px] py-2.5 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/50 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-2 border border-blue-200 dark:border-blue-800 cursor-pointer"
             >
               {copiedFullSql ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
               <span>{copiedFullSql ? "Script Completo Copiado!" : "Copiar Script SQL Completo"}</span>
+            </button>
+
+            <button
+              onClick={handleCopyImagesAndStorageSql}
+              className="py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-2 border border-emerald-200 dark:border-emerald-800 cursor-pointer"
+            >
+              {copiedImagesSql ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+              <span>{copiedImagesSql ? "SQL Imagens Copiado!" : "SQL Imagens & Storage"}</span>
             </button>
 
             <button

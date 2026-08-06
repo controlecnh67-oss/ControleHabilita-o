@@ -14,6 +14,7 @@ export type NavTab =
   | "historico" 
   | "auditoria" 
   | "usuarios"
+  | "orgao"
   | "backup";
 
 export function isTabAllowedForProfile(
@@ -26,6 +27,11 @@ export function isTabAllowedForProfile(
   if (perfil === "Administrador") return true;
 
   if (tab === "acessos_cidadao" || tab === "relatorios") return true;
+
+  // Se a aba for "orgao": permite Administrador e Supervisor
+  if (tab === "orgao") {
+    return perfil === "Supervisor";
+  }
 
   // Se a aba for "memorandos" (Memorandos e Remessas): libera se tiver a permissão de criar ou remeter memorandos
   if (tab === "memorandos") {

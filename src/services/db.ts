@@ -468,7 +468,7 @@ function getIDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
-async function idbGet<T>(key: string): Promise<T | null> {
+export async function idbGet<T>(key: string): Promise<T | null> {
   try {
     const db = await getIDB();
     return new Promise((resolve) => {
@@ -483,7 +483,7 @@ async function idbGet<T>(key: string): Promise<T | null> {
   }
 }
 
-async function idbSet(key: string, val: any): Promise<void> {
+export async function idbSet(key: string, val: any): Promise<void> {
   try {
     const db = await getIDB();
     return new Promise((resolve, reject) => {
@@ -2814,7 +2814,9 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
     { key: "candidatos", label: "Candidatos Vinculados", tableName: "candidatos" },
     { key: "geral", label: "Protocolo Geral CNHs", tableName: "geral_cnhs" },
     { key: "historico", label: "Histórico de Movimento", tableName: "historico_movimentacoes" },
-    { key: "auditoria", label: "Auditoria do Sistema", tableName: "auditoria" }
+    { key: "auditoria", label: "Auditoria do Sistema", tableName: "auditoria" },
+    { key: "orgao", label: "Configuração e Logomarca do Órgão", tableName: "orgao_config" },
+    { key: "imagens", label: "Imagens e Anexos Sincronizados", tableName: "imagens_sync" }
   ];
 
   const results: SyncStatusItem[] = [];
@@ -3219,6 +3221,38 @@ export async function syncLocalToSupabase(
   } catch (err: any) {
     log(`❌ Erro em 'auditoria': ${err.message}`);
     errors.push(`auditoria: ${err.message}`);
+  }
+
+  // 9. Configuração do Órgão e Logomarca
+  try {
+    log("📦 Sincronizando 'orgao_config' (Dados institucionais e Logomarca)...");
+    let cfg: any = {};
+    try {
+      const cfgRaw = typeof localStorage !== "undefined" ? localStorage.getItem("detran_orgao_config") : null;
+      if (cfgRaw) cfg = JSON.parse(cfgRaw);
+    } catch (e) {}
+
+    const payload = [{
+      id: "default",
+      governo: cfg.governo || "GOVERNO DO ESTADO DO PARÁ",
+      secretaria: cfg.secretaria || "SECRETARIA DE ESTADO DE SEGURANÇA PÚBLICA",
+      orgao: cfg.orgao || "DEPARTAMENTO DE TRÂNSITO DO ESTADO DO PARÁ",
+      sigla: cfg.sigla || "DETRAN/PA",
+      origem_padrao: cfg.origem_padrao || "DA AGÊNCIA DO DETRAN DE ITAITUBA-PA",
+      destino_padrao: cfg.destino_padrao || "PARA AGÊNCIA DO DETRAN DE SANTARÉM-PA",
+      cidade_uf: cfg.cidade_uf || "Itaituba - PA",
+      telefone: cfg.telefone || "(91) 3214-0000",
+      email: cfg.email || "protocolo@detran.pa.gov.br",
+      endereco: cfg.endereco || "Av. Rodovia BR 316, Km 03 - Belém / PA",
+      subtitulo_relatorio: cfg.subtitulo_relatorio || "COORDENADORIA DE HABILITAÇÃO & PROTOCOLO GERAL DE CNHs",
+      logo: cfg.logo || "",
+      updated_at: new Date().toISOString()
+    }];
+    const synced = await upsertInBatches("orgao_config", payload, 100);
+    log(`✅ Tabela 'orgao_config' e Logomarca sincronizadas com sucesso.`);
+    totalSynced += synced;
+  } catch (err: any) {
+    log(`ℹ️ Aviso em 'orgao_config': ${err.message}`);
   }
 
   if (errors.length === 0) {

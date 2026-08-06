@@ -32,6 +32,7 @@ import { formatCPF, formatDateTime } from "../lib/utils";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { getOrgaoConfig, addPDFHeaderLogo } from "../services/orgaoService";
 
 type PeriodoPreset = "hoje" | "ontem" | "7dias" | "30dias" | "mes_atual" | "mes_anterior" | "personalizado" | "todos";
 
@@ -277,6 +278,7 @@ export const AcessosCidadaoPage: React.FC = () => {
 
   // Exportar PDF
   const handleExportPDF = () => {
+    const cfg = getOrgaoConfig();
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
@@ -308,15 +310,18 @@ export const AcessosCidadaoPage: React.FC = () => {
         5: { cellWidth: "auto" }
       },
       didDrawPage: (data) => {
+        const hasLogo = addPDFHeaderLogo(doc, 14, 5, 14, 14);
+        const startTextX = hasLogo ? 32 : 14;
+
         doc.setFont("helvetica", "bold");
         doc.setFontSize(11);
         doc.setTextColor(15, 23, 42);
-        doc.text("DETRAN/PA — Relatório de Acessos do Cidadão no Aplicativo", 14, 11);
+        doc.text(`${cfg.sigla} — Relatório de Acessos do Cidadão no Aplicativo`, startTextX, 11);
 
-        doc.setFontSize(9);
+        doc.setFontSize(8.5);
         doc.setFont("helvetica", "normal");
         doc.setTextColor(51, 65, 85);
-        doc.text("Painel de Consultas Públicas de CNH pelo App / PWA Mobile", 14, 16);
+        doc.text(`Painel de Consultas Públicas de CNH - ${cfg.orgao}`, startTextX, 16);
 
         doc.setFontSize(8);
         doc.setTextColor(100, 116, 139);

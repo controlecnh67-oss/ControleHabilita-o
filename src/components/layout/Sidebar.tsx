@@ -8,6 +8,7 @@ import {
   History, 
   ShieldAlert, 
   UserCog, 
+  Building2,
   Database,
   X,
   LogOut,
@@ -48,6 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "historico" as NavTab, label: "Histórico de Movimento", icon: History },
     { id: "auditoria" as NavTab, label: "Auditoria do Sistema", icon: ShieldAlert },
     { id: "usuarios" as NavTab, label: "Gerenciar Usuários", icon: UserCog },
+    { id: "orgao" as NavTab, label: "Configuração do Órgão", icon: Building2 },
     { id: "backup" as NavTab, label: "Backup e Sincronização", icon: Database },
   ];
 
