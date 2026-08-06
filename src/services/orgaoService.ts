@@ -53,13 +53,79 @@ export function getOrgaoConfig(): OrgaoConfig {
   return memoryConfig;
 }
 
+export async function uploadLogoToSupabaseStorage(base64DataUrl: string): Promise<string | null> {
+  if (!isSupabaseConfigured() || !base64DataUrl || !base64DataUrl.startsWith("data:image/")) {
+    return null;
+  }
+  try {
+    const match = base64DataUrl.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+    if (!match) return null;
+
+    const contentType = match[1];
+    const base64Str = match[2];
+
+    const byteCharacters = atob(base64Str);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: contentType });
+
+    let ext = "png";
+    if (contentType.includes("jpeg") || contentType.includes("jpg")) ext = "jpg";
+    else if (contentType.includes("svg")) ext = "svg";
+    else if (contentType.includes("webp")) ext = "webp";
+
+    const fileName = `logo_orgao.${ext}`;
+
+    // Upload/Upsert no Supabase Storage no bucket 'app_images'
+    const { error: uploadError } = await supabase.storage
+      .from("app_images")
+      .upload(fileName, blob, {
+        cacheControl: "3600",
+        upsert: true,
+        contentType
+      });
+
+    if (uploadError) {
+      console.warn("Aviso ao enviar arquivo para o Supabase Storage (app_images):", uploadError.message);
+    }
+
+    // Pega a URL pública
+    const { data: urlData } = supabase.storage
+      .from("app_images")
+      .getPublicUrl(fileName);
+
+    if (urlData?.publicUrl) {
+      console.log("URL Pública da Logo gerada no Supabase Storage:", urlData.publicUrl);
+      return urlData.publicUrl;
+    }
+  } catch (err) {
+    console.warn("Erro ao fazer upload da logo para o Supabase Storage:", err);
+  }
+  return null;
+}
+
 export async function saveOrgaoConfig(config: OrgaoConfig): Promise<void> {
-  memoryConfig = config;
+  let logoToSave = config.logo;
+
+  // Se for base64 e o Supabase estiver configurado, tenta subir pro Storage
+  if (isSupabaseConfigured() && config.logo && config.logo.startsWith("data:image/")) {
+    const uploadedUrl = await uploadLogoToSupabaseStorage(config.logo);
+    if (uploadedUrl) {
+      logoToSave = uploadedUrl;
+    }
+  }
+
+  const updatedConfig = { ...config, logo: logoToSave };
+  memoryConfig = updatedConfig;
+
   try {
     if (typeof localStorage !== "undefined") {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedConfig));
     }
-    await idbSet(STORAGE_KEY, config).catch(() => {});
+    await idbSet(STORAGE_KEY, updatedConfig).catch(() => {});
   } catch (e) {
     console.error("Erro ao salvar orgaoConfig:", e);
   }
@@ -67,7 +133,8 @@ export async function saveOrgaoConfig(config: OrgaoConfig): Promise<void> {
   // Tenta sincronizar a configuração e a logomarca no Supabase
   if (isSupabaseConfigured()) {
     try {
-      await supabase.from("orgao_config").upsert({
+      // 1. Tabela orgao_config
+      const { error: errUpsert } = await supabase.from("orgao_config").upsert({
         id: "default",
         governo: config.governo,
         secretaria: config.secretaria,
@@ -80,37 +147,78 @@ export async function saveOrgaoConfig(config: OrgaoConfig): Promise<void> {
         email: config.email,
         endereco: config.endereco,
         subtitulo_relatorio: config.subtitulo_relatorio,
-        logo: config.logo,
+        logo: logoToSave,
         updated_at: new Date().toISOString()
       }, { onConflict: "id" });
+
+      if (errUpsert) {
+        console.warn("Aviso ao dar upsert em 'orgao_config':", errUpsert.message);
+      }
+
+      // 2. Tabela imagens_sync (backup em tabela)
+      if (config.logo) {
+        try {
+          await supabase.from("imagens_sync").upsert({
+            id: "logo_orgao",
+            tabela_ref: "orgao_config",
+            registro_id: "default",
+            nome: "Logomarca DETRAN",
+            tipo: "logo",
+            dados_base64: config.logo.startsWith("data:image/") ? config.logo : null,
+            url_publica: logoToSave.startsWith("http") ? logoToSave : null,
+            created_at: new Date().toISOString()
+          }, { onConflict: "id" });
+        } catch (e) {}
+      }
     } catch (supErr) {
       console.warn("Aviso ao salvar orgaoConfig no Supabase:", supErr);
     }
   }
 
   // Atualiza também o favicon e ícone do app/atalho PWA
-  updateAppFavicon(config.logo);
+  updateAppFavicon(logoToSave);
 }
 
 export async function loadOrgaoConfigFromSupabase(): Promise<OrgaoConfig | null> {
   if (!isSupabaseConfigured()) return null;
   try {
     const { data, error } = await supabase.from("orgao_config").select("*").eq("id", "default").single();
-    if (error || !data) return null;
+    let logoValue = data?.logo || "";
+
+    // Se a logo em orgao_config estiver vazia, tenta resgatar da tabela imagens_sync ou do Storage
+    if (!logoValue) {
+      try {
+        const { data: imgData } = await supabase.from("imagens_sync").select("*").eq("id", "logo_orgao").single();
+        if (imgData) {
+          logoValue = imgData.url_publica || imgData.dados_base64 || "";
+        }
+      } catch (e) {}
+    }
+
+    if (!logoValue) {
+      try {
+        const { data: urlData } = supabase.storage.from("app_images").getPublicUrl("logo_orgao.png");
+        if (urlData?.publicUrl) {
+          logoValue = urlData.publicUrl;
+        }
+      } catch (e) {}
+    }
+
     const config: OrgaoConfig = {
-      governo: data.governo || DEFAULT_ORGAO_CONFIG.governo,
-      secretaria: data.secretaria || DEFAULT_ORGAO_CONFIG.secretaria,
-      orgao: data.orgao || DEFAULT_ORGAO_CONFIG.orgao,
-      sigla: data.sigla || DEFAULT_ORGAO_CONFIG.sigla,
-      origem_padrao: data.origem_padrao || DEFAULT_ORGAO_CONFIG.origem_padrao,
-      destino_padrao: data.destino_padrao || DEFAULT_ORGAO_CONFIG.destino_padrao,
-      cidade_uf: data.cidade_uf || DEFAULT_ORGAO_CONFIG.cidade_uf,
-      telefone: data.telefone || DEFAULT_ORGAO_CONFIG.telefone,
-      email: data.email || DEFAULT_ORGAO_CONFIG.email,
-      endereco: data.endereco || DEFAULT_ORGAO_CONFIG.endereco,
-      subtitulo_relatorio: data.subtitulo_relatorio || DEFAULT_ORGAO_CONFIG.subtitulo_relatorio,
-      logo: data.logo || "",
+      governo: data?.governo || DEFAULT_ORGAO_CONFIG.governo,
+      secretaria: data?.secretaria || DEFAULT_ORGAO_CONFIG.secretaria,
+      orgao: data?.orgao || DEFAULT_ORGAO_CONFIG.orgao,
+      sigla: data?.sigla || DEFAULT_ORGAO_CONFIG.sigla,
+      origem_padrao: data?.origem_padrao || DEFAULT_ORGAO_CONFIG.origem_padrao,
+      destino_padrao: data?.destino_padrao || DEFAULT_ORGAO_CONFIG.destino_padrao,
+      cidade_uf: data?.cidade_uf || DEFAULT_ORGAO_CONFIG.cidade_uf,
+      telefone: data?.telefone || DEFAULT_ORGAO_CONFIG.telefone,
+      email: data?.email || DEFAULT_ORGAO_CONFIG.email,
+      endereco: data?.endereco || DEFAULT_ORGAO_CONFIG.endereco,
+      subtitulo_relatorio: data?.subtitulo_relatorio || DEFAULT_ORGAO_CONFIG.subtitulo_relatorio,
+      logo: logoValue,
     };
+
     memoryConfig = config;
     if (typeof localStorage !== "undefined") {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
@@ -197,12 +305,13 @@ export function updateAppFavicon(logoBase64: string): void {
  */
 export function addPDFHeaderLogo(doc: any, x: number = 14, y: number = 8, w: number = 18, h: number = 18): boolean {
   const cfg = getOrgaoConfig();
-  if (!cfg.logo || !cfg.logo.startsWith("data:image/")) return false;
+  if (!cfg.logo || !cfg.logo.trim()) return false;
 
   try {
     let format = "PNG";
-    if (cfg.logo.includes("image/jpeg") || cfg.logo.includes("image/jpg")) format = "JPEG";
-    else if (cfg.logo.includes("image/webp")) format = "WEBP";
+    const lower = cfg.logo.toLowerCase();
+    if (lower.includes("image/jpeg") || lower.includes("image/jpg") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")) format = "JPEG";
+    else if (lower.includes("image/webp") || lower.endsWith(".webp")) format = "WEBP";
 
     doc.addImage(cfg.logo, format, x, y, w, h);
     return true;

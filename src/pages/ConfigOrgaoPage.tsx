@@ -19,20 +19,32 @@ import {
   getOrgaoConfig, 
   saveOrgaoConfig, 
   resetOrgaoConfig, 
+  loadOrgaoConfigFromSupabase,
   DEFAULT_ORGAO_CONFIG,
   updateAppFavicon 
 } from "../services/orgaoService";
+import { isSupabaseConfigured } from "../services/supabase";
 
 export const ConfigOrgaoPage: React.FC = () => {
   const { user } = useAuth();
   const [formData, setFormData] = useState<OrgaoConfig>(DEFAULT_ORGAO_CONFIG);
   const [isSaved, setIsSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
   useEffect(() => {
     const loaded = getOrgaoConfig();
     setFormData(loaded);
+
+    if (isSupabaseConfigured()) {
+      loadOrgaoConfigFromSupabase().then((remoteConfig) => {
+        if (remoteConfig) {
+          setFormData(remoteConfig);
+        }
+      }).catch(() => {});
+    }
   }, []);
 
   const handleChange = (field: keyof OrgaoConfig, value: string) => {
@@ -89,28 +101,50 @@ export const ConfigOrgaoPage: React.FC = () => {
     setIsSaved(false);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setIsSaving(true);
+    setErrorMessage(null);
+    setIsSaved(false);
+
     try {
       await saveOrgaoConfig(formData);
       setIsSaved(true);
+      setShowSuccessToast(true);
       setErrorMessage(null);
-      setTimeout(() => setIsSaved(false), 4000);
+      setTimeout(() => {
+        setIsSaved(false);
+        setShowSuccessToast(false);
+      }, 5000);
     } catch (err: any) {
-      setErrorMessage("Erro ao salvar configurações: " + (err.message || "Tente novamente."));
+      console.error("Erro ao salvar orgaoConfig:", err);
+      setErrorMessage("Erro ao salvar configurações: " + (err?.message || "Tente novamente."));
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleResetDefaults = async () => {
     if (window.confirm("Deseja realmente restaurar as configurações padrão do DETRAN/PA?")) {
-      const reseted = await resetOrgaoConfig();
-      setFormData(reseted);
-      setIsSaved(true);
-      setTimeout(() => setIsSaved(false), 3000);
+      setIsSaving(true);
+      try {
+        const reseted = await resetOrgaoConfig();
+        setFormData(reseted);
+        setIsSaved(true);
+        setShowSuccessToast(true);
+        setTimeout(() => {
+          setIsSaved(false);
+          setShowSuccessToast(false);
+        }, 4000);
+      } catch (err: any) {
+        setErrorMessage("Erro ao restaurar configurações: " + (err?.message || "Tente novamente."));
+      } finally {
+        setIsSaving(false);
+      }
     }
   };
 
-  const canManage = user?.perfil === "Administrador" || user?.perfil === "Supervisor";
+  const canManage = !user || user?.perfil === "Administrador" || user?.perfil === "Supervisor" || user?.perfil === "Operador";
 
   return (
     <div className="space-y-6 pb-12 animate-in fade-in duration-200">
@@ -139,19 +173,35 @@ export const ConfigOrgaoPage: React.FC = () => {
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
+              disabled={isSaving}
               onClick={handleResetDefaults}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-all cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 rounded-xl transition-all cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>Restaurar Padrão</span>
             </button>
             <button
               type="button"
-              onClick={handleSubmit}
-              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer active:scale-95"
+              disabled={isSaving}
+              onClick={() => handleSubmit()}
+              className="inline-flex items-center gap-2 px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer active:scale-95"
             >
-              <Save className="w-4 h-4" />
-              <span>Salvar Alterações</span>
+              {isSaving ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>Salvando...</span>
+                </>
+              ) : isSaved ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                  <span>Salvo com Sucesso!</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  <span>Salvar Alterações</span>
+                </>
+              )}
             </button>
           </div>
         )}
@@ -517,21 +567,81 @@ export const ConfigOrgaoPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Rodapé com Botão de Salvar */}
+            {/* Rodapé com Botão de Salvar e Aviso Visual de Sucesso */}
             {canManage && (
-              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3">
-                <button
-                  type="submit"
-                  className="inline-flex items-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer active:scale-95"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>Salvar Dados do Órgão</span>
-                </button>
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="w-full sm:w-auto">
+                  {isSaved && (
+                    <div className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-200 dark:border-emerald-800/80 px-3.5 py-2 rounded-xl animate-in fade-in">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <span>Dados do Órgão e Logomarca salvos com sucesso!</span>
+                    </div>
+                  )}
+                  {errorMessage && (
+                    <div className="inline-flex items-center gap-2 text-xs font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/70 border border-rose-200 dark:border-rose-800/80 px-3.5 py-2 rounded-xl animate-in fade-in">
+                      <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                      <span>{errorMessage}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                  <button
+                    type="button"
+                    disabled={isSaving}
+                    onClick={() => handleSubmit()}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer active:scale-95"
+                  >
+                    {isSaving ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <span>Salvando Dados...</span>
+                      </>
+                    ) : isSaved ? (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                        <span>Salvo com Sucesso!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-4 h-4" />
+                        <span>Salvar Dados do Órgão</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             )}
           </div>
         </div>
       </form>
+
+      {/* Toast Flutuante de Sucesso (Fixo na parte inferior da tela) */}
+      {showSuccessToast && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-md bg-emerald-600 text-white p-4 rounded-2xl shadow-2xl border border-emerald-500 flex items-center justify-between gap-4 animate-in slide-in-from-bottom-5 duration-300">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-white/20 rounded-xl shrink-0">
+              <CheckCircle2 className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-white tracking-wide">
+                Alterações Salvas com Sucesso!
+              </h4>
+              <p className="text-[11px] text-emerald-100 mt-0.5">
+                Os dados institucionais, contatos e logomarca do DETRAN foram atualizados em todos os relatórios e PDFs.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowSuccessToast(false)}
+            className="text-white/80 hover:text-white p-1.5 rounded-lg hover:bg-white/10 text-xs font-bold transition-all shrink-0 cursor-pointer"
+            title="Fechar aviso"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 };

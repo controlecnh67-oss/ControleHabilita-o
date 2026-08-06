@@ -17,6 +17,8 @@ import { ConsultaPublicaPage } from "./pages/ConsultaPublicaPage";
 import { AcessosCidadaoPage } from "./pages/AcessosCidadaoPage";
 import { RelatoriosPage } from "./pages/RelatoriosPage";
 import { isTabAllowedForProfile, NavTab } from "./types";
+import { loadOrgaoConfigFromSupabase } from "./services/orgaoService";
+import { isSupabaseConfigured } from "./services/supabase";
 
 const MainLayout: React.FC = () => {
   const { user, isAuthenticated, isLoading, timeRemaining, logout } = useAuth();
@@ -29,6 +31,12 @@ const MainLayout: React.FC = () => {
     }
     return false;
   });
+
+  useEffect(() => {
+    if (isSupabaseConfigured()) {
+      loadOrgaoConfigFromSupabase().catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     const handleUrlChange = () => {

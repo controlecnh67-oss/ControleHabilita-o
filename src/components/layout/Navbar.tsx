@@ -24,6 +24,7 @@ import { useAuth } from "../../context/AuthContext";
 import { Badge } from "../ui/Badge";
 import { Modal } from "../ui/Modal";
 import { isSupabaseConnected, resetDemoData, updateUsuario } from "../../services/db";
+import { getOrgaoConfig } from "../../services/orgaoService";
 import { cn } from "../../lib/utils";
 
 interface NavbarProps {
@@ -36,6 +37,21 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [showDbInfo, setShowDbInfo] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [logoUrl, setLogoUrl] = useState<string>("");
+  const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    const updateLogo = () => {
+      const cfg = getOrgaoConfig();
+      if (cfg && cfg.logo) {
+        setLogoUrl(cfg.logo);
+        setImgError(false);
+      }
+    };
+    updateLogo();
+    window.addEventListener("storage", updateLogo);
+    return () => window.removeEventListener("storage", updateLogo);
+  }, []);
 
   // Estados para edição das credenciais do próprio usuário logado
   const [showEditCredenciais, setShowEditCredenciais] = useState(false);
@@ -131,9 +147,18 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
         </button>
         
         <div className={cn("flex items-center gap-2.5 transition-opacity", isSidebarOpen ? "lg:hidden" : "flex")}>
-          <div className="flex items-center justify-center w-8 h-8 rounded-md bg-blue-600 text-white font-bold text-xs shadow-xs shrink-0">
-            D
-          </div>
+          {logoUrl && !imgError ? (
+            <img
+              src={logoUrl}
+              alt="Logo DETRAN"
+              onError={() => setImgError(true)}
+              className="w-8 h-8 object-contain rounded-md bg-white/90 p-0.5 shrink-0 shadow-xs border border-slate-200 dark:border-slate-700"
+            />
+          ) : (
+            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-blue-600 text-white font-bold text-xs shadow-xs shrink-0">
+              D
+            </div>
+          )}
           <div className="min-w-0">
             <h1 className="text-sm font-bold tracking-tight text-slate-900 dark:text-white leading-tight truncate">
               DETRAN <span className="text-blue-600 dark:text-blue-400">CNH</span>

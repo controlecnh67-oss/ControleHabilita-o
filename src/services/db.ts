@@ -24,6 +24,7 @@ import {
   getLocalGeralCNHs,
   syncGeralWithSupabase
 } from "./dexieDb";
+import { uploadLogoToSupabaseStorage, loadOrgaoConfigFromSupabase } from "./orgaoService";
 
 // Verificação de credenciais Supabase reais via variáveis de ambiente VITE_ ou utilitário
 export function isSupabaseConnected(): boolean {
@@ -3232,6 +3233,20 @@ export async function syncLocalToSupabase(
       if (cfgRaw) cfg = JSON.parse(cfgRaw);
     } catch (e) {}
 
+    let logoUrl = cfg.logo || "";
+    if (logoUrl && logoUrl.startsWith("data:image/")) {
+      try {
+        const uploadedUrl = await uploadLogoToSupabaseStorage(logoUrl);
+        if (uploadedUrl) {
+          logoUrl = uploadedUrl;
+          cfg.logo = logoUrl;
+          if (typeof localStorage !== "undefined") {
+            localStorage.setItem("detran_orgao_config", JSON.stringify(cfg));
+          }
+        }
+      } catch (err) {}
+    }
+
     const payload = [{
       id: "default",
       governo: cfg.governo || "GOVERNO DO ESTADO DO PARÁ",
@@ -3245,7 +3260,7 @@ export async function syncLocalToSupabase(
       email: cfg.email || "protocolo@detran.pa.gov.br",
       endereco: cfg.endereco || "Av. Rodovia BR 316, Km 03 - Belém / PA",
       subtitulo_relatorio: cfg.subtitulo_relatorio || "COORDENADORIA DE HABILITAÇÃO & PROTOCOLO GERAL DE CNHs",
-      logo: cfg.logo || "",
+      logo: logoUrl,
       updated_at: new Date().toISOString()
     }];
     const synced = await upsertInBatches("orgao_config", payload, 100);
@@ -3310,6 +3325,18 @@ export async function syncSupabaseToLocal(
       log(`❌ Erro ao baixar '${item.name}': ${err.message}`);
       errors.push(`${item.name}: ${err.message}`);
     }
+  }
+
+  // Baixar orgao_config
+  try {
+    log("📥 Baixando 'orgao_config' e Logomarca do Supabase...");
+    const loadedConfig = await loadOrgaoConfigFromSupabase();
+    if (loadedConfig) {
+      log("✅ 'orgao_config' e Logomarca atualizadas no cache local!");
+      totalPulled += 1;
+    }
+  } catch (err: any) {
+    log(`ℹ️ Aviso ao baixar 'orgao_config': ${err.message}`);
   }
 
   log("✨ Processo de download do Supabase concluído!");

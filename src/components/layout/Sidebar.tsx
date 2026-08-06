@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { 
   LayoutDashboard, 
   FolderArchive, 
@@ -20,6 +20,7 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { cn } from "../../lib/utils";
 import { NavTab, isTabAllowedForProfile } from "../../types";
+import { getOrgaoConfig } from "../../services/orgaoService";
 
 export type { NavTab };
 
@@ -37,6 +38,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onClose,
 }) => {
   const { user, logout } = useAuth();
+  const [logoUrl, setLogoUrl] = useState<string>("");
+  const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    const updateLogo = () => {
+      const cfg = getOrgaoConfig();
+      if (cfg && cfg.logo) {
+        setLogoUrl(cfg.logo);
+        setImgError(false);
+      }
+    };
+    updateLogo();
+    window.addEventListener("storage", updateLogo);
+    return () => window.removeEventListener("storage", updateLogo);
+  }, []);
 
   const navItems = [
     { id: "dashboard" as NavTab, label: "Dashboard", icon: LayoutDashboard },
@@ -87,9 +103,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* Cabeçalho do Sidebar / Menu */}
             <div className="p-6 flex items-center justify-between border-b border-slate-800">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center font-bold text-white text-sm shrink-0 shadow-sm">
-                  D
-                </div>
+                {logoUrl && !imgError ? (
+                  <img
+                    src={logoUrl}
+                    alt="Logo DETRAN"
+                    onError={() => setImgError(true)}
+                    className="w-8 h-8 object-contain rounded bg-white/90 p-0.5 shrink-0 shadow-sm"
+                  />
+                ) : (
+                  <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center font-bold text-white text-sm shrink-0 shadow-sm">
+                    D
+                  </div>
+                )}
                 <span className="font-bold text-white tracking-tight text-sm">DETRAN Protocolo</span>
               </div>
               <button
