@@ -203,6 +203,8 @@ export interface GeralCNH {
   memorando_numero?: string;
   remessa?: string;
   observacao?: string;
+  notificado_whatsapp?: boolean;
+  notificado_at?: string;
   created_at: string;
   updated_at?: string;
 }
@@ -222,7 +224,7 @@ export interface HistoricoMovimentacao {
   data_hora: string;
 }
 
-export type AcaoAuditoria = "Inclusão" | "Alteração" | "Exclusão" | "Login" | "Logout" | "Remessa" | "Recebimento" | "Entrega";
+export type AcaoAuditoria = "Inclusão" | "Alteração" | "Exclusão" | "Login" | "Logout" | "Remessa" | "Recebimento" | "Entrega" | "Reabertura";
 
 export interface Auditoria {
   id: string;

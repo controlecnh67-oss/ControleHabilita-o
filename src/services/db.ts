@@ -502,7 +502,10 @@ export async function idbSet(key: string, val: any): Promise<void> {
 let isIdbInitialized = false;
 export async function initStorage(): Promise<void> {
   if (isIdbInitialized) return;
-  const keys = ["usuarios", "responsaveis", "memorandos", "candidatos", "geral", "historico", "auditoria", "mapeamento"];
+  const keys = [
+    "usuarios", "responsaveis", "memorandos", "candidatos", "geral", "historico", "auditoria", "mapeamento",
+    "deleted_memorandos", "deleted_candidatos", "deleted_geral", "deleted_responsaveis"
+  ];
   for (const k of keys) {
     try {
       const idbVal = await idbGet<any[]>(`detran_cnh_${k}`);
@@ -518,32 +521,41 @@ export async function initStorage(): Promise<void> {
 
 // Helper para obter/salvar com cache em memória e IndexedDB + LocalStorage
 function getStoredList<T extends { id?: string }>(key: string, seed: T[]): T[] {
+  const deletedIds = getDeletedIds(key);
+  let list: T[] = [];
+
   if (memoryStore[key] && Array.isArray(memoryStore[key])) {
-    return memoryStore[key] as T[];
-  }
+    list = memoryStore[key] as T[];
+  } else {
+    try {
+      const storageKey = `detran_cnh_${key}`;
+      const raw = localStorage.getItem(storageKey);
 
-  try {
-    const storageKey = `detran_cnh_${key}`;
-    const raw = localStorage.getItem(storageKey);
-
-    if (!raw) {
+      if (!raw) {
+        list = seed;
+        memoryStore[key] = seed;
+        saveStoredList(key, seed);
+      } else {
+        let parsed: T[] = JSON.parse(raw);
+        if (!Array.isArray(parsed)) {
+          list = seed;
+          saveStoredList(key, list);
+        } else {
+          list = parsed;
+          memoryStore[key] = parsed;
+        }
+      }
+    } catch {
+      list = seed;
       memoryStore[key] = seed;
-      saveStoredList(key, seed);
-      return seed;
     }
-
-    let parsed: T[] = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      parsed = seed;
-      saveStoredList(key, parsed);
-    } else {
-      memoryStore[key] = parsed;
-    }
-    return parsed;
-  } catch {
-    memoryStore[key] = seed;
-    return seed;
   }
+
+  // Garantir remoção permanente de qualquer ID marcado como excluído
+  if (deletedIds.size > 0) {
+    return list.filter((item) => !item.id || !deletedIds.has(item.id));
+  }
+  return list;
 }
 
 function saveStoredList<T>(key: string, data: T[]): void {
@@ -554,6 +566,43 @@ function saveStoredList<T>(key: string, data: T[]): void {
   } catch (err) {
     // Erro de cota excedida do localStorage ignorado graciosamente pois memoryStore + IndexedDB possuem os dados
   }
+}
+
+function getDeletedIds(key: string): Set<string> {
+  const storeKey = `deleted_${key}`;
+  if (memoryStore[storeKey] && Array.isArray(memoryStore[storeKey])) {
+    return new Set(memoryStore[storeKey]);
+  }
+
+  try {
+    const storageKey = `detran_cnh_deleted_${key}`;
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(storageKey) : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        memoryStore[storeKey] = parsed;
+        return new Set(parsed);
+      }
+    }
+  } catch {}
+  return new Set();
+}
+
+function addDeletedId(key: string, id: string): void {
+  if (!id) return;
+  try {
+    const set = getDeletedIds(key);
+    set.add(id);
+    const arr = Array.from(set);
+    const storeKey = `deleted_${key}`;
+    memoryStore[storeKey] = arr;
+
+    const storageKey = `detran_cnh_deleted_${key}`;
+    idbSet(storageKey, arr).catch(() => {});
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(storageKey, JSON.stringify(arr));
+    }
+  } catch {}
 }
 
 export function resetDemoData(): void {
@@ -1073,14 +1122,28 @@ export async function deleteResponsavel(id: string, userId: string, userNome: st
 // ============================================================================
 
 export async function getCandidatosAll(): Promise<Candidato[]> {
+  const deletedMemoIds = getDeletedIds("memorandos");
+  const deletedCandIds = getDeletedIds("candidatos");
+
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<Candidato>("candidatos", 1000, "created_at", false);
       if (data && Array.isArray(data)) {
-        const local = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
-        const remoteIds = new Set(data.map((d) => d.id));
+        const validRemote = data.filter((c) => !deletedCandIds.has(c.id) && !deletedMemoIds.has(c.memorando_id));
+        const local = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS).filter(
+          (c) => !deletedCandIds.has(c.id) && !deletedMemoIds.has(c.memorando_id)
+        );
+        const remoteIds = new Set(validRemote.map((d) => d.id));
         const localOnly = local.filter((c) => !remoteIds.has(c.id));
-        const merged = [...data, ...localOnly];
+        const localMap = new Map(local.map((l) => [l.id, l]));
+        const validRemoteWithTelefone = validRemote.map((r) => {
+          const loc = localMap.get(r.id);
+          return {
+            ...r,
+            telefone: (r.telefone && r.telefone.trim() !== "") ? r.telefone : (loc?.telefone || "")
+          };
+        });
+        const merged = [...validRemoteWithTelefone, ...localOnly];
         saveStoredList("candidatos", merged);
         return merged;
       }
@@ -1088,25 +1151,44 @@ export async function getCandidatosAll(): Promise<Candidato[]> {
       console.warn("Aviso ao buscar candidatos no Supabase:", err);
     }
   }
-  return getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+  return getStoredList<Candidato>("candidatos", SEED_CANDIDATOS).filter(
+    (c) => !deletedCandIds.has(c.id) && !deletedMemoIds.has(c.memorando_id)
+  );
 }
 
 export async function getMemorandos(): Promise<Memorando[]> {
+  const deletedIds = getDeletedIds("memorandos");
+
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<Memorando>("memorandos", 1000, "created_at", false);
       if (data && Array.isArray(data)) {
-        const local = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
-        const remoteIds = new Set(data.map((d) => d.id));
-        const localOnly = local.filter((m) => !remoteIds.has(m.id));
-        const merged = [...data, ...localOnly];
+        const validRemote: Memorando[] = [];
+        for (const m of data) {
+          if (deletedIds.has(m.id)) {
+            // Deleção síncrona no Supabase para garantir remoção caso o registro persista na nuvem
+            try {
+              await supabase.from("geral_cnhs").delete().eq("memorando_id", m.id);
+              await supabase.from("candidatos").delete().eq("memorando_id", m.id);
+              await supabase.from("memorandos").delete().eq("id", m.id);
+            } catch (e) {
+              console.warn("Aviso ao excluir no Supabase memorando deletado:", e);
+            }
+          } else {
+            validRemote.push(m);
+          }
+        }
+        const local = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS).filter((m) => !deletedIds.has(m.id));
+        const remoteIds = new Set(validRemote.map((d) => d.id));
+        const localOnly = local.filter((m) => !remoteIds.has(m.id) && !deletedIds.has(m.id));
+        const merged = [...validRemote, ...localOnly].filter((m) => !deletedIds.has(m.id));
         saveStoredList("memorandos", merged);
       }
     } catch (err) {
       console.warn("Aviso ao buscar memorandos no Supabase:", err);
     }
   }
-  const list = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
+  const list = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS).filter((m) => !deletedIds.has(m.id));
   const cands = await getCandidatosAll();
   return list.map((m) => ({
     ...m,
@@ -1198,7 +1280,7 @@ export async function updateMemorando(
         updatedGeral = true;
       }
     });
-    if (updatedGeral) saveStoredList("geral", geralList);
+    if (updatedGeral) saveStoredList("geral", updatedGeral);
   }
 
   await logAuditoria("memorandos", ant.numero, "Alteração", userId, userNome, ant, atualizado);
@@ -1206,34 +1288,61 @@ export async function updateMemorando(
 }
 
 export async function deleteMemorando(id: string, userId: string, userNome: string): Promise<void> {
+  addDeletedId("memorandos", id);
+
   const list = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
   const target = list.find((m) => m.id === id);
-  if (!target) return;
+
+  // Mark candidates of this memorando as deleted
+  const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+  const candsToRemove = cands.filter((c) => c.memorando_id === id);
+  for (const c of candsToRemove) {
+    addDeletedId("candidatos", c.id);
+  }
+
+  // Handle geral CNHs linked to this memorando (both local/Dexie and Supabase)
+  const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  const cnhsLinked = geralList.filter((g) => g.memorando_id === id);
+  const cnhIdsToDelete = cnhsLinked.map((g) => g.id);
+
+  if (cnhIdsToDelete.length > 0) {
+    try {
+      await deleteLocalGeralCNHsBulk(cnhIdsToDelete);
+    } catch (e) {
+      console.warn("Aviso ao remover CNHs do IndexedDB ao deletar memorando:", e);
+    }
+    const filtradosGeral = geralList.filter((g) => g.memorando_id !== id);
+    saveStoredList("geral", filtradosGeral);
+  }
 
   if (isSupabaseConfigured()) {
     try {
+      // 1. Delete or un-link geral_cnhs in Supabase referencing this memorando first
+      await supabase.from("geral_cnhs").delete().eq("memorando_id", id);
+      await supabase.from("geral_cnhs").update({ memorando_id: null }).eq("memorando_id", id);
+
+      // 2. Delete candidatos from Supabase
       await supabase.from("candidatos").delete().eq("memorando_id", id);
-      await supabase.from("memorandos").delete().eq("id", id);
+
+      // 3. Delete memorando from Supabase
+      const { error } = await supabase.from("memorandos").delete().eq("id", id);
+      if (error) {
+        console.warn("Aviso ao excluir memorando no Supabase:", error.message);
+      }
     } catch (e) {
       console.warn("Aviso ao deletar memorando no Supabase:", e);
     }
   }
 
-  const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
-  const filtradosCands = cands.filter((c) => c.memorando_id !== id);
+  const filtradosCands = cands.filter((c) => c.memorando_id !== id && !getDeletedIds("candidatos").has(c.id));
   saveStoredList("candidatos", filtradosCands);
 
-  if (target.status === "Remetido") {
-    const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
-    const filtradosGeral = geralList.filter((g) => g.memorando_id !== id);
-    if (filtradosGeral.length !== geralList.length) {
-      saveStoredList("geral", filtradosGeral);
-    }
-  }
-
-  const filtrados = list.filter((m) => m.id !== id);
+  const filtrados = list.filter((m) => m.id !== id && !getDeletedIds("memorandos").has(m.id));
   saveStoredList("memorandos", filtrados);
-  await logAuditoria("memorandos", target.numero, "Exclusão", userId, userNome, target, null);
+
+  if (target) {
+    await logAuditoria("memorandos", target.numero, "Exclusão", userId, userNome, target, null);
+  }
 }
 
 export async function getCandidatosByMemorando(memorando_id: string): Promise<Candidato[]> {
@@ -1317,6 +1426,7 @@ export async function addCandidato(
 }
 
 export async function deleteCandidato(id: string, userId: string, userNome: string): Promise<void> {
+  addDeletedId("candidatos", id);
   const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
   const target = cands.find((c) => c.id === id);
   if (!target) return;
@@ -1419,20 +1529,37 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
     throw new Error("Não é possível remeter um memorando sem nenhum candidato cadastrado.");
   }
 
-  const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
-  let maxOrdem = geralList.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0);
+  // 1. Atualizar status do memorando imediatamente para 'Remetido' para evitar concorrência
+  memos[memoIndex] = { ...memo, status: "Remetido" };
+  saveStoredList("memorandos", memos);
+
+  // 2. Buscar Geral CNHs atuais e remover registros anteriores deste memorando se houver
+  const geralListAtual = await getGeralCNHs();
+  const cnhsAntigas = geralListAtual.filter((c) => c.memorando_id === memorando_id);
+  const idsAntigos = cnhsAntigas.map((c) => c.id);
+
+  if (idsAntigos.length > 0) {
+    await deleteLocalGeralCNHsBulk(idsAntigos);
+  }
+
+  const semAtuais = geralListAtual.filter((c) => c.memorando_id !== memorando_id);
+  
+  let maxOrdem = semAtuais.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0);
   const now = new Date().toISOString();
 
   const novasCNHs: GeralCNH[] = [];
+  let seq = 0;
   for (const cand of cands) {
     maxOrdem++;
+    seq++;
+    const uniqueId = `cnh-memo-${memo.id.replace(/\W/g, "")}-${cand.id.replace(/\W/g, "")}-${Date.now()}-${seq}-${Math.random().toString(36).substring(2, 7)}`;
     const novaCNH: GeralCNH = {
-      id: `cnh-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      id: uniqueId,
       ordem: maxOrdem,
       memorando_id: memo.id,
       candidato_id: cand.id,
-      nome: cand.nome,
-      cpf: cand.cpf,
+      nome: cand.nome || "Candidato sem nome",
+      cpf: cand.cpf || "",
       telefone: cand.telefone || "",
       gaveta: "",
       reparticao: "",
@@ -1440,6 +1567,8 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
       data_movimento: now,
       usuario_id: userId,
       usuario_nome: userNome,
+      memorando_numero: memo.numero,
+      remessa: memo.remessa || memo.numero,
       observacao: `Remetida via memorando ${memo.numero}${memo.remessa ? ` - Remessa ${memo.remessa}` : ""}`,
       created_at: now
     };
@@ -1447,14 +1576,15 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
     await logHistorico(novaCNH.id, novaCNH.ordem, novaCNH.nome, null, "Remetida", userId, userNome, `Memorando ${memo.numero}`);
   }
 
-  saveStoredList("geral", [...geralList, ...novasCNHs]);
-
-  memos[memoIndex] = { ...memo, status: "Remetido" };
-  saveStoredList("memorandos", memos);
+  saveStoredList("geral", [...semAtuais, ...novasCNHs]);
+  await saveLocalGeralCNHsBulk(novasCNHs);
 
   if (isSupabaseConfigured()) {
     try {
       await supabase.from("memorandos").update({ status: "Remetido" }).eq("id", memorando_id);
+      if (idsAntigos.length > 0) {
+        await supabase.from("geral_cnhs").delete().eq("memorando_id", memorando_id);
+      }
       await supabase.from("geral_cnhs").upsert(novasCNHs, { onConflict: "id" });
     } catch (e) {
       console.warn("Aviso ao remeter memorando no Supabase:", e);
@@ -1463,6 +1593,51 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
 
   await logAuditoria("memorandos", memo.numero, "Remessa", userId, userNome, { status: "Em elaboração" }, { status: "Remetido", total_remetidas: novasCNHs.length });
   return novasCNHs.length;
+}
+
+export async function reabrirMemorando(memorando_id: string, userId: string, userNome: string): Promise<number> {
+  const memos = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
+  const memoIndex = memos.findIndex((m) => m.id === memorando_id);
+  if (memoIndex === -1) throw new Error("Memorando não encontrado");
+  const memo = memos[memoIndex];
+
+  // 1. Buscar CNHs remetidas no Geral deste memorando
+  const geralList = await getGeralCNHs();
+  const cnhsDoMemo = geralList.filter((c) => c.memorando_id === memorando_id);
+  const idsParaRemover = cnhsDoMemo.map((c) => c.id);
+
+  if (idsParaRemover.length > 0) {
+    const novaGeral = geralList.filter((c) => c.memorando_id !== memorando_id);
+    saveStoredList("geral", novaGeral);
+    await deleteLocalGeralCNHsBulk(idsParaRemover);
+  }
+
+  // 2. Alterar status do memorando para "Em elaboração"
+  memos[memoIndex] = { ...memo, status: "Em elaboração" };
+  saveStoredList("memorandos", memos);
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("memorandos").update({ status: "Em elaboração" }).eq("id", memorando_id);
+      if (idsParaRemover.length > 0) {
+        await supabase.from("geral_cnhs").delete().eq("memorando_id", memorando_id);
+      }
+    } catch (e) {
+      console.warn("Aviso ao reabrir memorando no Supabase:", e);
+    }
+  }
+
+  await logAuditoria(
+    "memorandos",
+    memo.numero,
+    "Reabertura",
+    userId,
+    userNome,
+    { status: memo.status },
+    { status: "Em elaboração", cnhs_removidas: idsParaRemover.length }
+  );
+
+  return idsParaRemover.length;
 }
 
 // ============================================================================
@@ -1551,6 +1726,7 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
   const usuarios = await getUsuarios();
   const responsaveis = await getResponsaveis();
   const memorandos = await getMemorandos();
+  const candidatos = await getCandidatosAll();
 
   return list.map((c) => {
     const usr = usuarios.find((u) => u.id === c.usuario_id);
@@ -1562,6 +1738,8 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
         (r.nome && c.responsavel_id && r.nome.trim().toLowerCase() === c.responsavel_id.trim().toLowerCase())
     );
     const memo = memorandos.find((m) => m.id === c.memorando_id);
+    const cand = candidatos.find((cand) => cand.id === c.candidato_id);
+    const seed = seedByOrdem.get(c.ordem) || seedById.get(c.id);
 
     let displayRespNome = resp ? resp.nome : c.responsavel_nome;
     if (displayRespNome) {
@@ -1577,12 +1755,27 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
       }
     }
 
+    const nomeCalculado = (c.nome && c.nome.trim() !== "")
+      ? c.nome
+      : (cand && cand.nome && cand.nome.trim() !== "" ? cand.nome : (seed ? seed.nome : ""));
+
+    const cpfCalculado = (c.cpf && c.cpf.trim() !== "")
+      ? c.cpf
+      : (cand && cand.cpf && cand.cpf.trim() !== "" ? cand.cpf : (seed ? seed.cpf : ""));
+
+    const telefoneCalculado = (c.telefone && c.telefone.trim() !== "")
+      ? c.telefone
+      : (cand && cand.telefone && cand.telefone.trim() !== "" ? cand.telefone : (seed ? seed.telefone : ""));
+
     return {
       ...c,
+      nome: nomeCalculado,
+      cpf: cpfCalculado,
+      telefone: telefoneCalculado,
       usuario_nome: usr ? usr.nome_curto : c.usuario_nome || "Agente DETRAN",
       responsavel_id: resp ? resp.id : c.responsavel_id,
       responsavel_nome: displayRespNome && displayRespNome !== "-" ? displayRespNome : (c.responsavel_nome && !responsaveis.some(r => r.id === c.responsavel_nome) ? c.responsavel_nome : "-"),
-      memorando_numero: memo ? memo.numero : undefined,
+      memorando_numero: memo ? memo.numero : (c.memorando_numero || undefined),
       remessa: memo ? (memo.remessa || memo.numero) : (c.remessa || undefined)
     };
   }).sort((a, b) => b.ordem - a.ordem);
@@ -2941,12 +3134,29 @@ export async function syncLocalToSupabase(
 
   log("🚀 Iniciando sincronização do Armazenamento Local para o Supabase (com envio em lotes)...");
 
+  const deletedMemoIds = getDeletedIds("memorandos");
+  const deletedCandIds = getDeletedIds("candidatos");
+
+  // Purge any deleted items from Supabase if present
+  if (deletedMemoIds.size > 0 && isSupabaseConfigured()) {
+    for (const dId of deletedMemoIds) {
+      try {
+        await supabase.from("geral_cnhs").delete().eq("memorando_id", dId);
+        await supabase.from("geral_cnhs").update({ memorando_id: null }).eq("memorando_id", dId);
+        await supabase.from("candidatos").delete().eq("memorando_id", dId);
+        await supabase.from("memorandos").delete().eq("id", dId);
+      } catch (e) {}
+    }
+  }
+
   // Pré-carregar listas locais para validar chaves estrangeiras de forma estrita
   const usuarios = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
   const resp = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
   const mapList = getStoredList<MapeamentoLocalizacao>("mapeamento", SEED_MAPEAMENTO);
-  const mems = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
-  const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+  const mems = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS).filter((m) => !deletedMemoIds.has(m.id));
+  const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS).filter(
+    (c) => !deletedCandIds.has(c.id) && !deletedMemoIds.has(c.memorando_id)
+  );
   const geral = memoryStore["geral"] && memoryStore["geral"].length > 0 ? memoryStore["geral"] : await getGeralCNHs();
   const hist = getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO);
   const aud = getStoredList<Auditoria>("auditoria", SEED_AUDITORIA);
@@ -3315,9 +3525,18 @@ export async function syncSupabaseToLocal(
       log(`📥 Baixando tabela '${item.name}'...`);
       const data = await fetchAllRowsFromSupabase(item.name, 1000, item.orderCol, item.asc);
       if (data && data.length > 0) {
-        saveStoredList(item.key, data);
-        log(`✅ '${item.name}' baixado e atualizado localmente (${data.length} registros).`);
-        totalPulled += data.length;
+        let filteredData = data;
+        if (item.key === "memorandos") {
+          const deletedMemoSet = getDeletedIds("memorandos");
+          filteredData = data.filter((m: any) => !deletedMemoSet.has(m.id));
+        } else if (item.key === "candidatos") {
+          const deletedCandSet = getDeletedIds("candidatos");
+          const deletedMemoSet = getDeletedIds("memorandos");
+          filteredData = data.filter((c: any) => !deletedCandSet.has(c.id) && !deletedMemoSet.has(c.memorando_id));
+        }
+        saveStoredList(item.key, filteredData);
+        log(`✅ '${item.name}' baixado e atualizado localmente (${filteredData.length} registros).`);
+        totalPulled += filteredData.length;
       } else {
         log(`ℹ️ '${item.name}' no Supabase está vazio.`);
       }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   FileText, 
   Plus, 
@@ -16,7 +16,8 @@ import {
   ShieldAlert,
   ArrowRight,
   Download,
-  ArrowDownAZ
+  ArrowDownAZ,
+  RotateCcw
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -31,7 +32,8 @@ import {
   addCandidato,
   updateCandidato,
   deleteCandidato,
-  remeterMemorando
+  remeterMemorando,
+  reabrirMemorando
 } from "../services/db";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
@@ -66,7 +68,8 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [editingMemo, setEditingMemo] = useState<Memorando | null>(null);
   const [editingCand, setEditingCand] = useState<Candidato | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{ type: "remeter" | "deleteMemo" | "deleteCand"; title: string; message: string; target: any } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ type: "remeter" | "reabrir" | "reabrirEDeletarCand" | "deleteMemo" | "deleteCand"; title: string; message: string; target: any } | null>(null);
+  const isExecutingActionRef = useRef(false);
 
   // Form State Memorando
   const [numero, setNumero] = useState("");
@@ -351,7 +354,12 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
   const handleDeleteCand = async (cand: Candidato) => {
     if (!user || !canEdit || !selectedMemo) return;
     if (selectedMemo.status !== "Em elaboração") {
-      alert("Não é possível remover candidatos de um memorando que já foi remetido.");
+      setConfirmAction({
+        type: "reabrirEDeletarCand",
+        title: "Reabrir Memorando e Remover Candidato",
+        message: `Este memorando está "${selectedMemo.status}". Para remover o candidato "${cand.nome}", o memorando será reaberto para "Em elaboração".\n\nDeseja reabrir o memorando e remover o candidato agora?`,
+        target: cand
+      });
       return;
     }
     setConfirmAction({
@@ -359,6 +367,16 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
       title: "Remover Candidato",
       message: `Deseja realmente remover o candidato "${cand.nome}" deste memorando?`,
       target: cand
+    });
+  };
+
+  const handleReabrirMemo = async (memo: Memorando) => {
+    if (!user || !canEdit) return;
+    setConfirmAction({
+      type: "reabrir",
+      title: "Reabrir Memorando para Edição",
+      message: `🔓 Deseja reabrir o memorando "${memo.numero}"?\n\nO status do memorando será alterado para "Em elaboração", permitindo que você exclua ou adicione candidatos.\n\nApós ajustar a lista, você poderá clicar em "Remeter para Protocolo" novamente para enviar os dados atualizados para a Lista Geral.`,
+      target: memo
     });
   };
 
@@ -394,7 +412,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
   const handleRemeter = async () => {
     if (!user || !selectedMemo || !canEdit) return;
     if (selectedMemo.status !== "Em elaboração") {
-      alert("Este memorando já foi remetido anteriormente.");
+      alert("Este memorando já foi remetido. Clique no botão 'Reabrir Memorando' se precisar alterar a lista e remeter novamente.");
       return;
     }
     if (candidatos.length === 0) {
@@ -411,27 +429,50 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
   };
 
   const handleExecuteConfirmAction = async () => {
-    if (!confirmAction || !user) return;
+    if (!confirmAction || !user || isExecutingActionRef.current) return;
+    const action = confirmAction;
+    
+    // Fecha a modal IMEDIATAMENTE ao clicar para evitar duplo clique e envio duplicado
+    setConfirmAction(null);
+    isExecutingActionRef.current = true;
+
     try {
-      if (confirmAction.type === "remeter") {
-        const total = await remeterMemorando(confirmAction.target.id, user.id, user.nome_curto);
+      if (action.type === "remeter") {
+        const total = await remeterMemorando(action.target.id, user.id, user.nome_curto);
         setMessage({
           type: "success",
           text: `🎯 Remessa concluída com sucesso! ${total} CNH(s) remetidas ao Protocolo Geral com Ordem sequencial automática.`
         });
-        await fetchDados(confirmAction.target.id);
-      } else if (confirmAction.type === "deleteMemo") {
-        await deleteMemorando(confirmAction.target.id, user.id, user.nome_curto);
+        await fetchDados(action.target.id);
+      } else if (action.type === "reabrir") {
+        await reabrirMemorando(action.target.id, user.id, user.nome_curto);
+        setMessage({
+          type: "success",
+          text: `🔓 Memorando "${action.target.numero}" reaberto com sucesso! Status alterado para 'Em elaboração'. Agora você pode excluir ou adicionar candidatos e remetê-lo novamente.`
+        });
+        await fetchDados(action.target.id);
+      } else if (action.type === "reabrirEDeletarCand") {
+        await reabrirMemorando(selectedMemo!.id, user.id, user.nome_curto);
+        await deleteCandidato(action.target.id, user.id, user.nome_curto);
+        setMessage({
+          type: "success",
+          text: `🔓 Memorando reaberto e candidato "${action.target.nome}" removido com sucesso!`
+        });
+        const updated = await getCandidatosByMemorando(selectedMemo!.id);
+        setCandidatos(updated);
+        await fetchDados(selectedMemo?.id);
+      } else if (action.type === "deleteMemo") {
+        await deleteMemorando(action.target.id, user.id, user.nome_curto);
         setMessage({ type: "success", text: "Memorando excluído com sucesso!" });
-        const isCurrentSelected = selectedMemo?.id === confirmAction.target.id;
+        const isCurrentSelected = selectedMemo?.id === action.target.id;
         if (isCurrentSelected) {
           setSelectedMemo(null);
           setCandidatos([]);
         }
         await fetchDados(isCurrentSelected ? null : selectedMemo?.id);
-      } else if (confirmAction.type === "deleteCand") {
-        await deleteCandidato(confirmAction.target.id, user.id, user.nome_curto);
-        setMessage({ type: "success", text: `Candidato "${confirmAction.target.nome}" removido.` });
+      } else if (action.type === "deleteCand") {
+        await deleteCandidato(action.target.id, user.id, user.nome_curto);
+        setMessage({ type: "success", text: `Candidato "${action.target.nome}" removido.` });
         const updated = await getCandidatosByMemorando(selectedMemo!.id);
         setCandidatos(updated);
         await fetchDados(selectedMemo?.id);
@@ -439,7 +480,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
     } catch (err: any) {
       alert(err.message || "Erro na operação.");
     } finally {
-      setConfirmAction(null);
+      isExecutingActionRef.current = false;
     }
   };
 
@@ -724,6 +765,15 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
 
                       {canEdit && (
                         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          {m.status !== "Em elaboração" && (
+                            <button
+                              onClick={() => handleReabrirMemo(m)}
+                              title="Reabrir memorando para edição/exclusão"
+                              className="p-1 text-amber-500 hover:text-amber-600 dark:hover:text-amber-400 rounded-md transition-colors"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             onClick={() => handleOpenMemoModal(m)}
                             title="Editar memorando"
@@ -783,31 +833,44 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
                     Imprimir
                   </button>
 
-                  {canEdit && selectedMemo.status === "Em elaboração" && (
+                  {canEdit && (
                     <>
-                      {isMyMemo ? (
-                        <button
-                          onClick={handleOpenCandModal}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
-                        >
-                          <UserPlus className="w-3.5 h-3.5" />
-                          Adicionar Candidato
-                        </button>
-                      ) : (
-                        <span className="flex items-center gap-1 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-300 font-medium rounded-xl text-xs" title="Apenas o usuário que elaborou o memorando pode adicionar novos candidatos">
-                          🔒 Apenas {selectedMemo.usuario_nome || "o autor"} pode adicionar
-                        </span>
-                      )}
+                      {selectedMemo.status === "Em elaboração" ? (
+                        <>
+                          {isMyMemo ? (
+                            <button
+                              onClick={handleOpenCandModal}
+                              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
+                            >
+                              <UserPlus className="w-3.5 h-3.5" />
+                              Adicionar Candidato
+                            </button>
+                          ) : (
+                            <span className="flex items-center gap-1 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-300 font-medium rounded-xl text-xs" title="Apenas o usuário que elaborou o memorando pode adicionar novos candidatos">
+                              🔒 Apenas {selectedMemo.usuario_nome || "o autor"} pode adicionar
+                            </span>
+                          )}
 
-                      <button
-                        onClick={handleRemeter}
-                        disabled={candidatos.length === 0}
-                        title="Remeter CNHs para a Tela Geral"
-                        className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-md shadow-amber-600/20 text-xs transition-all disabled:opacity-50 cursor-pointer"
-                      >
-                        <Send className="w-3.5 h-3.5" />
-                        Remeter para Protocolo
-                      </button>
+                          <button
+                            onClick={handleRemeter}
+                            disabled={candidatos.length === 0}
+                            title="Remeter CNHs para a Tela Geral"
+                            className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-md shadow-amber-600/20 text-xs transition-all disabled:opacity-50 cursor-pointer"
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            Remeter para Protocolo
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => handleReabrirMemo(selectedMemo)}
+                          title="Reabrir memorando para excluir/editar candidatos e remeter novamente"
+                          className="flex items-center gap-1.5 px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-md shadow-amber-600/20 text-xs transition-all cursor-pointer"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          Reabrir Memorando
+                        </button>
+                      )}
                     </>
                   )}
                 </div>
@@ -833,9 +896,13 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
                       </button>
                     )}
                   </div>
-                  {selectedMemo.status === "Em elaboração" && (
+                  {selectedMemo.status === "Em elaboração" ? (
                     <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
                       ⚠️ Clique em &quot;Remeter para Protocolo&quot; para enviar ao balcão Geral.
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                      ℹ️ Memorando Remetido. Clique em &quot;Reabrir Memorando&quot; para excluir/editar candidatos.
                     </span>
                   )}
                 </div>
@@ -885,7 +952,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
                           </th>
                           <th className="py-2.5 px-4">CPF</th>
                           <th className="py-2.5 px-4">Telefone</th>
-                          {canEdit && selectedMemo.status === "Em elaboração" && (
+                          {canEdit && (
                             <th className="py-2.5 px-4 w-20 text-right">Ações</th>
                           )}
                         </tr>
@@ -905,7 +972,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
                             <td className="py-2.5 px-4 text-slate-600 dark:text-slate-300">
                               {cand.telefone || "-"}
                             </td>
-                            {canEdit && selectedMemo.status === "Em elaboração" && (
+                            {canEdit && (
                               <td className="py-2.5 px-4 text-right">
                                 <div className="flex items-center justify-end gap-1">
                                   <button
@@ -1258,7 +1325,11 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
                   : "bg-rose-600 hover:bg-rose-700 shadow-rose-600/20"
               }`}
             >
-              {confirmAction?.type === "remeter" ? "Sim, Confirmar Remessa" : "Sim, Excluir"}
+              {confirmAction?.type === "remeter" 
+                ? "Sim, Confirmar Remessa" 
+                : confirmAction?.type === "reabrir" || confirmAction?.type === "reabrirEDeletarCand"
+                ? "Sim, Reabrir e Continuar"
+                : "Sim, Excluir"}
             </button>
           </div>
         </div>

@@ -288,14 +288,14 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
       return finalStats;
     }
   } catch (err: any) {
-    console.error("❌ Erro na sincronização com Supabase:", err);
+    console.warn("⚠️ Aviso de sincronização Supabase (modo offline):", err?.message || err);
     const localCount = await dexieDb.geral.count();
     const errorStats: SyncStats = {
       status: "offline",
       lastSyncAt: await getMeta("last_sync_at"),
       totalRecords: localCount,
       syncDurationMs: Date.now() - startTime,
-      errorMessage: err.message || "Erro de conexão com o Supabase",
+      errorMessage: err?.message || "Sem conexão com o Supabase. Utilizando dados locais.",
       isOffline: true
     };
     updateSyncStats(errorStats);
