@@ -1771,37 +1771,41 @@ export const GeralPage: React.FC = () => {
                     {/* Envio Direto Wasender API (sem modal) */}
                     {visibleColumns.wasender_direct && (
                       <td className="py-2 px-4 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          type="button"
-                          disabled={sendingDirectId === c.id}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDirectWasenderSend(c);
-                          }}
-                          title={`Enviar mensagem padrão da situação "${c.situacao}" diretamente via Wasender API sem abrir modal`}
-                          className={`inline-flex items-center justify-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg shadow-2xs transition-all cursor-pointer disabled:opacity-50 active:scale-95 ${
-                            c.notificado_whatsapp
-                              ? "bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-400/30"
-                              : "bg-emerald-600 hover:bg-emerald-500 text-white"
-                          }`}
-                        >
-                          {sendingDirectId === c.id ? (
-                            <>
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
-                              <span>Enviando...</span>
-                            </>
-                          ) : c.notificado_whatsapp ? (
-                            <>
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
-                              <span>✓ Wasender Enviado</span>
-                            </>
-                          ) : (
-                            <>
-                              <Send className="w-3.5 h-3.5" />
-                              <span>Enviar API</span>
-                            </>
-                          )}
-                        </button>
+                        {c.telefone && c.telefone.replace(/\D/g, "").length >= 8 ? (
+                          <button
+                            type="button"
+                            disabled={sendingDirectId === c.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDirectWasenderSend(c);
+                            }}
+                            title={`Enviar mensagem padrão da situação "${c.situacao}" diretamente via Wasender API sem abrir modal`}
+                            className={`inline-flex items-center justify-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg shadow-2xs transition-all cursor-pointer disabled:opacity-50 active:scale-95 ${
+                              c.notificado_whatsapp
+                                ? "bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-400/30"
+                                : "bg-emerald-600 hover:bg-emerald-500 text-white"
+                            }`}
+                          >
+                            {sendingDirectId === c.id ? (
+                              <>
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                                <span>Enviando...</span>
+                              </>
+                            ) : c.notificado_whatsapp ? (
+                              <>
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                                <span>✓ Wasender Enviado</span>
+                              </>
+                            ) : (
+                              <>
+                                <Send className="w-3.5 h-3.5" />
+                                <span>Enviar API</span>
+                              </>
+                            )}
+                          </button>
+                        ) : (
+                          <span className="text-slate-400 dark:text-slate-600 text-xs font-normal">-</span>
+                        )}
                       </td>
                     )}
 
