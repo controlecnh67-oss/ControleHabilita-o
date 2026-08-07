@@ -2242,6 +2242,24 @@ export async function updateGeralCNH(
   saveStoredList("geral", geralList);
   await saveLocalGeralCNH(atualizado);
 
+  // Se a CNH possui candidato_id associado, sincronizar também na lista de candidatos do memorando
+  if (atualizado.candidato_id) {
+    try {
+      const cands = await getCandidatosAll();
+      const candIndex = cands.findIndex((c) => c.id === atualizado.candidato_id);
+      if (candIndex !== -1) {
+        const candUpdated = { ...cands[candIndex] };
+        if (data.nome !== undefined) candUpdated.nome = data.nome;
+        if (data.cpf !== undefined) candUpdated.cpf = data.cpf;
+        if (data.telefone !== undefined) candUpdated.telefone = data.telefone;
+        cands[candIndex] = candUpdated;
+        saveStoredList("candidatos", cands);
+      }
+    } catch (e) {
+      console.warn("Aviso ao atualizar candidato vinculado no QuickEdit:", e);
+    }
+  }
+
   if (ant.situacao !== atualizado.situacao) {
     await logHistorico(
       atualizado.id,

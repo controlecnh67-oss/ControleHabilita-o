@@ -192,7 +192,10 @@ export const GeralPage: React.FC = () => {
     if (cnh.situacao === "Recebida") {
       return `Olá, *${nome}*! 👋\n\nInformamos que a sua Carteira Nacional de Habilitação (CNH) Ordem *${ordemTag}* (CPF: *${cpfFormatted}*) foi **RECEBIDA** e já está **disponível para retirada** no balcão de atendimento do DETRAN${reparticaoTag}.\n\n📍 *Local:* Balcão de Atendimento DETRAN${gavetaTag}\n📄 *Documentação:* Apresente um documento oficial original com foto.\n\nQualquer dúvida, estamos à disposição!`;
     } else if (cnh.situacao === "Remetida") {
-      return `Olá, *${nome}*! 🚗\n\nA sua CNH Ordem *${ordemTag}* (CPF: *${cpfFormatted}*) encontra-se **EM TRÂNSITO / REMETIDA** para o posto de atendimento${reparticaoTag}.\n\nAssim que o documento for recebido no balcão, você poderá realizar a retirada. Acompanhe pelo aplicativo de consulta pública do DETRAN!`;
+      const candidatoNome = cnh.nome || "Candidato";
+      const cpfDisplay = cnh.cpf ? formatCPF(cnh.cpf) : "";
+      const ordemTag = cnh.ordem ? `#${cnh.ordem}` : "";
+      return `🚗 *Olá, ${candidatoNome}!* 👋\n\n🪪 *CPF:* *${cpfDisplay}*\n\n📢 Passando para informar que o seu processo de *CNH* *(Nº da Ordem: ${ordemTag})* encontra-se em **🚚 EM TRÂNSITO / REMETIDO PARA IMPRESSÃO**.\n\n📦 Assim que sua CNH for **recebida em nosso balcão de atendimento**, entraremos em contato e você poderá realizar a retirada. ✅\n\n🔎 Você também pode acompanhar o andamento do processo pelo aplicativo de consulta, utilizando seu **CPF**, através do link: https://controle-habilita-o.vercel.app/?consulta=true\n\n🤖 *Esta é uma mensagem automática.* Por favor, não responda esta mensagem.`;
     } else if (cnh.situacao === "Entregue") {
       const retirante = cnh.responsavel_nome ? ` por ${cnh.responsavel_nome}` : "";
       return `Olá, *${nome}*! ✅\n\nConfirmamos que a sua CNH Ordem *${ordemTag}* (CPF: *${cpfFormatted}*) foi devidamente **ENTREGUE** em nosso sistema${retirante}.\n\nAgradecemos pela atenção!`;
@@ -346,9 +349,9 @@ export const GeralPage: React.FC = () => {
     );
 
     try {
-      if (user) {
-        await updateGeralCNH(id, { [field]: val }, user.id, user.nome_curto);
-      }
+      const uId = user ? user.id : "sistema";
+      const uNome = user ? (user.nome_curto || user.nome) : "Agente DETRAN";
+      await updateGeralCNH(id, { [field]: val }, uId, uNome);
     } catch (err) {
       console.error("Erro no QuickEdit:", err);
     }

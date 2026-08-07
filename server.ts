@@ -31,40 +31,65 @@ async function startServer() {
         "https://wasenderapi.com/api/v1/messages/send-text-message"
       ];
 
-      let lastError = null;
-      let responseData = null;
+      // Variantes de payload aceitas em APIs Wasender
+      const payloadVariants = [
+        { to: cleanPhone, text: text },
+        { phone: cleanPhone, message: text },
+        { receiver: cleanPhone, message: text }
+      ];
+
+      let lastError = "";
 
       for (const endpoint of endpoints) {
-        try {
-          const apiRes = await fetch(endpoint, {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${apiKey}`,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              to: cleanPhone,
-              text: text,
-              phone: cleanPhone,
-              message: text
-            })
-          });
+        for (const bodyPayload of payloadVariants) {
+          try {
+            const apiRes = await fetch(endpoint, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify(bodyPayload)
+            });
 
-          if (apiRes.ok) {
-            responseData = await apiRes.json();
-            return res.json({ success: true, data: responseData, endpoint });
-          } else {
-            const errText = await apiRes.text();
-            lastError = `HTTP ${apiRes.status}: ${errText}`;
+            const resText = await apiRes.text();
+            let responseData: any = {};
+            try {
+              responseData = JSON.parse(resText);
+            } catch (e) {
+              responseData = { message: resText };
+            }
+
+            // Verifica se a API respondeu 200/OK E não reportou erro dentro do JSON retornado
+            const isSuccess = apiRes.ok && 
+              responseData && 
+              responseData.success !== false && 
+              responseData.status !== false && 
+              responseData.status !== "error" && 
+              !responseData.error;
+
+            if (isSuccess) {
+              return res.json({ success: true, data: responseData, endpoint });
+            } else {
+              lastError = responseData.message || responseData.error || responseData.msg || resText || `HTTP ${apiRes.status}`;
+            }
+          } catch (e: any) {
+            lastError = e.message;
           }
-        } catch (e: any) {
-          lastError = e.message;
         }
       }
 
-      return res.status(500).json({
+      // Traduz e formata erros conhecidos para mensagens claras ao usuário
+      let userFriendlyError = lastError;
+      if (lastError.toLowerCase().includes("session is not connected") || lastError.toLowerCase().includes("connect your session")) {
+        userFriendlyError = "Sua sessão do WhatsApp não está conectada no Wasender API. Por favor, acesse o painel da Wasender e conecte sua sessão do WhatsApp.";
+      } else if (lastError.toLowerCase().includes("invalid api key") || lastError.toLowerCase().includes("unauthorized")) {
+        userFriendlyError = "Chave de API do Wasender inválida ou não autorizada. Verifique suas credenciais em WASENDER_API_KEY.";
+      }
+
+      return res.status(400).json({
         success: false,
-        error: lastError || "Falha de comunicação com os servidores da Wasender API."
+        error: userFriendlyError || "Falha de comunicação com os servidores da Wasender API."
       });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
