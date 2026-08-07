@@ -115,6 +115,7 @@ export const GeralPage: React.FC = () => {
     usuario: false,
     observacao: false,
     whatsapp: true,
+    wasender_direct: false,
     acoes: true,
   });
 
@@ -210,6 +211,54 @@ export const GeralPage: React.FC = () => {
     setWhatsappApiError(null);
   };
 
+  const [sendingDirectId, setSendingDirectId] = useState<string | null>(null);
+
+  const handleDirectWasenderSend = async (cnh: GeralCNH) => {
+    const phone = cnh.telefone || "";
+    const cleanPhone = phone.replace(/\D/g, "");
+    if (!cleanPhone || cleanPhone.length < 8) {
+      alert(`⚠️ O registro #${cnh.ordem} (${cnh.nome}) não possui um número de telefone com DDD válido cadastrado.`);
+      return;
+    }
+
+    const defaultMsg = getWhatsAppMessageForCNH(cnh);
+    setSendingDirectId(cnh.id);
+
+    try {
+      const res = await sendWhatsAppMessageAPI(phone, defaultMsg);
+      if (res.success) {
+        const nowIso = new Date().toISOString();
+        if (user) {
+          await updateGeralCNH(
+            cnh.id,
+            {
+              notificado_whatsapp: true,
+              notificado_at: nowIso,
+            },
+            user.id,
+            user.nome_curto || user.nome
+          );
+        }
+        setMessage({
+          type: "success",
+          text: `🚀 Mensagem padrão de status ("${cnh.situacao}") enviada com sucesso via Wasender API para ${cnh.nome} (${phone})!`
+        });
+        await fetchDados();
+      } else {
+        setMessage({
+          type: "error",
+          text: `❌ Falha ao enviar via Wasender API para ${cnh.nome}: ${res.error || "Erro desconhecido"}`
+        });
+      }
+    } catch (err: any) {
+      setMessage({
+        type: "error",
+        text: `❌ Erro no envio via Wasender API: ${err.message}`
+      });
+    } finally {
+      setSendingDirectId(null);
+    }
+  };
   const handleSendWhatsAppAPI = async () => {
     if (!whatsappModalCNH || !whatsappMessage) return;
     if (!whatsappPhone || whatsappPhone.replace(/\D/g, "").length < 8) {
@@ -1319,7 +1368,8 @@ export const GeralPage: React.FC = () => {
                     { key: "data_movimento", label: "Data Mov." },
                     { key: "usuario", label: "Usuário" },
                     { key: "observacao", label: "Observações" },
-                    { key: "whatsapp", label: "Ação WhatsApp" },
+                    { key: "whatsapp", label: "Ação WhatsApp (Modal)" },
+                    { key: "wasender_direct", label: "Envio Wasender API (Sem Modal)" },
                     { key: "acoes", label: "Ações DETRAN" },
                   ].map((col) => (
                     <label
@@ -1516,6 +1566,14 @@ export const GeralPage: React.FC = () => {
                   {visibleColumns.observacao && (
                     <th className="py-2 px-4 max-w-[150px]">Observações</th>
                   )}
+                  {visibleColumns.wasender_direct && (
+                    <th className="py-2 px-4 text-center whitespace-nowrap">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <Send className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span>Wasender Direct</span>
+                      </div>
+                    </th>
+                  )}
                   {visibleColumns.acoes && (
                     <th className="py-2 px-4 text-right w-44">Ações DETRAN</th>
                   )}
@@ -1707,6 +1765,43 @@ export const GeralPage: React.FC = () => {
                             {c.observacao || "-"}
                           </span>
                         )}
+                      </td>
+                    )}
+
+                    {/* Envio Direto Wasender API (sem modal) */}
+                    {visibleColumns.wasender_direct && (
+                      <td className="py-2 px-4 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          disabled={sendingDirectId === c.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDirectWasenderSend(c);
+                          }}
+                          title={`Enviar mensagem padrão da situação "${c.situacao}" diretamente via Wasender API sem abrir modal`}
+                          className={`inline-flex items-center justify-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg shadow-2xs transition-all cursor-pointer disabled:opacity-50 active:scale-95 ${
+                            c.notificado_whatsapp
+                              ? "bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-400/30"
+                              : "bg-emerald-600 hover:bg-emerald-500 text-white"
+                          }`}
+                        >
+                          {sendingDirectId === c.id ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                              <span>Enviando...</span>
+                            </>
+                          ) : c.notificado_whatsapp ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                              <span>✓ Wasender Enviado</span>
+                            </>
+                          ) : (
+                            <>
+                              <Send className="w-3.5 h-3.5" />
+                              <span>Enviar API</span>
+                            </>
+                          )}
+                        </button>
                       </td>
                     )}
 
