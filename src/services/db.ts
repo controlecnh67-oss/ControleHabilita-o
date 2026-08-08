@@ -1942,10 +1942,16 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
   // Se o Supabase estiver configurado, busca diretamente e em tempo real na tabela remota do Supabase pelo CPF
   if (isSupabaseConfigured()) {
     try {
+      // Remover zeros à esquerda e formatar variações para garantir match no Supabase
+      const unpaddedCpf = cleanCpf.replace(/^0+/, "");
+      const formattedCpf = cleanCpf.length === 11 
+        ? `${cleanCpf.slice(0,3)}.${cleanCpf.slice(3,6)}.${cleanCpf.slice(6,9)}-${cleanCpf.slice(9)}`
+        : cleanCpf;
+
       const { data: supData, error: supError } = await supabase
         .from("geral_cnhs")
         .select("*")
-        .or(`cpf.ilike.%${cleanCpf}%,cpf.ilike.%${searchPad}%`);
+        .or(`cpf.ilike.%${cleanCpf}%,cpf.ilike.%${searchPad}%,cpf.ilike.%${unpaddedCpf}%,cpf.ilike.%${formattedCpf}%`);
 
       if (!supError && supData && supData.length > 0) {
         directSupabaseCNHs = supData as GeralCNH[];
@@ -1974,16 +1980,83 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
     const cCpfClean = c.cpf.replace(/\D/g, "");
     if (!cCpfClean) return false;
     const cCpfPad = pad11(cCpfClean);
+    const unpaddedSearch = cleanCpf.replace(/^0+/, "");
+    const unpaddedCand = cCpfClean.replace(/^0+/, "");
 
     return (
       cCpfClean === cleanCpf ||
       cCpfPad === searchPad ||
+      (unpaddedSearch.length >= 7 && unpaddedCand === unpaddedSearch) ||
       (cCpfClean.length >= 9 && cleanCpf.endsWith(cCpfClean)) ||
       (cleanCpf.length >= 9 && cCpfClean.endsWith(cleanCpf))
     );
   });
 
+  // Se não encontrou nenhuma CNH no Protocolo Geral, verificar se o munícipe está cadastrado como Candidato em algum Memorando
   if (cnhsDoCidadao.length === 0) {
+    try {
+      const candidatos = await getCandidatosAll();
+      const unpaddedSearch = cleanCpf.replace(/^0+/, "");
+
+      const candEncontrado = candidatos.find((cand) => {
+        if (!cand.cpf) return false;
+        const candCpfClean = cand.cpf.replace(/\D/g, "");
+        if (!candCpfClean) return false;
+        const candCpfPad = pad11(candCpfClean);
+        const unpaddedCand = candCpfClean.replace(/^0+/, "");
+
+        return (
+          candCpfClean === cleanCpf ||
+          candCpfPad === searchPad ||
+          (unpaddedSearch.length >= 7 && unpaddedCand === unpaddedSearch) ||
+          (candCpfClean.length >= 9 && cleanCpf.endsWith(candCpfClean)) ||
+          (cleanCpf.length >= 9 && candCpfClean.endsWith(cleanCpf))
+        );
+      });
+
+      if (candEncontrado) {
+        const cnhVirtual: GeralCNH = {
+          id: `virtual-cand-${candEncontrado.id}`,
+          ordem: 0,
+          memorando_id: candEncontrado.memorando_id,
+          candidato_id: candEncontrado.id,
+          nome: candEncontrado.nome,
+          cpf: candEncontrado.cpf,
+          telefone: candEncontrado.telefone || "",
+          gaveta: "",
+          reparticao: "",
+          situacao: "Remetida",
+          responsavel_id: undefined,
+          responsavel_nome: undefined,
+          data_movimento: candEncontrado.created_at || new Date().toISOString(),
+          usuario_id: "sistema",
+          usuario_nome: "Sistema DETRAN",
+          observacao: "Processo cadastrado em memorando de envio.",
+          created_at: candEncontrado.created_at || new Date().toISOString()
+        };
+
+        registrarAcessoCidadaoLog({
+          cpf: cleanCpf,
+          nome_titular: candEncontrado.nome,
+          situacao: "Remetida",
+          resultado_status: "EM_PROCESSAMENTO",
+          canal: "App Android",
+          dispositivo: "Navegador Web / Mobile",
+          cidade_origem: "Belém"
+        });
+
+        return {
+          cpfConsultado: cleanCpf,
+          cnhEncontrada: cnhVirtual,
+          historico: [cnhVirtual],
+          statusDisponibilidade: "EM_PROCESSAMENTO",
+          mensagem: "⏳ Sua CNH consta em processamento/trânsito (Memorando em trânsito) e ainda não deu entrada no balcão de atendimento."
+        };
+      }
+    } catch (e) {
+      console.warn("Aviso ao buscar em candidatos:", e);
+    }
+
     registrarAcessoCidadaoLog({
       cpf: cleanCpf,
       situacao: "Não Encontrada",
