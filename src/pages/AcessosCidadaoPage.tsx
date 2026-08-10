@@ -341,6 +341,206 @@ export const AcessosCidadaoPage: React.FC = () => {
     doc.save(`Relatorio_Acessos_Cidadao_${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
+  // Exportar PDF de Resumo Estatístico
+  const handleExportResumoPDF = () => {
+    const cfg = getOrgaoConfig();
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const rightMarginX = pageWidth - 14;
+
+    let currentY = 28;
+
+    // Tabela 1: Resumo Executivo e Indicadores
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(15, 23, 42);
+    doc.text("1. RESUMO EXECUTIVO E INDICADORES DE ACESSO", 14, currentY);
+    currentY += 4;
+
+    const totalLogs = filteredLogs.length;
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [["Indicador / Métrica", "Quantidade", "Percentual / Status"]],
+      body: [
+        ["Total de Consultas no Período", `${stats.total}`, "100% dos acessos registrados"],
+        ["CNHs Recebidas (Prontas no Balcão)", `${stats.recebidas}`, `${stats.total > 0 ? Math.round((stats.recebidas / stats.total) * 100) : 0}% — Disponíveis para Retirada`],
+        ["CNHs Remetidas (Em Trânsito / Lote)", `${stats.remetidas}`, `${stats.total > 0 ? Math.round((stats.remetidas / stats.total) * 100) : 0}% — Aguardando Chegada`],
+        ["CNHs Já Entregues ao Cidadão", `${stats.entregues}`, `${stats.total > 0 ? Math.round((stats.entregues / stats.total) * 100) : 0}% — Processo Concluído`],
+        ["CNHs Pendentes / Não Localizadas", `${stats.pendentes}`, `${stats.total > 0 ? Math.round((stats.pendentes / stats.total) * 100) : 0}% — Cadastramento / Ausente`],
+        ["Taxa de Sucesso / Disponibilidade Imediata", `${stats.taxaDisponivel}%`, `${stats.recebidas} de ${stats.total} consultas com documento pronto`]
+      ],
+      theme: "grid",
+      headStyles: { fillColor: [14, 116, 144], textColor: [255, 255, 255], fontStyle: "bold", fontSize: 9 },
+      bodyStyles: { fontSize: 8.5, textColor: [51, 65, 85] },
+      columnStyles: {
+        0: { cellWidth: 80, fontStyle: "bold" },
+        1: { cellWidth: 35, halign: "center" },
+        2: { cellWidth: "auto" }
+      },
+      margin: { left: 14, right: 14 }
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 8;
+
+    // Tabela 2: Distribuição das Consultas por Situação da CNH
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(15, 23, 42);
+    doc.text("2. DISTRIBUIÇÃO DAS CONSULTAS POR SITUAÇÃO DA CNH", 14, currentY);
+    currentY += 4;
+
+    const situacoesData = [
+      ["Recebida (Pronta para Retirada)", `${stats.recebidas}`, `${stats.total > 0 ? ((stats.recebidas / stats.total) * 100).toFixed(1) : 0}%`, "Documento disponível no balcão de atendimento"],
+      ["Remetida (Em Trânsito)", `${stats.remetidas}`, `${stats.total > 0 ? ((stats.remetidas / stats.total) * 100).toFixed(1) : 0}%`, "Remetido para impressão / trânsito de lote"],
+      ["Entregue", `${stats.entregues}`, `${stats.total > 0 ? ((stats.entregues / stats.total) * 100).toFixed(1) : 0}%`, "Entregue ao titular ou procurador autorizado"],
+      ["Pendente / Não Encontrada", `${stats.pendentes}`, `${stats.total > 0 ? ((stats.pendentes / stats.total) * 100).toFixed(1) : 0}%`, "Documento não localizado ou em fase de lote"]
+    ];
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [["Situação CNH", "Consultas", "Proporção (%)", "Descrição Operacional"]],
+      body: situacoesData,
+      theme: "grid",
+      headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: "bold", fontSize: 9 },
+      bodyStyles: { fontSize: 8.5, textColor: [51, 65, 85] },
+      columnStyles: {
+        0: { cellWidth: 55 },
+        1: { cellWidth: 25, halign: "center" },
+        2: { cellWidth: 30, halign: "center" },
+        3: { cellWidth: "auto" }
+      },
+      margin: { left: 14, right: 14 }
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 8;
+
+    // Tabela 3: Distribuição por Canal de Acesso
+    const canaisMap = new Map<string, number>();
+    filteredLogs.forEach((l) => {
+      const c = l.canal || "Desconhecido";
+      canaisMap.set(c, (canaisMap.get(c) || 0) + 1);
+    });
+
+    const canaisData = Array.from(canaisMap.entries()).map(([canal, qtd]) => [
+      canal,
+      `${qtd}`,
+      `${totalLogs > 0 ? ((qtd / totalLogs) * 100).toFixed(1) : 0}%`
+    ]);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(15, 23, 42);
+    doc.text("3. DISTRIBUIÇÃO POR CANAL E PLATAFORMA DE ACESSO", 14, currentY);
+    currentY += 4;
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [["Canal / Plataforma", "Total Acessos", "Participação (%)"]],
+      body: canaisData.length > 0 ? canaisData : [["Nenhum registro", "0", "0%"]],
+      theme: "grid",
+      headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: "bold", fontSize: 9 },
+      bodyStyles: { fontSize: 8.5, textColor: [51, 65, 85] },
+      columnStyles: {
+        0: { cellWidth: 100 },
+        1: { cellWidth: 35, halign: "center" },
+        2: { cellWidth: "auto", halign: "center" }
+      },
+      margin: { left: 14, right: 14 }
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 8;
+
+    // Tabela 4: Top CPFs / Consultas Mais Frequentes no Período (Top 5)
+    const cpfMap = new Map<string, { nome: string; count: number; ultimaSituacao: string }>();
+    filteredLogs.forEach((l) => {
+      if (!l.cpf) return;
+      const clean = l.cpf.replace(/\D/g, "");
+      if (!clean) return;
+      const curr = cpfMap.get(clean) || { nome: l.nome_titular || "Titular", count: 0, ultimaSituacao: l.situacao };
+      curr.count += 1;
+      if (l.nome_titular && curr.nome === "Titular") curr.nome = l.nome_titular;
+      curr.ultimaSituacao = l.situacao;
+      cpfMap.set(clean, curr);
+    });
+
+    const topCpfs = Array.from(cpfMap.entries())
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 5)
+      .map(([cpfClean, info], idx) => [
+        `#${idx + 1}`,
+        formatCPF(cpfClean),
+        info.nome,
+        `${info.count} acessos`,
+        info.ultimaSituacao
+      ]);
+
+    if (topCpfs.length > 0) {
+      if (currentY > 230) {
+        doc.addPage();
+        currentY = 28;
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(15, 23, 42);
+      doc.text("4. TOP DOCUMENTOS (CPFs) MAIS CONSULTADOS NO PERÍODO", 14, currentY);
+      currentY += 4;
+
+      autoTable(doc, {
+        startY: currentY,
+        head: [["Posição", "CPF", "Titular do Documento", "Total Consultas", "Última Situação"]],
+        body: topCpfs,
+        theme: "grid",
+        headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: "bold", fontSize: 8.5 },
+        bodyStyles: { fontSize: 8, textColor: [51, 65, 85] },
+        columnStyles: {
+          0: { cellWidth: 18, halign: "center" },
+          1: { cellWidth: 32, halign: "center" },
+          2: { cellWidth: 65 },
+          3: { cellWidth: 32, halign: "center" },
+          4: { cellWidth: "auto", halign: "center" }
+        },
+        margin: { left: 14, right: 14 }
+      });
+    }
+
+    // Configurar rodapé e cabeçalho fixo em todas as páginas
+    const totalPages = doc.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+
+      const hasLogo = addPDFHeaderLogo(doc, 14, 5, 14, 14);
+      const startTextX = hasLogo ? 32 : 14;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${cfg.sigla} — Relatório Sintético e Resumo Estatístico de Consultas`, startTextX, 11);
+
+      doc.setFontSize(8.5);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(51, 65, 85);
+      doc.text(`Acessos Cidadão (App / Portal Web) — Período: ${formatDisplayDateRange()}`, startTextX, 16);
+
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Emissão: ${new Date().toLocaleDateString("pt-BR")}`, rightMarginX, 11, { align: "right" });
+      doc.text(`Total Consultas: ${filteredLogs.length}`, rightMarginX, 15, { align: "right" });
+
+      doc.setDrawColor(203, 213, 225);
+      doc.setLineWidth(0.4);
+      doc.line(14, 21, rightMarginX, 21);
+
+      doc.setFontSize(7.5);
+      doc.text("Sistema DETRAN-PROT — Relatório Estatístico e Analítico de Acessos", 14, pageHeight - 6);
+      doc.text(`Página ${i} de ${totalPages}`, rightMarginX, pageHeight - 6, { align: "right" });
+    }
+
+    doc.save(`Resumo_Estatistico_Consultas_App_${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
   const getPresetLabel = () => {
     switch (presetPeriodo) {
       case "hoje": return "Hoje";
@@ -431,10 +631,21 @@ export const AcessosCidadaoPage: React.FC = () => {
             <button
               type="button"
               onClick={handleExportPDF}
-              className="flex items-center gap-2 px-3.5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-semibold shadow-md shadow-cyan-900/30 transition-all cursor-pointer"
+              className="flex items-center gap-2 px-3.5 py-2 bg-cyan-700 hover:bg-cyan-600 text-white rounded-xl text-xs font-semibold shadow-md shadow-cyan-900/30 transition-all cursor-pointer"
+              title="Gerar PDF com a Listagem Completa de Consultas"
             >
               <FileText className="w-4 h-4" />
-              <span>PDF Oficial</span>
+              <span>Listagem (PDF)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportResumoPDF}
+              className="flex items-center gap-2 px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-semibold shadow-md shadow-purple-900/30 transition-all cursor-pointer"
+              title="Gerar PDF de Resumo Estatístico e Indicadores"
+            >
+              <BarChart2 className="w-4 h-4" />
+              <span>Resumo Estatístico (PDF)</span>
             </button>
           </div>
         </div>
@@ -745,9 +956,20 @@ export const AcessosCidadaoPage: React.FC = () => {
                 Proporção de CNHs Consultadas por Situação no Período
               </h3>
             </div>
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-              Base: {stats.total} consultas
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium hidden sm:inline">
+                Base: {stats.total} consultas
+              </span>
+              <button
+                type="button"
+                onClick={handleExportResumoPDF}
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                title="Imprimir Relatório Sintético de Resumo Estatístico"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>PDF Estatístico</span>
+              </button>
+            </div>
           </div>
 
           {/* Barra Proporcional Multi-segmento */}
