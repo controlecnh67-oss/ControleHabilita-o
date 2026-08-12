@@ -214,6 +214,7 @@ export interface HistoricoMovimentacao {
   geral_id: string;
   geral_ordem?: number;
   geral_nome?: string;
+  geral_cpf?: string;
   situacao_anterior?: SituacaoGeral | null;
   situacao_nova: SituacaoGeral;
   responsavel_id?: string;

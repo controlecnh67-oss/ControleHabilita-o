@@ -683,7 +683,8 @@ export async function logHistorico(
   usuario_nome: string,
   observacao?: string,
   responsavel_id?: string,
-  responsavel_nome?: string
+  responsavel_nome?: string,
+  geral_cpf?: string
 ): Promise<void> {
   const list = getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO);
   const novo: HistoricoMovimentacao = {
@@ -691,6 +692,7 @@ export async function logHistorico(
     geral_id,
     geral_ordem,
     geral_nome,
+    geral_cpf,
     situacao_anterior,
     situacao_nova,
     responsavel_id,
@@ -1573,7 +1575,7 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
       created_at: now
     };
     novasCNHs.push(novaCNH);
-    await logHistorico(novaCNH.id, novaCNH.ordem, novaCNH.nome, null, "Remetida", userId, userNome, `Memorando ${memo.numero}`);
+    await logHistorico(novaCNH.id, novaCNH.ordem, novaCNH.nome, null, "Remetida", userId, userNome, `Memorando ${memo.numero}`, undefined, undefined, novaCNH.cpf);
   }
 
   saveStoredList("geral", [...semAtuais, ...novasCNHs]);
@@ -2182,7 +2184,7 @@ export async function createGeralManual(
 
   saveStoredList("geral", [nova, ...geralList]);
   await saveLocalGeralCNH(nova);
-  await logHistorico(nova.id, nova.ordem, nova.nome, null, nova.situacao, userId, userNome, nova.observacao);
+  await logHistorico(nova.id, nova.ordem, nova.nome, null, nova.situacao, userId, userNome, nova.observacao, undefined, undefined, nova.cpf);
   await logAuditoria("geral", `Ordem #${nova.ordem}`, "Inclusão", userId, userNome, null, nova);
   return nova;
 }
@@ -2227,7 +2229,10 @@ export async function receberCNH(id: string, userId: string, userNome: string): 
     "Recebida",
     userId,
     userNome,
-    `Alocado na ${loc.gaveta} / ${loc.reparticao}`
+    `Alocado na ${loc.gaveta} / ${loc.reparticao}`,
+    undefined,
+    undefined,
+    atualizado.cpf
   );
 
   await logAuditoria("geral", `Ordem #${atualizado.ordem}`, "Recebimento", userId, userNome, { situacao: atual.situacao }, { situacao: "Recebida", gaveta: loc.gaveta, reparticao: loc.reparticao });
@@ -2283,7 +2288,8 @@ export async function entregarCNH(
     userNome,
     `Retirado por ${resp.nome}${observacaoEntrega ? ` - ${observacaoEntrega}` : ""}`,
     resp.id,
-    resp.nome
+    resp.nome,
+    atualizado.cpf
   );
 
   await logAuditoria(
@@ -2342,7 +2348,10 @@ export async function updateGeralCNH(
       atualizado.situacao,
       userId,
       userNome,
-      atualizado.observacao
+      atualizado.observacao,
+      undefined,
+      undefined,
+      atualizado.cpf
     );
   }
 
@@ -2420,18 +2429,69 @@ export async function deleteMultipleGeralCNHs(
 // ============================================================================
 
 export async function getHistoricoList(): Promise<HistoricoMovimentacao[]> {
+  let list: HistoricoMovimentacao[] = [];
+
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<HistoricoMovimentacao>("historico_movimentacoes", 1000, "data_hora", false);
       if (data && data.length > 0) {
-        saveStoredList("historico", data);
-        return data;
+        list = data;
       }
     } catch (err) {
       console.warn("Aviso ao buscar histórico no Supabase:", err);
     }
   }
-  return getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO).sort(
+
+  if (list.length === 0) {
+    list = getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO);
+  }
+
+  // Garantir que todos os registros da tabela Geral possuem seu evento inicial no histórico
+  try {
+    const geralList = await getGeralCNHs();
+    const mapGeralToCpf = new Map<string, string>();
+    geralList.forEach((g) => {
+      if (g.cpf) mapGeralToCpf.set(g.id, g.cpf);
+    });
+
+    // Enriquecer registros existentes com geral_cpf se não tiverem
+    list.forEach((item) => {
+      if (!item.geral_cpf && mapGeralToCpf.has(item.geral_id)) {
+        item.geral_cpf = mapGeralToCpf.get(item.geral_id);
+      }
+    });
+
+    const knownGeralIds = new Set(list.map((h) => h.geral_id));
+    const autoList: HistoricoMovimentacao[] = [];
+
+    for (const g of geralList) {
+      if (!knownGeralIds.has(g.id)) {
+        autoList.push({
+          id: `hist-auto-${g.id}`,
+          geral_id: g.id,
+          geral_ordem: g.ordem,
+          geral_nome: g.nome,
+          geral_cpf: g.cpf,
+          situacao_anterior: null,
+          situacao_nova: g.situacao || "Remetida",
+          responsavel_id: g.responsavel_id || undefined,
+          responsavel_nome: g.responsavel_nome || undefined,
+          usuario_id: g.usuario_id || "sistema",
+          usuario_nome: g.usuario_nome || "Sistema DETRAN",
+          observacao: g.observacao || "Cadastro inicial no protocolo",
+          data_hora: g.data_movimento || g.created_at || new Date().toISOString()
+        });
+      }
+    }
+
+    if (autoList.length > 0) {
+      list = [...list, ...autoList];
+    }
+  } catch (e) {
+    console.warn("Aviso ao sincronizar histórico automático com Geral:", e);
+  }
+
+  return list.sort(
     (a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime()
   );
 }
