@@ -482,9 +482,21 @@ export const GeralPage: React.FC = () => {
       });
     }, 300000);
 
+    const handleSync = (e: Event) => {
+      const customEvt = e as CustomEvent;
+      if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "geral") {
+        fetchDados();
+      }
+    };
+
+    window.addEventListener("detran_sync_updated", handleSync);
+    window.addEventListener("storage", handleSync);
+
     return () => {
       unsubscribe();
       clearInterval(intervalId);
+      window.removeEventListener("detran_sync_updated", handleSync);
+      window.removeEventListener("storage", handleSync);
     };
   }, []);
 

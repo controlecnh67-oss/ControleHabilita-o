@@ -321,6 +321,13 @@ export async function getLocalGeralCNHs(): Promise<GeralCNH[]> {
   }
 }
 
+// Disparar evento global de sincronização
+function notifySyncUpdated(type: string = "geral") {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("detran_sync_updated", { detail: { type, timestamp: Date.now() } }));
+  }
+}
+
 // Inserir ou atualizar um registro no IndexedDB (e Supabase se online)
 export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
   const normalized = normalizeCNHRecord(record);
@@ -332,32 +339,55 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
   // 2. Se o Supabase estiver configurado, envia para a nuvem
   if (isSupabaseConfigured()) {
     try {
-      const payload = {
+      const payload: any = {
         id: normalized.id,
         ordem: normalized.ordem,
         nome: normalized.nome,
         cpf: normalized.cpf,
-        telefone: normalized.telefone,
-        notificado_whatsapp: normalized.notificado_whatsapp,
-        notificado_at: normalized.notificado_at,
-        gaveta: normalized.gaveta,
-        reparticao: normalized.reparticao,
+        telefone: normalized.telefone || null,
+        gaveta: normalized.gaveta || "",
+        reparticao: normalized.reparticao || "",
         situacao: normalized.situacao,
-        responsavel_id: normalized.responsavel_id,
-        responsavel_nome: normalized.responsavel_nome,
+        responsavel_id: normalized.responsavel_id || null,
+        responsavel_nome: normalized.responsavel_nome || null,
         data_movimento: normalized.data_movimento,
-        usuario_id: normalized.usuario_id,
-        usuario_nome: normalized.usuario_nome,
-        observacao: normalized.observacao,
-        memorando_id: normalized.memorando_id,
-        candidato_id: normalized.candidato_id,
-        remessa: normalized.remessa,
+        usuario_id: normalized.usuario_id || null,
+        usuario_nome: normalized.usuario_nome || null,
+        memorando_numero: normalized.memorando_numero || null,
+        remessa: normalized.remessa || null,
+        observacao: normalized.observacao || null,
+        memorando_id: normalized.memorando_id || null,
+        candidato_id: normalized.candidato_id || null,
         created_at: normalized.created_at,
         updated_at: normalized.updated_at
       };
-      const { error } = await supabase.from("geral_cnhs").upsert(payload);
+
+      if (normalized.notificado_whatsapp !== undefined) {
+        payload.notificado_whatsapp = normalized.notificado_whatsapp;
+      }
+      if (normalized.notificado_at) {
+        payload.notificado_at = normalized.notificado_at;
+      }
+
+      const { error } = await supabase.from("geral_cnhs").upsert(payload, { onConflict: "id" });
       if (error) {
-        console.warn("Aviso ao sincronizar alteração com Supabase:", error.message);
+        console.warn("Aviso ao sincronizar alteração com Supabase (tentando payload simplificado):", error.message);
+        // Tentar payload sem chaves opcionais caso foreign keys falhem
+        const fallbackPayload = {
+          id: normalized.id,
+          ordem: normalized.ordem,
+          nome: normalized.nome,
+          cpf: normalized.cpf,
+          gaveta: normalized.gaveta || "",
+          reparticao: normalized.reparticao || "",
+          situacao: normalized.situacao,
+          data_movimento: normalized.data_movimento,
+          responsavel_nome: normalized.responsavel_nome || null,
+          usuario_nome: normalized.usuario_nome || null,
+          observacao: normalized.observacao || null,
+          updated_at: normalized.updated_at
+        };
+        await supabase.from("geral_cnhs").upsert(fallbackPayload, { onConflict: "id" });
       }
     } catch (err) {
       console.warn("Erro ao enviar para Supabase:", err);
@@ -367,6 +397,7 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
   // Atualiza metadados
   const count = await dexieDb.geral.count();
   updateSyncStats({ totalRecords: count });
+  notifySyncUpdated("geral");
 }
 
 // Salvar múltiplos registros (ex: importação Excel/Lote)
@@ -389,29 +420,31 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[]): Promise<void>
         ordem: r.ordem,
         nome: r.nome,
         cpf: r.cpf,
-        telefone: r.telefone,
-        notificado_whatsapp: r.notificado_whatsapp,
-        notificado_at: r.notificado_at,
-        gaveta: r.gaveta,
-        reparticao: r.reparticao,
+        telefone: r.telefone || null,
+        gaveta: r.gaveta || "",
+        reparticao: r.reparticao || "",
         situacao: r.situacao,
-        responsavel_id: r.responsavel_id,
-        responsavel_nome: r.responsavel_nome,
+        responsavel_id: r.responsavel_id || null,
+        responsavel_nome: r.responsavel_nome || null,
         data_movimento: r.data_movimento,
-        usuario_id: r.usuario_id,
-        usuario_nome: r.usuario_nome,
-        observacao: r.observacao,
-        memorando_id: r.memorando_id,
-        candidato_id: r.candidato_id,
-        remessa: r.remessa,
+        usuario_id: r.usuario_id || null,
+        usuario_nome: r.usuario_nome || null,
+        memorando_numero: r.memorando_numero || null,
+        remessa: r.remessa || null,
+        observacao: r.observacao || null,
+        memorando_id: r.memorando_id || null,
+        candidato_id: r.candidato_id || null,
         created_at: r.created_at,
         updated_at: r.updated_at
       }));
 
-      // Send in chunks of 500
-      for (let i = 0; i < payloads.length; i += 500) {
-        const chunk = payloads.slice(i, i + 500);
-        await supabase.from("geral_cnhs").upsert(chunk);
+      // Send in chunks of 250
+      for (let i = 0; i < payloads.length; i += 250) {
+        const chunk = payloads.slice(i, i + 250);
+        const { error } = await supabase.from("geral_cnhs").upsert(chunk, { onConflict: "id" });
+        if (error) {
+          console.warn("Aviso ao salvar lote no Supabase:", error.message);
+        }
       }
     } catch (err) {
       console.warn("Erro ao salvar lote no Supabase:", err);
@@ -420,6 +453,7 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[]): Promise<void>
 
   const count = await dexieDb.geral.count();
   updateSyncStats({ totalRecords: count });
+  notifySyncUpdated("geral");
 }
 
 // Excluir um registro localmente e no Supabase
@@ -436,6 +470,7 @@ export async function deleteLocalGeralCNH(id: string): Promise<void> {
 
   const count = await dexieDb.geral.count();
   updateSyncStats({ totalRecords: count });
+  notifySyncUpdated("geral");
 }
 
 // Excluir múltiplos registros
@@ -452,4 +487,5 @@ export async function deleteLocalGeralCNHsBulk(ids: string[]): Promise<void> {
 
   const count = await dexieDb.geral.count();
   updateSyncStats({ totalRecords: count });
+  notifySyncUpdated("geral");
 }

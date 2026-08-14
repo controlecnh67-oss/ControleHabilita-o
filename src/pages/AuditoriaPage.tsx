@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { ShieldAlert, Search, Lock, User, Clock, Database, Activity, FileText } from "lucide-react";
+import { ShieldAlert, Search, Lock, User, Clock, Database, Activity, FileText, RefreshCw } from "lucide-react";
 import { RegistroAuditoria } from "../types";
 import { getAuditoriaList } from "../services/db";
 import { formatDateTime } from "../lib/utils";
@@ -25,6 +25,20 @@ export const AuditoriaPage: React.FC = () => {
 
   useEffect(() => {
     fetchDados();
+
+    const handleSync = (e: Event) => {
+      const customEvt = e as CustomEvent;
+      if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "auditoria") {
+        fetchDados();
+      }
+    };
+
+    window.addEventListener("detran_sync_updated", handleSync);
+    window.addEventListener("storage", handleSync);
+    return () => {
+      window.removeEventListener("detran_sync_updated", handleSync);
+      window.removeEventListener("storage", handleSync);
+    };
   }, []);
 
   const filtered = auditoria.filter((a) => {
@@ -119,6 +133,15 @@ export const AuditoriaPage: React.FC = () => {
             <option value="mapeamento_localizacao">Mapeamento A-Z</option>
             <option value="usuarios">Usuários</option>
           </select>
+
+          <button
+            onClick={fetchDados}
+            disabled={loading}
+            title="Recarregar Auditoria"
+            className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl border border-slate-200 dark:border-slate-700 transition-colors disabled:opacity-50 flex items-center justify-center"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin text-blue-600" : ""}`} />
+          </button>
         </div>
       </div>
 

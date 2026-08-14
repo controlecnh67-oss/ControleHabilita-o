@@ -58,6 +58,20 @@ export const HistoricoPage: React.FC = () => {
 
   useEffect(() => {
     fetchDados();
+
+    const handleSync = (e: Event) => {
+      const customEvt = e as CustomEvent;
+      if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "historico" || customEvt.detail.type === "geral") {
+        fetchDados();
+      }
+    };
+
+    window.addEventListener("detran_sync_updated", handleSync);
+    window.addEventListener("storage", handleSync);
+    return () => {
+      window.removeEventListener("detran_sync_updated", handleSync);
+      window.removeEventListener("storage", handleSync);
+    };
   }, []);
 
   const getRespName = (nome?: string, id?: string) => {

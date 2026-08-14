@@ -31,6 +31,13 @@ export function isSupabaseConnected(): boolean {
   return isSupabaseConfigured();
 }
 
+// Disparar evento global de sincronização para atualizar todas as abas e componentes
+export function notifyDataSync(type: string = "all") {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("detran_sync_updated", { detail: { type, timestamp: Date.now() } }));
+  }
+}
+
 function toValidUUID(id?: string | null): string | null {
   if (!id || typeof id !== "string" || id.trim() === "") return null;
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -41,7 +48,7 @@ function toValidUUID(id?: string | null): string | null {
   if (cleanId === "supervisor") return "22222222-2222-2222-2222-222222222222";
   if (cleanId === "operador") return "33333333-3333-3333-3333-333333333333";
   if (cleanId === "consulta") return "44444444-4444-4444-4444-444444444444";
-  if (cleanId === "proprietario") return "e2335b1e";
+  if (cleanId === "proprietario") return "e2335b1e-0000-4000-8000-000000000000";
 
   // Gerar um UUID v4 determinístico a partir de qualquer string (ex: "usr-01", "resp-02")
   let hash = 0;
@@ -660,12 +667,21 @@ export async function logAuditoria(
     valores_novos: valores_novos || null
   };
   saveStoredList("auditoria", [nova, ...list]);
+  notifyDataSync("auditoria");
 
   if (isSupabaseConfigured()) {
     try {
       await supabase.from("auditoria").insert([{
-        ...nova,
-        usuario_id: toValidUUID(usuario_id)
+        id: nova.id,
+        tabela: nova.tabela,
+        registro_id: nova.registro_id,
+        acao: nova.acao,
+        usuario_id: nova.usuario_id || null,
+        usuario_nome: nova.usuario_nome,
+        data_hora: nova.data_hora,
+        ip: nova.ip,
+        valores_anteriores: nova.valores_anteriores,
+        valores_novos: nova.valores_novos
       }]);
     } catch (e) {
       console.warn("Aviso ao salvar auditoria no Supabase:", e);
@@ -703,13 +719,23 @@ export async function logHistorico(
     data_hora: new Date().toISOString()
   };
   saveStoredList("historico", [novo, ...list]);
+  notifyDataSync("historico");
 
   if (isSupabaseConfigured()) {
     try {
       await supabase.from("historico_movimentacoes").insert([{
-        ...novo,
-        usuario_id: toValidUUID(usuario_id),
-        responsavel_id: toValidUUID(responsavel_id)
+        id: novo.id,
+        geral_id: novo.geral_id,
+        geral_ordem: novo.geral_ordem,
+        geral_nome: novo.geral_nome,
+        situacao_anterior: novo.situacao_anterior,
+        situacao_nova: novo.situacao_nova,
+        responsavel_id: novo.responsavel_id || null,
+        responsavel_nome: novo.responsavel_nome || null,
+        usuario_id: novo.usuario_id || null,
+        usuario_nome: novo.usuario_nome || null,
+        observacao: novo.observacao || null,
+        data_hora: novo.data_hora
       }]);
     } catch (e) {
       console.warn("Aviso ao salvar histórico no Supabase:", e);
@@ -1822,6 +1848,40 @@ export function getAcessosCidadaoLogs(): AcessoCidadaoLog[] {
   return seeded;
 }
 
+export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
+  const local = getAcessosCidadaoLogs();
+  if (!isSupabaseConfigured()) {
+    return local;
+  }
+  try {
+    const { data, error } = await supabase
+      .from("acessos_cidadao")
+      .select("*")
+      .order("data_hora", { ascending: false })
+      .limit(500);
+
+    if (!error && data && data.length > 0) {
+      const map = new Map<string, AcessoCidadaoLog>();
+      data.forEach((d: any) => map.set(d.id, d));
+      local.forEach((l) => {
+        if (!map.has(l.id)) {
+          map.set(l.id, l);
+        }
+      });
+      const merged = Array.from(map.values()).sort(
+        (a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime()
+      );
+      if (typeof window !== "undefined") {
+        localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(merged.slice(0, 500)));
+      }
+      return merged;
+    }
+  } catch (e) {
+    console.warn("Aviso ao sincronizar acessos do cidadão do Supabase:", e);
+  }
+  return local;
+}
+
 export function registrarAcessoCidadaoLog(logData: Omit<AcessoCidadaoLog, "id" | "data_hora">): AcessoCidadaoLog {
   const currentLogs = getAcessosCidadaoLogs();
   const maxNum = currentLogs.reduce((max, l) => Math.max(max, l.numero || 0), currentLogs.length);
@@ -1836,6 +1896,31 @@ export function registrarAcessoCidadaoLog(logData: Omit<AcessoCidadaoLog, "id" |
     localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(updated.slice(0, 500)));
   }
   incrementPublicSearchCount();
+
+  // Enviar para Supabase em segundo plano se configurado
+  if (isSupabaseConfigured()) {
+    (async () => {
+      try {
+        await supabase.from("acessos_cidadao").insert([{
+          id: newLog.id,
+          numero: newLog.numero,
+          data_hora: newLog.data_hora,
+          cpf: newLog.cpf,
+          nome_titular: newLog.nome_titular || null,
+          situacao: newLog.situacao,
+          resultado_status: newLog.resultado_status,
+          canal: newLog.canal,
+          dispositivo: newLog.dispositivo || null,
+          cidade_origem: newLog.cidade_origem || null,
+          ip_mascarado: newLog.ip_mascarado || null
+        }]);
+      } catch {
+        // Tabela acessos_cidadao pode ainda não estar criada no Supabase
+      }
+    })();
+  }
+
+  notifyDataSync("acessos_cidadao");
   return newLog;
 }
 
@@ -2429,22 +2514,23 @@ export async function deleteMultipleGeralCNHs(
 // ============================================================================
 
 export async function getHistoricoList(): Promise<HistoricoMovimentacao[]> {
-  let list: HistoricoMovimentacao[] = [];
+  const localList = getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO);
+  let mergedMap = new Map<string, HistoricoMovimentacao>();
+  localList.forEach((h) => mergedMap.set(h.id, h));
 
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<HistoricoMovimentacao>("historico_movimentacoes", 1000, "data_hora", false);
       if (data && data.length > 0) {
-        list = data;
+        data.forEach((h) => mergedMap.set(h.id, h));
+        saveStoredList("historico", Array.from(mergedMap.values()));
       }
     } catch (err) {
       console.warn("Aviso ao buscar histórico no Supabase:", err);
     }
   }
 
-  if (list.length === 0) {
-    list = getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO);
-  }
+  let list: HistoricoMovimentacao[] = Array.from(mergedMap.values());
 
   // Garantir que todos os registros da tabela Geral possuem seu evento inicial no histórico
   try {
@@ -2486,6 +2572,7 @@ export async function getHistoricoList(): Promise<HistoricoMovimentacao[]> {
 
     if (autoList.length > 0) {
       list = [...list, ...autoList];
+      saveStoredList("historico", list);
     }
   } catch (e) {
     console.warn("Aviso ao sincronizar histórico automático com Geral:", e);
@@ -2497,18 +2584,26 @@ export async function getHistoricoList(): Promise<HistoricoMovimentacao[]> {
 }
 
 export async function getAuditoriaList(): Promise<Auditoria[]> {
+  const localList = getStoredList<Auditoria>("auditoria", SEED_AUDITORIA);
+  const mergedMap = new Map<string, Auditoria>();
+  localList.forEach((a) => mergedMap.set(a.id, a));
+
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<Auditoria>("auditoria", 1000, "data_hora", false);
       if (data && data.length > 0) {
-        saveStoredList("auditoria", data);
-        return data;
+        data.forEach((a) => mergedMap.set(a.id, a));
+        const combined = Array.from(mergedMap.values());
+        saveStoredList("auditoria", combined);
+        return combined.sort(
+          (a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime()
+        );
       }
     } catch (err) {
       console.warn("Aviso ao buscar auditoria no Supabase:", err);
     }
   }
-  return getStoredList<Auditoria>("auditoria", SEED_AUDITORIA).sort(
+  return Array.from(mergedMap.values()).sort(
     (a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime()
   );
 }
@@ -3160,6 +3255,7 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
     { key: "geral", label: "Protocolo Geral CNHs", tableName: "geral_cnhs" },
     { key: "historico", label: "Histórico de Movimento", tableName: "historico_movimentacoes" },
     { key: "auditoria", label: "Auditoria do Sistema", tableName: "auditoria" },
+    { key: "acessos_cidadao", label: "Consultas do Cidadão (Logs)", tableName: "acessos_cidadao" },
     { key: "orgao", label: "Configuração e Logomarca do Órgão", tableName: "orgao_config" },
     { key: "imagens", label: "Imagens e Anexos Sincronizados", tableName: "imagens_sync" }
   ];
@@ -3585,7 +3681,33 @@ export async function syncLocalToSupabase(
     errors.push(`auditoria: ${err.message}`);
   }
 
-  // 9. Configuração do Órgão e Logomarca
+  // 9. Consultas do Cidadão (Logs de Acesso)
+  try {
+    const acessosLogs = getAcessosCidadaoLogs();
+    if (acessosLogs.length > 0) {
+      log("📦 Sincronizando 'acessos_cidadao' (Logs de Consulta do Cidadão)...");
+      const payload = acessosLogs.map(a => ({
+        id: a.id,
+        numero: a.numero,
+        data_hora: a.data_hora || new Date().toISOString(),
+        cpf: a.cpf,
+        nome_titular: a.nome_titular || null,
+        situacao: a.situacao,
+        resultado_status: a.resultado_status,
+        canal: a.canal,
+        dispositivo: a.dispositivo || null,
+        cidade_origem: a.cidade_origem || null,
+        ip_mascarado: a.ip_mascarado || null
+      }));
+      const synced = await upsertInBatches("acessos_cidadao", payload, 250);
+      log(`✅ Tabela 'acessos_cidadao' sincronizada (${synced} registros).`);
+      totalSynced += synced;
+    }
+  } catch (err: any) {
+    log(`ℹ️ Aviso em 'acessos_cidadao': ${err.message}`);
+  }
+
+  // 10. Configuração do Órgão e Logomarca
   try {
     log("📦 Sincronizando 'orgao_config' (Dados institucionais e Logomarca)...");
     let cfg: any = {};
@@ -3667,8 +3789,9 @@ export async function syncSupabaseToLocal(
     { name: "memorandos", key: "memorandos", orderCol: "id", asc: true },
     { name: "candidatos", key: "candidatos", orderCol: "id", asc: true },
     { name: "geral_cnhs", key: "geral", orderCol: "ordem", asc: false },
-    { name: "historico_movimentacoes", key: "historico", orderCol: "id", asc: true },
-    { name: "auditoria", key: "auditoria", orderCol: "id", asc: true }
+    { name: "historico_movimentacoes", key: "historico", orderCol: "data_hora", asc: false },
+    { name: "auditoria", key: "auditoria", orderCol: "data_hora", asc: false },
+    { name: "acessos_cidadao", key: "acessos_cidadao", orderCol: "data_hora", asc: false }
   ];
 
   for (const item of tables) {
@@ -3685,7 +3808,19 @@ export async function syncSupabaseToLocal(
           const deletedMemoSet = getDeletedIds("memorandos");
           filteredData = data.filter((c: any) => !deletedCandSet.has(c.id) && !deletedMemoSet.has(c.memorando_id));
         }
-        saveStoredList(item.key, filteredData);
+        
+        if (item.key === "geral") {
+          // Atualiza tanto localStorage quanto IndexedDB
+          saveStoredList("geral", filteredData);
+          await saveLocalGeralCNHsBulk(filteredData);
+        } else if (item.key === "acessos_cidadao") {
+          if (typeof window !== "undefined") {
+            localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(filteredData.slice(0, 500)));
+          }
+        } else {
+          saveStoredList(item.key, filteredData);
+        }
+
         log(`✅ '${item.name}' baixado e atualizado localmente (${filteredData.length} registros).`);
         totalPulled += filteredData.length;
       } else {

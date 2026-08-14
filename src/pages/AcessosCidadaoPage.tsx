@@ -26,7 +26,7 @@ import {
   BarChart2,
   Activity
 } from "lucide-react";
-import { getAcessosCidadaoLogs, getPublicSearchCount } from "../services/db";
+import { getAcessosCidadaoLogs, fetchAcessosCidadaoLogs, getPublicSearchCount } from "../services/db";
 import { AcessoCidadaoLog } from "../types";
 import { formatCPF, formatDateTime } from "../lib/utils";
 import * as XLSX from "xlsx";
@@ -63,30 +63,49 @@ export const AcessosCidadaoPage: React.FC = () => {
   const [itemsPerPage, setItemsPerPage] = useState(15);
 
   // Carregar Logs
-  const loadLogs = () => {
+  const loadLogs = async () => {
     setLoading(true);
-    const data = getAcessosCidadaoLogs();
+    try {
+      const data = await fetchAcessosCidadaoLogs();
 
-    // Organiza cronologicamente ascendente para garantir que cada acesso possua seu número sequencial único
-    const sortedAsc = [...data].sort(
-      (a, b) => new Date(a.data_hora).getTime() - new Date(b.data_hora).getTime()
-    );
-    const indexedMap = new Map<string, number>();
-    sortedAsc.forEach((log, idx) => {
-      indexedMap.set(log.id, log.numero || (idx + 1));
-    });
+      // Organiza cronologicamente ascendente para garantir que cada acesso possua seu número sequencial único
+      const sortedAsc = [...data].sort(
+        (a, b) => new Date(a.data_hora).getTime() - new Date(b.data_hora).getTime()
+      );
+      const indexedMap = new Map<string, number>();
+      sortedAsc.forEach((log, idx) => {
+        indexedMap.set(log.id, log.numero || (idx + 1));
+      });
 
-    const indexed = data.map((log) => ({
-      ...log,
-      numero: log.numero || indexedMap.get(log.id) || 1
-    }));
+      const indexed = data.map((log) => ({
+        ...log,
+        numero: log.numero || indexedMap.get(log.id) || 1
+      }));
 
-    setLogs(indexed);
-    setLoading(false);
+      setLogs(indexed);
+    } catch (e) {
+      console.warn("Aviso ao carregar logs de acesso:", e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     loadLogs();
+
+    const handleSync = (e: Event) => {
+      const customEvt = e as CustomEvent;
+      if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "acessos_cidadao") {
+        loadLogs();
+      }
+    };
+
+    window.addEventListener("detran_sync_updated", handleSync);
+    window.addEventListener("storage", handleSync);
+    return () => {
+      window.removeEventListener("detran_sync_updated", handleSync);
+      window.removeEventListener("storage", handleSync);
+    };
   }, []);
 
   // Recalcular datas do preset
