@@ -190,7 +190,14 @@ export const GeralPage: React.FC = () => {
     const reparticaoTag = cnh.reparticao ? ` - ${cnh.reparticao}` : "";
 
     if (cnh.situacao === "Recebida") {
-      return `Olá, *${nome}*! 👋\n\nInformamos que a sua Carteira Nacional de Habilitação (CNH) Ordem *${ordemTag}* (CPF: *${cpfFormatted}*) foi **RECEBIDA** e já está **disponível para retirada** no balcão de atendimento do DETRAN${reparticaoTag}.\n\n📍 *Local:* Balcão de Atendimento DETRAN${gavetaTag}\n📄 *Documentação:* Apresente um documento oficial original com foto.\n\nQualquer dúvida, estamos à disposição!`;
+      const primeiroNome = cnh.nome ? cnh.nome.trim().split(" ")[0] : "Cidadão";
+      const nomeCompleto = cnh.nome || "Não informado";
+      const cpfFormatted = cnh.cpf ? formatCPF(cnh.cpf) : "Não informado";
+      const ordemTag = cnh.ordem !== undefined && cnh.ordem !== null ? `#${cnh.ordem}` : "#0";
+      const gavetaVal = cnh.gaveta || "Não informada";
+      const reparticaoVal = cnh.reparticao || "DETRAN ITAITUBA";
+
+      return `Olá, *${primeiroNome}*! 👋\n\nInformamos que a sua Carteira Nacional de Habilitação (CNH)  foi **RECEBIDA** e já está **disponível para retirada** no balcão de atendimento do DETRAN ITAITUBA.\n\n🪪 DADOS:\nOrdem: *${ordemTag}*\nNome: *${nomeCompleto}*\nCPF: *${cpfFormatted}*\nGaveta:*${gavetaVal}*\nRepartição: *${reparticaoVal}*\n\nHORÁRIO DE ATENDIMENTO\n⏱️09h às 15h\n\n📍 *Local:* Balcão de Atendimento DETRAN \n📄 *Documentação:* Apresente um documento oficial original com foto.\n\n🤖 *Esta é uma mensagem automática.* Por favor, não responda esta mensagem.`;
     } else if (cnh.situacao === "Remetida") {
       const candidatoNome = cnh.nome || "Candidato";
       const cpfDisplay = cnh.cpf ? formatCPF(cnh.cpf) : "";

@@ -318,7 +318,7 @@ export const UsuariosPage: React.FC = () => {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         title={editingUser ? "Editar Conta de Servidor" : "Cadastrar Novo Servidor (Supabase Auth)"}
-        maxWidth="md"
+        maxWidth="lg"
       >
         <form onSubmit={handleSave} className="space-y-4">
           {formErrors.geral && (
@@ -408,7 +408,7 @@ export const UsuariosPage: React.FC = () => {
                 className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden transition-all"
               >
                 <option value="Operador">👤 Operador (Protocolo Geral e Entrega)</option>
-                <option value="Supervisor">🛡️ Supervisor (Acesso Total exceto Usuários)</option>
+                <option value="Supervisor">🛡️ Supervisor (Acesso Amplo de Gestão)</option>
                 <option value="Administrador">🔑 Administrador (Acesso Total ao Sistema)</option>
               </select>
             </div>
@@ -439,18 +439,31 @@ export const UsuariosPage: React.FC = () => {
           </div>
 
           <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                <Shield className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                <span>Permissões Granulares no Sistema</span>
-              </label>
-              <div className="flex gap-2 text-[11px]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Shield className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  <span>Permissões Granulares no Sistema</span>
+                </label>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                  {permissoes.length} de {PERMISSOES_SISTEMA.length} ativas
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-[11px]">
                 <button
                   type="button"
                   onClick={() => setPermissoes(PERMISSOES_SISTEMA.map(p => p.id))}
                   className="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
                 >
                   Marcar Todas
+                </button>
+                <span className="text-slate-300 dark:text-slate-700">|</span>
+                <button
+                  type="button"
+                  onClick={() => setPermissoes([])}
+                  className="text-rose-600 dark:text-rose-400 hover:underline"
+                >
+                  Desmarcar
                 </button>
                 <span className="text-slate-300 dark:text-slate-700">|</span>
                 <button
@@ -463,16 +476,16 @@ export const UsuariosPage: React.FC = () => {
               </div>
             </div>
             
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[190px] overflow-y-auto p-2.5 bg-slate-50/80 dark:bg-slate-900/60 rounded-xl border border-slate-200/80 dark:border-slate-800/80">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[250px] overflow-y-auto p-2.5 bg-slate-50/80 dark:bg-slate-900/60 rounded-xl border border-slate-200/80 dark:border-slate-800/80">
               {PERMISSOES_SISTEMA.map((item) => {
                 const checked = permissoes.includes(item.id);
                 return (
                   <label
                     key={item.id}
-                    className={`flex items-start gap-2 p-2 rounded-lg border cursor-pointer transition-all ${
+                    className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all ${
                       checked
-                        ? "bg-blue-50/90 border-blue-300 dark:bg-blue-950/40 dark:border-blue-800 text-blue-900 dark:text-blue-100"
-                        : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 text-slate-700 dark:text-slate-300 hover:border-slate-300"
+                        ? "bg-blue-50/90 border-blue-300 dark:bg-blue-950/50 dark:border-blue-700 text-blue-950 dark:text-blue-100 shadow-xs"
+                        : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600"
                     }`}
                   >
                     <input
@@ -485,11 +498,21 @@ export const UsuariosPage: React.FC = () => {
                           setPermissoes([...permissoes, item.id]);
                         }
                       }}
-                      className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0"
                     />
-                    <div className="text-[11px] leading-tight">
-                      <p className="font-semibold">{item.label}</p>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-1">{item.description}</p>
+                    <div className="text-[11px] leading-tight flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-1 mb-0.5">
+                        <p className="font-bold truncate">{item.label}</p>
+                        {item.isTab && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 shrink-0">
+                            Aba Menu
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[9px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-wider block mb-0.5">
+                        {item.category}
+                      </span>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-snug">{item.description}</p>
                     </div>
                   </label>
                 );

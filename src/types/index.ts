@@ -24,63 +24,68 @@ export function isTabAllowedForProfile(
 ): boolean {
   if (!perfil) return false;
 
+  // Administrador tem acesso irrestrito a todas as abas
   if (perfil === "Administrador") return true;
 
-  if (tab === "acessos_cidadao" || tab === "relatorios") return true;
-
-  // Se a aba for "orgao": permite Administrador e Supervisor
-  if (tab === "orgao") {
-    return perfil === "Supervisor";
-  }
-
-  // Se a aba for "memorandos" (Memorandos e Remessas): libera se tiver a permissão de criar ou remeter memorandos
-  if (tab === "memorandos") {
-    if (permissoes && Array.isArray(permissoes)) {
-      if (permissoes.includes("memorandos:criar") || permissoes.includes("memorandos:remeter")) {
-        return true;
-      }
-    }
-    const defPerms = getPermissoesPadrao(perfil);
-    if (defPerms.includes("memorandos:criar") || defPerms.includes("memorandos:remeter")) {
-      return true;
-    }
-    return ["Administrador", "Supervisor", "Operador"].includes(perfil);
-  }
-
-  // Se permissões forem fornecidas explicitamente, verifica autorizações para as outras abas
+  // Se o servidor possui lista de permissões granulares explícita
   if (permissoes && Array.isArray(permissoes) && permissoes.length > 0) {
-    if (tab === "geral" && (permissoes.includes("cnh:receber") || permissoes.includes("cnh:entregar") || permissoes.includes("cnh:editar"))) {
-      return true;
+    if (tab === "dashboard") {
+      return permissoes.includes("dashboard:visualizar");
     }
-    if (tab === "mapeamento" && permissoes.includes("mapeamento:gerenciar")) {
-      return true;
+    if (tab === "geral") {
+      return (
+        permissoes.includes("geral:visualizar") ||
+        permissoes.includes("cnh:receber") ||
+        permissoes.includes("cnh:entregar") ||
+        permissoes.includes("cnh:editar")
+      );
     }
-    if (tab === "responsaveis" && permissoes.includes("responsaveis:gerenciar")) {
-      return true;
+    if (tab === "memorandos") {
+      return (
+        permissoes.includes("memorandos:criar") ||
+        permissoes.includes("memorandos:remeter")
+      );
     }
-    if (tab === "usuarios" && permissoes.includes("usuarios:gerenciar")) {
-      return true;
+    if (tab === "acessos_cidadao") {
+      return permissoes.includes("acessos_cidadao:visualizar");
     }
-    if (tab === "auditoria" && permissoes.includes("auditoria:visualizar")) {
-      return true;
+    if (tab === "relatorios") {
+      return permissoes.includes("relatorios:visualizar");
     }
-    if (tab === "dashboard" || tab === "historico") {
-      return true;
+    if (tab === "responsaveis") {
+      return permissoes.includes("responsaveis:gerenciar");
+    }
+    if (tab === "mapeamento") {
+      return permissoes.includes("mapeamento:gerenciar");
+    }
+    if (tab === "historico") {
+      return permissoes.includes("historico:visualizar");
+    }
+    if (tab === "auditoria") {
+      return permissoes.includes("auditoria:visualizar");
+    }
+    if (tab === "usuarios") {
+      return permissoes.includes("usuarios:gerenciar");
+    }
+    if (tab === "orgao") {
+      return permissoes.includes("orgao:gerenciar");
     }
     if (tab === "backup") {
-      return false;
+      return permissoes.includes("backup:gerenciar");
     }
+    return false;
   }
 
+  // Fallback padrão se não houver array de permissões customizadas
   switch (perfil) {
     case "Supervisor":
-      return ["dashboard", "geral", "memorandos", "acessos_cidadao", "responsaveis", "mapeamento", "historico", "auditoria"].includes(tab);
+      return ["dashboard", "geral", "memorandos", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento", "historico", "auditoria", "orgao"].includes(tab);
 
     case "Operador":
-      return ["dashboard", "geral", "memorandos", "acessos_cidadao", "responsaveis", "mapeamento"].includes(tab);
+      return ["dashboard", "geral", "memorandos", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento"].includes(tab);
 
     case "Consulta":
-      return ["dashboard", "geral", "acessos_cidadao", "historico", "auditoria"].includes(tab);
+      return ["dashboard", "geral", "acessos_cidadao", "relatorios", "historico", "auditoria"].includes(tab);
 
     default:
       return false;
@@ -110,18 +115,141 @@ export interface PermissaoItem {
   label: string;
   category: string;
   description: string;
+  isTab?: boolean;
 }
 
 export const PERMISSOES_SISTEMA: PermissaoItem[] = [
-  { id: "memorandos:criar", label: "Elaborar Memorandos e Remessas", category: "Remessas e Memorandos", description: "Permite criar novos memorandos, adicionar ou remover candidatos da remessa" },
-  { id: "memorandos:remeter", label: "Remeter e Finalizar Memorandos", category: "Remessas e Memorandos", description: "Permite enviar o memorando para o protocolo e converter candidatos em CNHs" },
-  { id: "cnh:receber", label: "Receber CNHs e Alocar Gavetas", category: "Controle de CNHs", description: "Permite dar entrada no protocolo, definir gaveta e repartição física" },
-  { id: "cnh:entregar", label: "Realizar Entrega de CNHs", category: "Controle de CNHs", description: "Permite registrar a entrega ao titular ou procurador credenciado" },
-  { id: "cnh:editar", label: "Editar / Excluir CNHs", category: "Controle de CNHs", description: "Permite modificar dados manuais ou remover registros de CNH do sistema" },
-  { id: "mapeamento:gerenciar", label: "Mapeamento de Gavetas (A a Z)", category: "Configurações", description: "Permite configurar e alterar as gavetas padrão para cada inicial de nome" },
-  { id: "responsaveis:gerenciar", label: "Cadastrar Responsáveis e Procuradores", category: "Configurações", description: "Permite adicionar, editar e desativar despachantes e CFCs" },
-  { id: "usuarios:gerenciar", label: "Gerenciar Servidores e Credenciais", category: "Administração", description: "Permite cadastrar usuários, redefinir senhas temporárias e atribuir permissões" },
-  { id: "auditoria:visualizar", label: "Acessar Trilha de Auditoria Geral", category: "Administração", description: "Permite consultar logs de segurança, acessos, endereços IP e histórico de ações" }
+  // 1. Dashboard
+  { 
+    id: "dashboard:visualizar", 
+    label: "Aba Dashboard (Painel)", 
+    category: "Painel & Visão Geral", 
+    description: "Permite acessar métricas, contadores de CNHs e gráficos operacionais",
+    isTab: true
+  },
+  
+  // 2. Protocolo Geral (CNHs)
+  { 
+    id: "geral:visualizar", 
+    label: "Aba Protocolo Geral (CNHs)", 
+    category: "Protocolo de CNHs", 
+    description: "Permite visualizar, pesquisar e filtrar as CNHs do protocolo geral",
+    isTab: true
+  },
+  { 
+    id: "cnh:receber", 
+    label: "Receber CNHs e Alocar Gavetas", 
+    category: "Protocolo de CNHs", 
+    description: "Permite dar entrada no protocolo, definir gaveta e repartição física" 
+  },
+  { 
+    id: "cnh:entregar", 
+    label: "Realizar Entrega de CNHs", 
+    category: "Protocolo de CNHs", 
+    description: "Permite registrar a entrega ao titular ou procurador credenciado" 
+  },
+  { 
+    id: "cnh:editar", 
+    label: "Editar / Excluir CNHs", 
+    category: "Protocolo de CNHs", 
+    description: "Permite modificar dados manuais ou remover registros de CNH do sistema" 
+  },
+
+  // 3. Memorandos e Remessas
+  { 
+    id: "memorandos:criar", 
+    label: "Aba Memorandos - Criar Remessas", 
+    category: "Remessas e Memorandos", 
+    description: "Permite acessar a aba e criar memorandos com lista de candidatos",
+    isTab: true
+  },
+  { 
+    id: "memorandos:remeter", 
+    label: "Remeter e Finalizar Memorandos", 
+    category: "Remessas e Memorandos", 
+    description: "Permite enviar o memorando para o protocolo e converter candidatos em CNHs" 
+  },
+
+  // 4. Consulta Cidadão (App)
+  { 
+    id: "acessos_cidadao:visualizar", 
+    label: "Aba Consulta Cidadão (App)", 
+    category: "Atendimento & Cidadão", 
+    description: "Permite visualizar os acessos, consultas públicas e logs dos cidadãos",
+    isTab: true
+  },
+
+  // 5. Relatórios Setoriais
+  { 
+    id: "relatorios:visualizar", 
+    label: "Aba Relatórios Setoriais", 
+    category: "Relatórios & Estatísticas", 
+    description: "Permite gerar e exportar relatórios consolidados em PDF e planilhas",
+    isTab: true
+  },
+
+  // 6. Responsáveis e CFCs
+  { 
+    id: "responsaveis:gerenciar", 
+    label: "Aba Responsáveis e CFCs", 
+    category: "Cadastros & Configurações", 
+    description: "Permite cadastrar, editar e desativar despachantes, CFCs e procuradores",
+    isTab: true
+  },
+
+  // 7. Mapeamento (A-Z)
+  { 
+    id: "mapeamento:gerenciar", 
+    label: "Aba Mapeamento de Gavetas (A-Z)", 
+    category: "Cadastros & Configurações", 
+    description: "Permite configurar e alterar as gavetas padrão para cada inicial de nome",
+    isTab: true
+  },
+
+  // 8. Histórico de Movimento
+  { 
+    id: "historico:visualizar", 
+    label: "Aba Histórico de Movimento", 
+    category: "Auditoria & Rastreabilidade", 
+    description: "Permite consultar a trilha inalterável de movimentações de CNHs",
+    isTab: true
+  },
+
+  // 9. Auditoria do Sistema
+  { 
+    id: "auditoria:visualizar", 
+    label: "Aba Auditoria do Sistema", 
+    category: "Auditoria & Rastreabilidade", 
+    description: "Permite consultar logs de segurança, endereços IP e ações dos operadores",
+    isTab: true
+  },
+
+  // 10. Gerenciar Usuários
+  { 
+    id: "usuarios:gerenciar", 
+    label: "Aba Gerenciar Usuários", 
+    category: "Administração do Sistema", 
+    description: "Permite cadastrar servidores, redefinir senhas e atribuir permissões",
+    isTab: true
+  },
+
+  // 11. Configuração do Órgão
+  { 
+    id: "orgao:gerenciar", 
+    label: "Aba Configuração do Órgão", 
+    category: "Administração do Sistema", 
+    description: "Permite editar cabeçalhos oficiais, logotipo, timbres e dados da unidade",
+    isTab: true
+  },
+
+  // 12. Backup e Sincronização
+  { 
+    id: "backup:gerenciar", 
+    label: "Aba Backup e Sincronização", 
+    category: "Administração do Sistema", 
+    description: "Permite realizar backups, restaurar dados e sincronizar com nuvem/Supabase",
+    isTab: true
+  }
 ];
 
 export function getPermissoesPadrao(perfil: PerfilUsuario): string[] {
@@ -130,18 +258,36 @@ export function getPermissoesPadrao(perfil: PerfilUsuario): string[] {
       return PERMISSOES_SISTEMA.map(p => p.id);
     case "Supervisor":
       return [
+        "dashboard:visualizar",
+        "geral:visualizar", "cnh:receber", "cnh:entregar", "cnh:editar",
         "memorandos:criar", "memorandos:remeter",
-        "cnh:receber", "cnh:entregar", "cnh:editar",
-        "mapeamento:gerenciar", "responsaveis:gerenciar",
-        "auditoria:visualizar"
+        "acessos_cidadao:visualizar",
+        "relatorios:visualizar",
+        "responsaveis:gerenciar",
+        "mapeamento:gerenciar",
+        "historico:visualizar",
+        "auditoria:visualizar",
+        "orgao:gerenciar"
       ];
     case "Operador":
       return [
+        "dashboard:visualizar",
+        "geral:visualizar", "cnh:receber", "cnh:entregar",
         "memorandos:criar", "memorandos:remeter",
-        "cnh:receber", "cnh:entregar"
+        "acessos_cidadao:visualizar",
+        "relatorios:visualizar",
+        "responsaveis:gerenciar",
+        "mapeamento:gerenciar"
       ];
     case "Consulta":
-      return ["auditoria:visualizar"];
+      return [
+        "dashboard:visualizar",
+        "geral:visualizar",
+        "acessos_cidadao:visualizar",
+        "relatorios:visualizar",
+        "historico:visualizar",
+        "auditoria:visualizar"
+      ];
     default:
       return [];
   }
