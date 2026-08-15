@@ -16,7 +16,16 @@ export interface SyncMetaItem {
   value: any;
 }
 
-// Classe do Banco Dexie IndexedDB: ControleCNH
+export class SyncConflictError extends Error {
+  remoteRecord: GeralCNH;
+
+  constructor(remoteRecord: GeralCNH) {
+    super("Conflito de sincronização: o registro remoto foi alterado por outro usuário.");
+    this.name = "SyncConflictError";
+    this.remoteRecord = remoteRecord;
+  }
+}
+
 export class ControleCNHDatabase extends Dexie {
   geral!: Table<GeralCNH, string>;
   syncMeta!: Table<SyncMetaItem, string>;
@@ -32,7 +41,6 @@ export class ControleCNHDatabase extends Dexie {
 
 export const dexieDb = new ControleCNHDatabase();
 
-// Objeto para notificar ouvintes sobre mudanças de status da sincronização
 type SyncStatusCallback = (stats: SyncStats) => void;
 const syncStatusListeners: Set<SyncStatusCallback> = new Set();
 
@@ -47,19 +55,13 @@ let currentSyncStats: SyncStats = {
 export function subscribeSyncStatus(callback: SyncStatusCallback): () => void {
   syncStatusListeners.add(callback);
   callback(currentSyncStats);
-  return () => {
-    syncStatusListeners.delete(callback);
-  };
+  return () => syncStatusListeners.delete(callback);
 }
 
 function updateSyncStats(partial: Partial<SyncStats>) {
   currentSyncStats = { ...currentSyncStats, ...partial };
   for (const listener of syncStatusListeners) {
-    try {
-      listener(currentSyncStats);
-    } catch (e) {
-      console.warn("Erro em listener de sync:", e);
-    }
+    try { listener(currentSyncStats); } catch (e) { console.warn("Erro em listener de sync:", e); }
   }
 }
 
@@ -69,50 +71,38 @@ export async function getSyncStats(): Promise<SyncStats> {
     const metaCount = await dexieDb.syncMeta.get("total_records");
     const metaDuration = await dexieDb.syncMeta.get("last_duration_ms");
     const count = await dexieDb.geral.count();
-
     currentSyncStats = {
       ...currentSyncStats,
       lastSyncAt: metaLastSync?.value || currentSyncStats.lastSyncAt,
       totalRecords: count || metaCount?.value || 0,
       syncDurationMs: metaDuration?.value || currentSyncStats.syncDurationMs
     };
-  } catch (e) {
-    console.warn("Aviso ao carregar estatísticas do IndexedDB:", e);
-  }
+  } catch (e) { console.warn("Aviso ao carregar estatísticas do IndexedDB:", e); }
   return currentSyncStats;
 }
 
-// Salvar/Obter Metadata no IndexedDB
 export async function setMeta(key: string, value: any) {
-  try {
-    await dexieDb.syncMeta.put({ key, value });
-  } catch (e) {
-    console.warn(`Erro ao salvar meta ${key}:`, e);
-  }
+  try { await dexieDb.syncMeta.put({ key, value }); }
+  catch (e) { console.warn(`Erro ao salvar meta ${key}:`, e); }
 }
 
 export async function getMeta(key: string): Promise<any> {
   try {
     const item = await dexieDb.syncMeta.get(key);
     return item ? item.value : null;
-  } catch (e) {
-    return null;
-  }
+  } catch { return null; }
 }
 
-/**
- * Normaliza objetos do Supabase para ter campos updated_at e formatos corretos
- */
 function normalizeCNHRecord(item: any): GeralCNH {
   const now = new Date().toISOString();
   return {
-    id: item.id || `cnh-${item.ordem || Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+    id: item.id || `cnh-${item.ordem || Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     ordem: Number(item.ordem) || 0,
     memorando_id: item.memorando_id || undefined,
     candidato_id: item.candidato_id || undefined,
     nome: item.nome || "",
     cpf: item.cpf || "",
-    telefone: item.telefone !== undefined && item.telefone !== null ? String(item.telefone) : "",
+    telefone: item.telefone != null ? String(item.telefone) : "",
     notificado_whatsapp: item.notificado_whatsapp !== undefined ? Boolean(item.notificado_whatsapp) : undefined,
     notificado_at: item.notificado_at || undefined,
     gaveta: item.gaveta || "",
@@ -131,11 +121,110 @@ function normalizeCNHRecord(item: any): GeralCNH {
   };
 }
 
-/**
- * Executa a sincronização com o Supabase.
- * - Se o IndexedDB estiver vazio: realiza a Sincronização Inicial Completa paginada em blocos de 1.000 registros sem limites.
- * - Se já possuir registros: realiza a Sincronização Inteligente por Delta usando updated_at > ultima_data.
- */
+function getPendingMutations(): Array<{ record: GeralCNH; expectedUpdatedAt: string | null }> {
+  return (currentPendingMutations as Array<{ record: GeralCNH; expectedUpdatedAt: string | null }>) || [];
+}
+
+let currentPendingMutations: Array<{ record: GeralCNH; expectedUpdatedAt: string | null }> = [];
+let pendingLoaded = false;
+
+async function loadPendingMutations() {
+  if (pendingLoaded) return;
+  const saved = await getMeta("pending_geral_mutations");
+  currentPendingMutations = Array.isArray(saved) ? saved : [];
+  pendingLoaded = true;
+}
+
+async function persistPendingMutations() {
+  await setMeta("pending_geral_mutations", currentPendingMutations);
+}
+
+async function queuePendingMutation(record: GeralCNH, expectedUpdatedAt: string | null) {
+  await loadPendingMutations();
+  currentPendingMutations = currentPendingMutations.filter(p => p.record.id !== record.id);
+  currentPendingMutations.push({ record, expectedUpdatedAt });
+  await persistPendingMutations();
+}
+
+async function removePendingMutation(id: string) {
+  await loadPendingMutations();
+  currentPendingMutations = currentPendingMutations.filter(p => p.record.id !== id);
+  await persistPendingMutations();
+}
+
+async function flushPendingMutations(): Promise<void> {
+  await loadPendingMutations();
+  if (!isSupabaseConfigured() || currentPendingMutations.length === 0) return;
+
+  const pending = [...currentPendingMutations];
+  for (const mutation of pending) {
+    const { record, expectedUpdatedAt } = mutation;
+    try {
+      const { data: remote, error: readError } = await supabase
+        .from("geral_cnhs")
+        .select("*")
+        .eq("id", record.id)
+        .maybeSingle();
+      if (readError) throw readError;
+
+      if (remote && expectedUpdatedAt && remote.updated_at && remote.updated_at !== expectedUpdatedAt) {
+        const authoritative = normalizeCNHRecord(remote);
+        await dexieDb.geral.put(authoritative);
+        await removePendingMutation(record.id);
+        continue;
+      }
+
+      const payload = buildCNHPayload(record);
+      let query = supabase.from("geral_cnhs").update(payload).eq("id", record.id);
+      if (expectedUpdatedAt) query = query.eq("updated_at", expectedUpdatedAt);
+      const { data: saved, error } = await query.select("*").maybeSingle();
+      if (error) throw error;
+
+      if (!saved) {
+        const { data: created, error: createError } = await supabase
+          .from("geral_cnhs")
+          .upsert(payload, { onConflict: "id" })
+          .select("*")
+          .single();
+        if (createError) throw createError;
+        await dexieDb.geral.put(normalizeCNHRecord(created));
+      } else {
+        await dexieDb.geral.put(normalizeCNHRecord(saved));
+      }
+      await removePendingMutation(record.id);
+    } catch (error) {
+      console.warn("Pendência de sincronização ainda não enviada:", error);
+    }
+  }
+}
+
+function buildCNHPayload(record: GeralCNH): Record<string, any> {
+  const payload: Record<string, any> = {
+    id: record.id,
+    ordem: record.ordem,
+    nome: record.nome,
+    cpf: record.cpf,
+    telefone: record.telefone || null,
+    gaveta: record.gaveta || "",
+    reparticao: record.reparticao || "",
+    situacao: record.situacao,
+    responsavel_id: record.responsavel_id || null,
+    responsavel_nome: record.responsavel_nome || null,
+    data_movimento: record.data_movimento,
+    usuario_id: record.usuario_id || null,
+    usuario_nome: record.usuario_nome || null,
+    memorando_numero: record.memorando_numero || null,
+    remessa: record.remessa || null,
+    observacao: record.observacao || null,
+    memorando_id: record.memorando_id || null,
+    candidato_id: record.candidato_id || null,
+    created_at: record.created_at
+  };
+  if (record.notificado_whatsapp !== undefined) payload.notificado_whatsapp = record.notificado_whatsapp;
+  if (record.notificado_at) payload.notificado_at = record.notificado_at;
+  return payload;
+}
+
 export async function syncGeralWithSupabase(forceFull: boolean = false): Promise<SyncStats> {
   const startTime = Date.now();
   updateSyncStats({ status: "syncing", errorMessage: undefined });
@@ -155,143 +244,71 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
   }
 
   try {
+    await flushPendingMutations();
     const localCount = await dexieDb.geral.count();
     const isFirstRun = localCount === 0 || forceFull;
 
     if (isFirstRun) {
-      console.log("🚀 [ControleCNH IndexedDB] Iniciando Primeira Sincronização Completa em lotes de 1.000...");
-      let pageSize = 1000;
       let from = 0;
+      const pageSize = 1000;
       let hasMore = true;
       let totalDownloaded = 0;
-
       while (hasMore) {
         const to = from + pageSize - 1;
-        console.log(`📥 Baixando lote de CNHs ${from} até ${to}...`);
-
         const { data, error } = await supabase
           .from("geral_cnhs")
           .select("*")
           .order("ordem", { ascending: false })
           .range(from, to);
-
-        if (error) {
-          throw new Error(`Erro ao consultar Supabase (lote ${from}-${to}): ${error.message}`);
-        }
-
-        if (data && data.length > 0) {
-          const records = data.map(normalizeCNHRecord);
-          await dexieDb.geral.bulkPut(records);
-          totalDownloaded += records.length;
-          from += pageSize;
-
-          // Atualiza contador em progresso
-          updateSyncStats({ totalRecords: totalDownloaded });
-
-          if (data.length < pageSize) {
-            hasMore = false;
-          }
-        } else {
-          hasMore = false;
-        }
+        if (error) throw new Error(`Erro ao consultar Supabase (${from}-${to}): ${error.message}`);
+        if (!data?.length) break;
+        const records = data.map(normalizeCNHRecord);
+        await dexieDb.geral.bulkPut(records);
+        totalDownloaded += records.length;
+        from += pageSize;
+        updateSyncStats({ totalRecords: totalDownloaded });
+        hasMore = data.length === pageSize;
       }
-
       const syncTime = new Date().toISOString();
       const duration = Date.now() - startTime;
-
+      const max = await dexieDb.geral.orderBy("updated_at").last();
+      if (max?.updated_at) await setMeta("max_updated_at", max.updated_at);
       await setMeta("last_sync_at", syncTime);
       await setMeta("total_records", totalDownloaded);
       await setMeta("last_duration_ms", duration);
-
-      const finalStats: SyncStats = {
-        status: "synced",
-        lastSyncAt: syncTime,
-        totalRecords: totalDownloaded,
-        syncDurationMs: duration,
-        isOffline: false
-      };
-      updateSyncStats(finalStats);
-      console.log(`✅ [ControleCNH IndexedDB] Sincronização Completa finalizada: ${totalDownloaded} registros em ${duration}ms.`);
-      return finalStats;
-    } else {
-      // Sincronização Inteligente por Delta (updated_at)
-      console.log("⚡ [ControleCNH IndexedDB] Iniciando Sincronização Inteligente Delta...");
-
-      // Buscar maior updated_at do IndexedDB
-      let maxUpdatedAt: string | null = await getMeta("max_updated_at");
-
-      if (!maxUpdatedAt) {
-        // Encontrar maior data_movimento ou updated_at na base local
-        const lastRecord = await dexieDb.geral.orderBy("updated_at").last();
-        if (lastRecord && lastRecord.updated_at) {
-          maxUpdatedAt = lastRecord.updated_at;
-        }
-      }
-
-      let query = supabase.from("geral_cnhs").select("*");
-
-      if (maxUpdatedAt) {
-        query = query.gt("updated_at", maxUpdatedAt);
-      }
-
-      let { data: deltaData, error: deltaError } = await query;
-
-      // Se der erro por falta da coluna updated_at na tabela remota, buscar por created_at ou ordenação
-      if (deltaError && (deltaError.message.includes("updated_at") || deltaError.code === "42703")) {
-        console.warn("Coluna updated_at não existe no Supabase. Realizando verificação de novos por created_at.");
-        const lastCreatedRecord = await dexieDb.geral.orderBy("created_at").last();
-        let fallbackQuery = supabase.from("geral_cnhs").select("*");
-        if (lastCreatedRecord && lastCreatedRecord.created_at) {
-          fallbackQuery = fallbackQuery.gt("created_at", lastCreatedRecord.created_at);
-        }
-        const fallbackRes = await fallbackQuery;
-        deltaData = fallbackRes.data;
-        deltaError = fallbackRes.error;
-      }
-
-      if (deltaError) {
-        throw new Error(`Erro ao buscar delta no Supabase: ${deltaError.message}`);
-      }
-
-      if (deltaData && deltaData.length > 0) {
-        const updatedRecords = deltaData.map(normalizeCNHRecord);
-        await dexieDb.geral.bulkPut(updatedRecords);
-        console.log(`🔄 [ControleCNH IndexedDB] Delta aplicado: ${updatedRecords.length} registros atualizados/inseridos.`);
-
-        // Atualiza max_updated_at
-        let newestDate = maxUpdatedAt;
-        for (const rec of updatedRecords) {
-          if (rec.updated_at && (!newestDate || rec.updated_at > newestDate)) {
-            newestDate = rec.updated_at;
-          }
-        }
-        if (newestDate) {
-          await setMeta("max_updated_at", newestDate);
-        }
-      } else {
-        console.log("✨ [ControleCNH IndexedDB] Nenhum registro novo/alterado encontrado.");
-      }
-
-      const syncTime = new Date().toISOString();
-      const duration = Date.now() - startTime;
-      const totalCount = await dexieDb.geral.count();
-
-      await setMeta("last_sync_at", syncTime);
-      await setMeta("total_records", totalCount);
-      await setMeta("last_duration_ms", duration);
-
-      const finalStats: SyncStats = {
-        status: "synced",
-        lastSyncAt: syncTime,
-        totalRecords: totalCount,
-        syncDurationMs: duration,
-        isOffline: false
-      };
+      const finalStats: SyncStats = { status: "synced", lastSyncAt: syncTime, totalRecords: totalDownloaded, syncDurationMs: duration, isOffline: false };
       updateSyncStats(finalStats);
       return finalStats;
     }
+
+    let maxUpdatedAt: string | null = await getMeta("max_updated_at");
+    if (!maxUpdatedAt) {
+      const lastRecord = await dexieDb.geral.orderBy("updated_at").last();
+      maxUpdatedAt = lastRecord?.updated_at || null;
+    }
+
+    let query = supabase.from("geral_cnhs").select("*");
+    if (maxUpdatedAt) query = query.gt("updated_at", maxUpdatedAt);
+    const { data, error } = await query;
+    if (error) throw new Error(`Erro ao buscar delta no Supabase: ${error.message}`);
+
+    if (data?.length) {
+      const records = data.map(normalizeCNHRecord);
+      await dexieDb.geral.bulkPut(records);
+      const newest = records.reduce<string | null>((acc, r) => !acc || r.updated_at > acc ? r.updated_at : acc, maxUpdatedAt);
+      if (newest) await setMeta("max_updated_at", newest);
+    }
+
+    const syncTime = new Date().toISOString();
+    const duration = Date.now() - startTime;
+    const totalCount = await dexieDb.geral.count();
+    await setMeta("last_sync_at", syncTime);
+    await setMeta("total_records", totalCount);
+    await setMeta("last_duration_ms", duration);
+    const finalStats: SyncStats = { status: "synced", lastSyncAt: syncTime, totalRecords: totalCount, syncDurationMs: duration, isOffline: false };
+    updateSyncStats(finalStats);
+    return finalStats;
   } catch (err: any) {
-    console.warn("⚠️ Aviso de sincronização Supabase (modo offline):", err?.message || err);
     const localCount = await dexieDb.geral.count();
     const errorStats: SyncStats = {
       status: "offline",
@@ -306,186 +323,97 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
   }
 }
 
-/**
- * Funções do CRUD e Persistência no IndexedDB + Supabase
- */
-
-// Obter todos os registros da tabela geral do IndexedDB
 export async function getLocalGeralCNHs(): Promise<GeralCNH[]> {
-  try {
-    const list = await dexieDb.geral.orderBy("ordem").reverse().toArray();
-    return list;
-  } catch (err) {
-    console.warn("Erro ao buscar no IndexedDB:", err);
-    return [];
-  }
+  try { return await dexieDb.geral.orderBy("ordem").reverse().toArray(); }
+  catch (err) { console.warn("Erro ao buscar no IndexedDB:", err); return []; }
 }
 
-// Disparar evento global de sincronização
 function notifySyncUpdated(type: string = "geral") {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("detran_sync_updated", { detail: { type, timestamp: Date.now() } }));
   }
 }
 
-// Inserir ou atualizar um registro no IndexedDB (e Supabase se online)
 export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
-  const normalized = normalizeCNHRecord(record);
-  normalized.updated_at = new Date().toISOString();
+  const local = normalizeCNHRecord(record);
+  const existing = await dexieDb.geral.get(local.id);
+  const expectedUpdatedAt = existing?.updated_at || record.updated_at || null;
 
-  // 1. Salva no IndexedDB imediatamente
-  await dexieDb.geral.put(normalized);
-
-  // 2. Se o Supabase estiver configurado, envia para a nuvem
   if (isSupabaseConfigured()) {
     try {
-      const payload: any = {
-        id: normalized.id,
-        ordem: normalized.ordem,
-        nome: normalized.nome,
-        cpf: normalized.cpf,
-        telefone: normalized.telefone || null,
-        gaveta: normalized.gaveta || "",
-        reparticao: normalized.reparticao || "",
-        situacao: normalized.situacao,
-        responsavel_id: normalized.responsavel_id || null,
-        responsavel_nome: normalized.responsavel_nome || null,
-        data_movimento: normalized.data_movimento,
-        usuario_id: normalized.usuario_id || null,
-        usuario_nome: normalized.usuario_nome || null,
-        memorando_numero: normalized.memorando_numero || null,
-        remessa: normalized.remessa || null,
-        observacao: normalized.observacao || null,
-        memorando_id: normalized.memorando_id || null,
-        candidato_id: normalized.candidato_id || null,
-        created_at: normalized.created_at,
-        updated_at: normalized.updated_at
-      };
+      const { data: remote, error: readError } = await supabase
+        .from("geral_cnhs")
+        .select("*")
+        .eq("id", local.id)
+        .maybeSingle();
+      if (readError) throw readError;
 
-      if (normalized.notificado_whatsapp !== undefined) {
-        payload.notificado_whatsapp = normalized.notificado_whatsapp;
-      }
-      if (normalized.notificado_at) {
-        payload.notificado_at = normalized.notificado_at;
+      if (remote && expectedUpdatedAt && remote.updated_at && remote.updated_at !== expectedUpdatedAt) {
+        const authoritative = normalizeCNHRecord(remote);
+        await dexieDb.geral.put(authoritative);
+        updateSyncStats({ totalRecords: await dexieDb.geral.count() });
+        notifySyncUpdated("geral");
+        throw new SyncConflictError(authoritative);
       }
 
-      const { error } = await supabase.from("geral_cnhs").upsert(payload, { onConflict: "id" });
-      if (error) {
-        console.warn("Aviso ao sincronizar alteração com Supabase (tentando payload simplificado):", error.message);
-        // Tentar payload sem chaves opcionais caso foreign keys falhem
-        const fallbackPayload = {
-          id: normalized.id,
-          ordem: normalized.ordem,
-          nome: normalized.nome,
-          cpf: normalized.cpf,
-          gaveta: normalized.gaveta || "",
-          reparticao: normalized.reparticao || "",
-          situacao: normalized.situacao,
-          data_movimento: normalized.data_movimento,
-          responsavel_nome: normalized.responsavel_nome || null,
-          usuario_nome: normalized.usuario_nome || null,
-          observacao: normalized.observacao || null,
-          updated_at: normalized.updated_at
-        };
-        await supabase.from("geral_cnhs").upsert(fallbackPayload, { onConflict: "id" });
+      const payload = buildCNHPayload(local);
+      let updateQuery = supabase.from("geral_cnhs").update(payload).eq("id", local.id);
+      if (remote && expectedUpdatedAt) updateQuery = updateQuery.eq("updated_at", expectedUpdatedAt);
+      const { data: saved, error } = await updateQuery.select("*").maybeSingle();
+      if (error) throw error;
+
+      if (!saved) {
+        const { data: created, error: createError } = await supabase
+          .from("geral_cnhs")
+          .upsert(payload, { onConflict: "id" })
+          .select("*")
+          .single();
+        if (createError) throw createError;
+        await dexieDb.geral.put(normalizeCNHRecord(created));
+      } else {
+        await dexieDb.geral.put(normalizeCNHRecord(saved));
       }
+      await removePendingMutation(local.id);
     } catch (err) {
-      console.warn("Erro ao enviar para Supabase:", err);
+      if (err instanceof SyncConflictError) throw err;
+      await dexieDb.geral.put(local);
+      await queuePendingMutation(local, expectedUpdatedAt);
+      updateSyncStats({ status: "offline", isOffline: true, errorMessage: "Alteração salva localmente e aguardando sincronização." });
+      notifySyncUpdated("geral");
+      return;
     }
+  } else {
+    await dexieDb.geral.put({ ...local, updated_at: new Date().toISOString() });
+    await queuePendingMutation(local, expectedUpdatedAt);
   }
 
-  // Atualiza metadados
   const count = await dexieDb.geral.count();
   updateSyncStats({ totalRecords: count });
   notifySyncUpdated("geral");
 }
 
-// Salvar múltiplos registros (ex: importação Excel/Lote)
 export async function saveLocalGeralCNHsBulk(records: GeralCNH[]): Promise<void> {
-  const now = new Date().toISOString();
-  const normalized = records.map((r) => {
-    const norm = normalizeCNHRecord(r);
-    norm.updated_at = now;
-    return norm;
-  });
-
-  // Save to Dexie
-  await dexieDb.geral.bulkPut(normalized);
-
-  // Save to Supabase
-  if (isSupabaseConfigured()) {
-    try {
-      const payloads = normalized.map((r) => ({
-        id: r.id,
-        ordem: r.ordem,
-        nome: r.nome,
-        cpf: r.cpf,
-        telefone: r.telefone || null,
-        gaveta: r.gaveta || "",
-        reparticao: r.reparticao || "",
-        situacao: r.situacao,
-        responsavel_id: r.responsavel_id || null,
-        responsavel_nome: r.responsavel_nome || null,
-        data_movimento: r.data_movimento,
-        usuario_id: r.usuario_id || null,
-        usuario_nome: r.usuario_nome || null,
-        memorando_numero: r.memorando_numero || null,
-        remessa: r.remessa || null,
-        observacao: r.observacao || null,
-        memorando_id: r.memorando_id || null,
-        candidato_id: r.candidato_id || null,
-        created_at: r.created_at,
-        updated_at: r.updated_at
-      }));
-
-      // Send in chunks of 250
-      for (let i = 0; i < payloads.length; i += 250) {
-        const chunk = payloads.slice(i, i + 250);
-        const { error } = await supabase.from("geral_cnhs").upsert(chunk, { onConflict: "id" });
-        if (error) {
-          console.warn("Aviso ao salvar lote no Supabase:", error.message);
-        }
-      }
-    } catch (err) {
-      console.warn("Erro ao salvar lote no Supabase:", err);
-    }
-  }
-
-  const count = await dexieDb.geral.count();
-  updateSyncStats({ totalRecords: count });
-  notifySyncUpdated("geral");
+  for (const record of records) await saveLocalGeralCNH(record);
 }
 
-// Excluir um registro localmente e no Supabase
 export async function deleteLocalGeralCNH(id: string): Promise<void> {
   await dexieDb.geral.delete(id);
-
   if (isSupabaseConfigured()) {
-    try {
-      await supabase.from("geral_cnhs").delete().eq("id", id);
-    } catch (err) {
-      console.warn("Erro ao excluir do Supabase:", err);
-    }
+    try { await supabase.from("geral_cnhs").delete().eq("id", id); }
+    catch (err) { console.warn("Erro ao excluir do Supabase:", err); }
   }
-
-  const count = await dexieDb.geral.count();
-  updateSyncStats({ totalRecords: count });
+  await removePendingMutation(id);
+  updateSyncStats({ totalRecords: await dexieDb.geral.count() });
   notifySyncUpdated("geral");
 }
 
-// Excluir múltiplos registros
 export async function deleteLocalGeralCNHsBulk(ids: string[]): Promise<void> {
   await dexieDb.geral.bulkDelete(ids);
-
   if (isSupabaseConfigured()) {
-    try {
-      await supabase.from("geral_cnhs").delete().in("id", ids);
-    } catch (err) {
-      console.warn("Erro ao excluir lote do Supabase:", err);
-    }
+    try { await supabase.from("geral_cnhs").delete().in("id", ids); }
+    catch (err) { console.warn("Erro ao excluir lote do Supabase:", err); }
   }
-
-  const count = await dexieDb.geral.count();
-  updateSyncStats({ totalRecords: count });
+  for (const id of ids) await removePendingMutation(id);
+  updateSyncStats({ totalRecords: await dexieDb.geral.count() });
   notifySyncUpdated("geral");
 }
