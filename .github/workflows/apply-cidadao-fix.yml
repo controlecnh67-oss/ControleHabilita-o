@@ -1,0 +1,60 @@
+name: Apply citizen sync fixes
+
+on:
+  push:
+    branches: [fix/sync-cidadao-seguranca]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/sync-cidadao-seguranca
+          fetch-depth: 1
+
+      - name: Patch citizen synchronization
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/services/db.ts')
+          s = p.read_text()
+
+          old_fetch = '''export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {\n  const local = getAcessosCidadaoLogs();\n  if (!isSupabaseConfigured()) {\n    return local;\n  }\n  try {\n    const { data, error } = await supabase\n      .from("acessos_cidadao")\n      .select("*")\n      .order("data_hora", { ascending: false })\n      .limit(500);\n\n    if (!error && data && data.length > 0) {\n      const map = new Map<string, AcessoCidadaoLog>();\n      data.forEach((d: any) => map.set(d.id, d));\n      local.forEach((l) => {\n        if (!map.has(l.id)) {\n          map.set(l.id, l);\n        }\n      });\n      const merged = Array.from(map.values()).sort(\n        (a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime()\n      );\n      if (typeof window !== "undefined") {\n        localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(merged.slice(0, 500)));\n      }\n      return merged;\n    }\n  } catch (e) {\n    console.warn("Aviso ao sincronizar acessos do cidadão do Supabase:", e);\n  }\n  return local;\n}'''
+          new_fetch = '''export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {\n  const local = getAcessosCidadaoLogs();\n  if (!isSupabaseConfigured()) return local;\n  try {\n    const remote = await fetchAllRowsFromSupabase<AcessoCidadaoLog>("acessos_cidadao", 1000, "data_hora", false);\n    const map = new Map<string, AcessoCidadaoLog>();\n    for (const item of local) map.set(item.id, item);\n    for (const item of remote) map.set(item.id, item);\n    const merged = Array.from(map.values()).sort((a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime());\n    if (typeof window !== "undefined") localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(merged.slice(0, 500)));\n    return merged;\n  } catch (e) {\n    console.warn("Aviso ao sincronizar acessos do cidadão do Supabase:", e);\n    return local;\n  }\n}'''
+          if old_fetch not in s: raise SystemExit('fetch block not found')
+          s = s.replace(old_fetch, new_fetch)
+
+          old_insert = '''  // Enviar para Supabase em segundo plano se configurado\n  if (isSupabaseConfigured()) {\n    (async () => {\n      try {\n        await supabase.from("acessos_cidadao").insert([{\n          id: newLog.id,\n          numero: newLog.numero,\n          data_hora: newLog.data_hora,\n          cpf: newLog.cpf,\n          nome_titular: newLog.nome_titular || null,\n          situacao: newLog.situacao,\n          resultado_status: newLog.resultado_status,\n          canal: newLog.canal,\n          dispositivo: newLog.dispositivo || null,\n          cidade_origem: newLog.cidade_origem || null,\n          ip_mascarado: newLog.ip_mascarado || null\n        }]);\n      } catch {\n        // Tabela acessos_cidadao pode ainda não estar criada no Supabase\n      }\n    })();\n  }'''
+          new_insert = '''  // Persistência remota via RPC; a tabela não recebe INSERT direto do cliente público.\n  if (isSupabaseConfigured()) {\n    (async () => {\n      try {\n        const { error } = await supabase.rpc("registrar_acesso_cidadao", {\n          p_id: newLog.id, p_numero: newLog.numero || null, p_data_hora: newLog.data_hora,\n          p_cpf: newLog.cpf, p_nome_titular: newLog.nome_titular || null, p_situacao: newLog.situacao,\n          p_resultado_status: newLog.resultado_status, p_canal: newLog.canal,\n          p_dispositivo: newLog.dispositivo || null, p_cidade_origem: newLog.cidade_origem || null,\n          p_ip_mascarado: newLog.ip_mascarado || null\n        });\n        if (error) throw error;\n      } catch (e) { console.warn("Aviso ao registrar acesso do cidadão no Supabase:", e); }\n    })();\n  }'''
+          if old_insert not in s: raise SystemExit('insert block not found')
+          s = s.replace(old_insert, new_insert)
+
+          old_all = '''  const todasCNHs = await getGeralCNHs();\n\n  // Mesclar dados do Supabase com o cache local\n  const mapById = new Map<string, GeralCNH>();'''
+          new_all = '''  // A consulta pública já recebeu do Supabase somente os registros do CPF informado.\n  const todasCNHs = directSupabaseCNHs.length > 0 ? directSupabaseCNHs : await getGeralCNHs();\n\n  // Mesclar dados do Supabase com o cache local\n  const mapById = new Map<string, GeralCNH>();'''
+          if old_all not in s: raise SystemExit('full-table block not found')
+          s = s.replace(old_all, new_all)
+          p.write_text(s)
+          PY
+
+      - name: Verify TypeScript build
+        run: |
+          npm ci --ignore-scripts
+          npm run lint
+
+      - name: Commit generated source changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/services/db.ts
+          git commit -m "fix(sync): harden citizen access log and CPF query" || true
+          git push
+
+      - name: Remove temporary workflow
+        run: |
+          git rm .github/workflows/apply-cidadao-fix.yml
+          git commit -m "chore(ci): remove temporary patch workflow"
+          git push
