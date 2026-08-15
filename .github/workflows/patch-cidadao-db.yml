@@ -1,0 +1,25 @@
+name: Apply citizen DB integration patch
+
+on:
+  push:
+    branches: [fix/sync-cidadao-seguranca]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/sync-cidadao-seguranca
+          fetch-depth: 1
+
+      - name: Patch citizen synchronization
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('src
