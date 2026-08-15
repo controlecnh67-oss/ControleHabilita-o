@@ -1,1 +1,0 @@
-Temporary trigger for citizen synchronization fix workflow.
