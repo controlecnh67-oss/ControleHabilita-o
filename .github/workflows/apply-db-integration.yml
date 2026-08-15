@@ -2,7 +2,8 @@ name: Apply citizen sync integration
 
 on:
   push:
-    branches: [fix/sync-cidadao-seguranca]
+    branches:
+      - fix/sync-cidadao-seguranca
 
 permissions:
   contents: write
@@ -11,19 +12,19 @@ jobs:
   patch:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: fix/sync-cidadao-seguranca
-          fetch-depth: 1
-
       - name: Patch db service
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('src/services/db.ts')
-          s = p.read_text()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const path = 'src/services/db.ts';
+            const branch = 'fix/sync-cidadao-seguranca';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const file = await github.rest.repos.getContent({ owner, repo, path, ref: branch });
+            const current = Buffer.from(file.data.content, 'base64').toString('utf8');
+            let s = current;
 
-          old = '''export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
+            const oldFetch = `export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
   const local = getAcessosCidadaoLogs();
   if (!isSupabaseConfigured()) {
     return local;
@@ -55,8 +56,8 @@ jobs:
     console.warn("Aviso ao sincronizar acessos do cidadão do Supabase:", e);
   }
   return local;
-}'''
-          new = '''export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
+}`;
+            const newFetch = `export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
   const local = getAcessosCidadaoLogs();
   if (!isSupabaseConfigured()) return local;
   try {
@@ -71,11 +72,11 @@ jobs:
     console.warn("Aviso ao sincronizar acessos do cidadão do Supabase:", e);
     return local;
   }
-}'''
-          if old not in s: raise SystemExit('fetch logs block not found')
-          s = s.replace(old, new, 1)
+}`;
+            if (!s.includes(oldFetch)) core.setFailed('fetchAcessosCidadaoLogs block not found');
+            else s = s.replace(oldFetch, newFetch);
 
-          old = '''  // Enviar para Supabase em segundo plano se configurado
+            const oldInsert = `  // Enviar para Supabase em segundo plano se configurado
   if (isSupabaseConfigured()) {
     (async () => {
       try {
@@ -96,8 +97,8 @@ jobs:
         // Tabela acessos_cidadao pode ainda não estar criada no Supabase
       }
     })();
-  }'''
-          new = '''  // Registrar remotamente pela RPC. O cliente público não recebe INSERT direto na tabela.
+  }`;
+            const newInsert = `  // Registrar remotamente pela RPC. O cliente público não recebe INSERT direto na tabela.
   if (isSupabaseConfigured()) {
     (async () => {
       try {
@@ -119,18 +120,17 @@ jobs:
         console.warn("Aviso ao registrar acesso do cidadão no Supabase:", e);
       }
     })();
-  }'''
-          if old not in s: raise SystemExit('insert log block not found')
-          s = s.replace(old, new, 1)
+  }`;
+            if (!s.includes(oldInsert)) core.setFailed('citizen log insert block not found');
+            else s = s.replace(oldInsert, newInsert);
 
-          marker = '''  // Se o Supabase estiver configurado, busca diretamente e em tempo real na tabela remota do Supabase pelo CPF'''
-          start = s.find(marker)
-          if start == -1: raise SystemExit('public query marker not found')
-          end_marker = '''  const todasCNHs = await getGeralCNHs();'''
-          end = s.find(end_marker, start)
-          if end == -1: raise SystemExit('public query end marker not found')
-          query_block = s[start:end]
-          query_block = '''  // Consulta pública usa a RPC protegida e retorna somente registros do CPF informado.
+            const marker = '  // Se o Supabase estiver configurado, busca diretamente e em tempo real na tabela remota do Supabase pelo CPF';
+            const start = s.indexOf(marker);
+            const endMarker = '  const todasCNHs = await getGeralCNHs();';
+            const end = s.indexOf(endMarker, start);
+            if (start < 0 || end < 0) core.setFailed('public CPF query block not found');
+            else {
+              const rpcBlock = `  // Consulta pública usa a RPC protegida e retorna somente registros do CPF informado.
   if (isSupabaseConfigured()) {
     try {
       const { data, error } = await supabase.rpc("consulta_cnh_publica", { p_cpf: cleanCpf });
@@ -142,39 +142,45 @@ jobs:
     }
   }
 
-'''
-          s = s[:start] + query_block + s[end:]
+`;
+              s = s.slice(0, start) + rpcBlock + s.slice(end);
+            }
 
-          old = '''  const todasCNHs = await getGeralCNHs();
+            const oldAll = `  const todasCNHs = await getGeralCNHs();
 
   // Mesclar dados do Supabase com o cache local
-  const mapById = new Map<string, GeralCNH>();'''
-          new = '''  // Se o Supabase respondeu, não carregue a tabela inteira apenas para uma consulta por CPF.
+  const mapById = new Map<string, GeralCNH>();`;
+            const newAll = `  // Se o Supabase respondeu, não carregue a tabela inteira apenas para uma consulta por CPF.
   const todasCNHs = directSupabaseCNHs.length > 0 ? directSupabaseCNHs : await getGeralCNHs();
 
   // Mesclar dados do Supabase com o cache local
-  const mapById = new Map<string, GeralCNH>();'''
-          if old not in s: raise SystemExit('full geral query block not found')
-          s = s.replace(old, new, 1)
+  const mapById = new Map<string, GeralCNH>();`;
+            if (!s.includes(oldAll)) core.setFailed('full geral query block not found');
+            else s = s.replace(oldAll, newAll);
 
-          p.write_text(s)
-          PY
+            if (s !== current) {
+              await github.rest.repos.createOrUpdateFileContents({
+                owner,
+                repo,
+                path,
+                message: 'fix(sync): integrate citizen Supabase RPCs',
+                content: Buffer.from(s, 'utf8').toString('base64'),
+                sha: file.data.sha,
+                branch
+              });
+            }
 
-      - name: Validate TypeScript
-        run: |
-          npm ci --ignore-scripts
-          npm run lint
-
-      - name: Commit integration changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/services/db.ts
-          git commit -m "fix(sync): integrate citizen Supabase RPCs" || true
-          git push
-
-      - name: Remove patcher
-        run: |
-          git rm .github/workflows/apply-db-integration.yml
-          git commit -m "chore(ci): remove temporary integration patcher"
-          git push
+      - name: Remove patch workflow
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const path = '.github/workflows/apply-db-integration.yml';
+            const file = await github.rest.repos.getContent({ owner: context.repo.owner, repo: context.repo.repo, path, ref: 'fix/sync-cidadao-seguranca' });
+            await github.rest.repos.deleteFile({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path,
+              message: 'chore(ci): remove temporary citizen sync patcher',
+              sha: file.data.sha,
+              branch: 'fix/sync-cidadao-seguranca'
+            });
