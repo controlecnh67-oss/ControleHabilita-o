@@ -1,0 +1,180 @@
+name: Apply citizen sync integration
+
+on:
+  push:
+    branches: [fix/sync-cidadao-seguranca]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/sync-cidadao-seguranca
+          fetch-depth: 1
+
+      - name: Patch db service
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/services/db.ts')
+          s = p.read_text()
+
+          old = '''export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
+  const local = getAcessosCidadaoLogs();
+  if (!isSupabaseConfigured()) {
+    return local;
+  }
+  try {
+    const { data, error } = await supabase
+      .from("acessos_cidadao")
+      .select("*")
+      .order("data_hora", { ascending: false })
+      .limit(500);
+
+    if (!error && data && data.length > 0) {
+      const map = new Map<string, AcessoCidadaoLog>();
+      data.forEach((d: any) => map.set(d.id, d));
+      local.forEach((l) => {
+        if (!map.has(l.id)) {
+          map.set(l.id, l);
+        }
+      });
+      const merged = Array.from(map.values()).sort(
+        (a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime()
+      );
+      if (typeof window !== "undefined") {
+        localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(merged.slice(0, 500)));
+      }
+      return merged;
+    }
+  } catch (e) {
+    console.warn("Aviso ao sincronizar acessos do cidadão do Supabase:", e);
+  }
+  return local;
+}'''
+          new = '''export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
+  const local = getAcessosCidadaoLogs();
+  if (!isSupabaseConfigured()) return local;
+  try {
+    const remote = await fetchAllRowsFromSupabase<AcessoCidadaoLog>("acessos_cidadao", 1000, "data_hora", false);
+    const map = new Map<string, AcessoCidadaoLog>();
+    for (const item of local) map.set(item.id, item);
+    for (const item of remote) map.set(item.id, item);
+    const merged = Array.from(map.values()).sort((a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime());
+    if (typeof window !== "undefined") localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(merged.slice(0, 500)));
+    return merged;
+  } catch (e) {
+    console.warn("Aviso ao sincronizar acessos do cidadão do Supabase:", e);
+    return local;
+  }
+}'''
+          if old not in s: raise SystemExit('fetch logs block not found')
+          s = s.replace(old, new, 1)
+
+          old = '''  // Enviar para Supabase em segundo plano se configurado
+  if (isSupabaseConfigured()) {
+    (async () => {
+      try {
+        await supabase.from("acessos_cidadao").insert([{
+          id: newLog.id,
+          numero: newLog.numero,
+          data_hora: newLog.data_hora,
+          cpf: newLog.cpf,
+          nome_titular: newLog.nome_titular || null,
+          situacao: newLog.situacao,
+          resultado_status: newLog.resultado_status,
+          canal: newLog.canal,
+          dispositivo: newLog.dispositivo || null,
+          cidade_origem: newLog.cidade_origem || null,
+          ip_mascarado: newLog.ip_mascarado || null
+        }]);
+      } catch {
+        // Tabela acessos_cidadao pode ainda não estar criada no Supabase
+      }
+    })();
+  }'''
+          new = '''  // Registrar remotamente pela RPC. O cliente público não recebe INSERT direto na tabela.
+  if (isSupabaseConfigured()) {
+    (async () => {
+      try {
+        const { error } = await supabase.rpc("registrar_acesso_cidadao", {
+          p_id: newLog.id,
+          p_numero: newLog.numero,
+          p_data_hora: newLog.data_hora,
+          p_cpf: newLog.cpf,
+          p_nome_titular: newLog.nome_titular || null,
+          p_situacao: newLog.situacao,
+          p_resultado_status: newLog.resultado_status,
+          p_canal: newLog.canal,
+          p_dispositivo: newLog.dispositivo || null,
+          p_cidade_origem: newLog.cidade_origem || null,
+          p_ip_mascarado: newLog.ip_mascarado || null
+        });
+        if (error) throw error;
+      } catch (e) {
+        console.warn("Aviso ao registrar acesso do cidadão no Supabase:", e);
+      }
+    })();
+  }'''
+          if old not in s: raise SystemExit('insert log block not found')
+          s = s.replace(old, new, 1)
+
+          marker = '''  // Se o Supabase estiver configurado, busca diretamente e em tempo real na tabela remota do Supabase pelo CPF'''
+          start = s.find(marker)
+          if start == -1: raise SystemExit('public query marker not found')
+          end_marker = '''  const todasCNHs = await getGeralCNHs();'''
+          end = s.find(end_marker, start)
+          if end == -1: raise SystemExit('public query end marker not found')
+          query_block = s[start:end]
+          query_block = '''  // Consulta pública usa a RPC protegida e retorna somente registros do CPF informado.
+  if (isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase.rpc("consulta_cnh_publica", { p_cpf: cleanCpf });
+      if (!error && Array.isArray(data) && data.length > 0) {
+        directSupabaseCNHs = data as GeralCNH[];
+      }
+    } catch (err) {
+      console.warn("Aviso ao consultar a CNH pela RPC pública:", err);
+    }
+  }
+
+'''
+          s = s[:start] + query_block + s[end:]
+
+          old = '''  const todasCNHs = await getGeralCNHs();
+
+  // Mesclar dados do Supabase com o cache local
+  const mapById = new Map<string, GeralCNH>();'''
+          new = '''  // Se o Supabase respondeu, não carregue a tabela inteira apenas para uma consulta por CPF.
+  const todasCNHs = directSupabaseCNHs.length > 0 ? directSupabaseCNHs : await getGeralCNHs();
+
+  // Mesclar dados do Supabase com o cache local
+  const mapById = new Map<string, GeralCNH>();'''
+          if old not in s: raise SystemExit('full geral query block not found')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+
+      - name: Validate TypeScript
+        run: |
+          npm ci --ignore-scripts
+          npm run lint
+
+      - name: Commit integration changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/services/db.ts
+          git commit -m "fix(sync): integrate citizen Supabase RPCs" || true
+          git push
+
+      - name: Remove patcher
+        run: |
+          git rm .github/workflows/apply-db-integration.yml
+          git commit -m "chore(ci): remove temporary integration patcher"
+          git push
