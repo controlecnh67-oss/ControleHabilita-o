@@ -1,0 +1,116 @@
+name: Apply Phase 2 Sync
+
+on:
+  push:
+    branches:
+      - fix/sync-cidadao-seguranca
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, 'sync phase2 applied') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v7
+        with:
+          ref: fix/sync-cidadao-seguranca
+          fetch-depth: 1
+
+      - name: Apply synchronization changes
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path('.')
+
+          # -----------------------------------------------------------------
+          # 1) Dexie: Supabase is authoritative online + conflict detection
+          # -----------------------------------------------------------------
+          dexie = root / 'src/services/dexieDb.ts'
+          text = dexie.read_text(encoding='utf-8')
+
+          if 'export class SyncConflictError' not in text:
+              marker = '/**\n * Executa a sincronização com o Supabase.'
+              conflict = '''export class SyncConflictError extends Error {\n  remoteRecord: GeralCNH;\n\n  constructor(remoteRecord: GeralCNH) {\n    super("Conflito de sincronização: o registro remoto foi alterado por outro usuário.");\n    this.name = "SyncConflictError";\n    this.remoteRecord = remoteRecord;\n  }\n}\n\n'''
+              if marker not in text:
+                  raise SystemExit('Não encontrei o marcador da sincronização em dexieDb.ts')
+              text = text.replace(marker, conflict + marker, 1)
+
+          start = text.index('export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {')
+          end = text.index('// Salvar múltiplos registros (ex: importação Excel/Lote)', start)
+          new_save = '''export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {\n  const existingLocal = await dexieDb.geral.get(record.id);\n  const normalized = normalizeCNHRecord(record);\n  const clientUpdatedAt = existingLocal?.updated_at || null;\n  const now = new Date().toISOString();\n\n  // Online: o Supabase é a fonte oficial. Primeiro verificamos a versão\n  // remota para impedir que uma alteração offline antiga sobrescreva uma\n  // alteração mais recente feita por outro usuário.\n  if (isSupabaseConfigured()) {\n    try {\n      const { data: remote, error: remoteError } = await supabase\n        .from("geral_cnhs")\n        .select("*")\n        .eq("id", normalized.id)\n        .maybeSingle();\n\n      if (remoteError) throw remoteError;\n\n      if (remote && clientUpdatedAt && remote.updated_at) {\n        const remoteTime = new Date(remote.updated_at).getTime();\n        const clientTime = new Date(clientUpdatedAt).getTime();\n        if (Number.isFinite(remoteTime) && Number.isFinite(clientTime) && remoteTime > clientTime) {\n          const remoteRecord = normalizeCNHRecord(remote);\n          await dexieDb.geral.put(remoteRecord);\n          await setMeta("max_updated_at", remoteRecord.updated_at);\n          notifySyncUpdated("geral");\n          throw new SyncConflictError(remoteRecord);\n        }\n      }\n\n      normalized.updated_at = now;\n      const payload: any = {\n        id: normalized.id,\n        ordem: normalized.ordem,\n        nome: normalized.nome,\n        cpf: normalized.cpf,\n        telefone: normalized.telefone || null,\n        gaveta: normalized.gaveta || "",\n        reparticao: normalized.reparticao || "",\n        situacao: normalized.situacao,\n        responsavel_id: normalized.responsavel_id || null,\n        responsavel_nome: normalized.responsavel_nome || null,\n        data_movimento: normalized.data_movimento,\n        usuario_id: normalized.usuario_id || null,\n        usuario_nome: normalized.usuario_nome || null,\n        memorando_numero: normalized.memorando_numero || null,\n        remessa: normalized.remessa || null,\n        observacao: normalized.observacao || null,\n        memorando_id: normalized.memorando_id || null,\n        candidato_id: normalized.candidato_id || null,\n        created_at: normalized.created_at,\n        updated_at: normalized.updated_at\n      };\n\n      if (normalized.notificado_whatsapp !== undefined) payload.notificado_whatsapp = normalized.notificado_whatsapp;\n      if (normalized.notificado_at) payload.notificado_at = normalized.notificado_at;\n\n      const { data: saved, error } = await supabase\n        .from("geral_cnhs")\n        .upsert(payload, { onConflict: "id" })\n        .select("*")\n        .single();\n\n      if (error) throw error;\n\n      const authoritative = normalizeCNHRecord(saved || payload);\n      await dexieDb.geral.put(authoritative);\n      await setMeta("max_updated_at", authoritative.updated_at);\n      await setMeta("last_sync_at", new Date().toISOString());\n      const count = await dexieDb.geral.count();\n      updateSyncStats({ totalRecords: count });\n      notifySyncUpdated("geral");\n      return;\n    } catch (err) {\n      if (err instanceof SyncConflictError) throw err;\n      console.warn("Erro ao sincronizar alteração com Supabase:", err);\n      // Se houve falha de rede, preserva a alteração local como fila offline.\n    }\n  }\n\n  // Offline: Dexie funciona como cache/fila local até a próxima sincronização.\n  normalized.updated_at = now;\n  await dexieDb.geral.put(normalized);\n  const count = await dexieDb.geral.count();\n  updateSyncStats({ totalRecords: count, isOffline: !isSupabaseConfigured() });\n  notifySyncUpdated("geral");\n}\n\n'''
+          text = text[:start] + new_save + text[end:]
+
+          # Online reads refresh the cache first; offline reads keep Dexie.
+          gs = text.index('export async function syncGeralWithSupabase')
+          ge = text.index('// Cadastro Manual', gs) if '// Cadastro Manual' in text[gs:] else -1
+          # Do not replace the large sync function here; update getGeralCNHs below.
+          get_start = text.index('export async function getLocalGeralCNHs')
+          # The public service file remains responsible for the high-level query path.
+          dexie.write_text(text, encoding='utf-8')
+
+          # -----------------------------------------------------------------
+          # 2) db.ts: always refresh Geral from Supabase when online, and use
+          #    the public RPC for citizen consultation.
+          # -----------------------------------------------------------------
+          db = root / 'src/services/db.ts'
+          dtext = db.read_text(encoding='utf-8')
+
+          # Replace getGeralCNHs with an online-authoritative implementation.
+          gstart = dtext.index('export async function getGeralCNHs(): Promise<GeralCNH[]> {')
+          gnext = dtext.find('\nexport async function ', gstart + 10)
+          if gnext == -1:
+              raise SystemExit('Não encontrei o fim de getGeralCNHs em db.ts')
+          new_get = '''export async function getGeralCNHs(): Promise<GeralCNH[]> {\n  await initStorage();\n\n  // Supabase é a fonte oficial quando há conexão. O Dexie só é usado como\n  // cache/fallback offline. A sincronização é incremental por updated_at.\n  if (isSupabaseConfigured()) {\n    try {\n      await syncGeralWithSupabase(false);\n    } catch (err) {\n      console.warn("Falha ao atualizar Geral a partir do Supabase; usando cache:", err);\n    }\n  }\n\n  return getLocalGeralCNHs();\n}\n'''
+          dtext = dtext[:gstart] + new_get + dtext[gnext:]
+
+          # Replace citizen query with the RPC created by the synchronization migration.
+          cstart = dtext.index('export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<ResultadoConsultaPublica> {')
+          cend = dtext.index('// Cadastro Manual de CNH no Protocolo', cstart)
+          new_consulta = '''export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<ResultadoConsultaPublica> {\n  const cleanCpf = cpfInput.replace(/\\D/g, "");\n  if (!cleanCpf || cleanCpf.length < 9) {\n    throw new Error("Por favor, informe um CPF válido para realizar a consulta.");\n  }\n\n  incrementPublicSearchCount();\n  let cnhsDoCidadao: GeralCNH[] = [];\n\n  if (isSupabaseConfigured()) {\n    try {\n      const { data, error } = await supabase.rpc("consulta_cnh_publica", { p_cpf: cleanCpf });\n      if (error) throw error;\n      cnhsDoCidadao = (data || []) as GeralCNH[];\n    } catch (err) {\n      console.warn("Consulta pública online indisponível; usando cache local:", err);\n      const local = await getLocalGeralCNHs();\n      cnhsDoCidadao = local.filter((c) => (c.cpf || "").replace(/\\D/g, "") === cleanCpf);\n    }\n  } else {\n    const local = await getLocalGeralCNHs();\n    cnhsDoCidadao = local.filter((c) => (c.cpf || "").replace(/\\D/g, "") === cleanCpf);\n  }\n\n  const ordenadas = [...cnhsDoCidadao].sort((a, b) => (b.ordem || 0) - (a.ordem || 0));\n\n  const registrar = (situacao: string, resultado_status: any, nome?: string) => {\n    void registrarAcessoCidadaoLog({\n      cpf: cleanCpf,\n      nome_titular: nome,\n      situacao,\n      resultado_status,\n      canal: "App Android",\n      dispositivo: "Navegador Web / Mobile",\n      cidade_origem: "Belém"\n    });\n  };\n\n  if (ordenadas.length === 0) {\n    // O cidadão pode estar apenas no fluxo de memorando. Essa busca continua\n    // como fallback, mas não baixa geral_cnhs inteira.\n    try {\n      const candidatos = await getCandidatosAll();\n      const cand = candidatos.find((c) => (c.cpf || "").replace(/\\D/g, "") === cleanCpf);\n      if (cand) {\n        const cnhVirtual: GeralCNH = {\n          id: `virtual-cand-${cand.id}`,\n          ordem: 0,\n          memorando_id: cand.memorando_id,\n          candidato_id: cand.id,\n          nome: cand.nome,\n          cpf: cand.cpf,\n          telefone: cand.telefone || "",\n          gaveta: "",\n          reparticao: "",\n          situacao: "Remetida",\n          data_movimento: cand.created_at || new Date().toISOString(),\n          usuario_id: "sistema",\n          usuario_nome: "Sistema DETRAN",\n          observacao: "Processo cadastrado em memorando de envio.",\n          created_at: cand.created_at || new Date().toISOString(),\n          updated_at: cand.created_at || new Date().toISOString()\n        };\n        registrar("Remetida", "EM_PROCESSAMENTO", cand.nome);\n        return {\n          cpfConsultado: cleanCpf,\n          cnhEncontrada: cnhVirtual,\n          historico: [cnhVirtual],\n          statusDisponibilidade: "EM_PROCESSAMENTO",\n          mensagem: "⏳ Sua CNH consta em processamento/trânsito (Memorando em trânsito) e ainda não deu entrada no balcão de atendimento."\n        };\n      }\n    } catch (err) {\n      console.warn("Aviso ao buscar cidadão em candidatos:", err);\n    }\n\n    registrar("Não Encontrada", "NAO_ENCONTRADA");\n    return {\n      cpfConsultado: cleanCpf,\n      cnhEncontrada: null,\n      historico: [],\n      statusDisponibilidade: "NAO_ENCONTRADA",\n      mensagem: "Nenhum registro de CNH localizado para o CPF informado."\n    };\n  }\n\n  const cnhRecebida = ordenadas.find((c) => c.situacao === "Recebida");\n  if (cnhRecebida) {\n    registrar("Recebida", "DISPONIVEL", cnhRecebida.nome);\n    return {\n      cpfConsultado: cleanCpf,\n      cnhEncontrada: cnhRecebida,\n      historico: ordenadas,\n      statusDisponibilidade: "DISPONIVEL",\n      mensagem: "✅ Sua CNH está disponível para retirada no balcão."\n    };\n  }\n\n  const ultimaCNH = ordenadas[0];\n  if (ultimaCNH.situacao === "Entregue") {\n    registrar("Entregue", "ENTREGUE", ultimaCNH.nome);\n    return {\n      cpfConsultado: cleanCpf,\n      cnhEncontrada: ultimaCNH,\n      historico: ordenadas,\n      statusDisponibilidade: "ENTREGUE",\n      mensagem: "ℹ️ A sua CNH consta como ENTREGUE no balcão."\n    };\n  }\n\n  registrar(ultimaCNH.situacao || "Pendente", "EM_PROCESSAMENTO", ultimaCNH.nome);\n  return {\n    cpfConsultado: cleanCpf,\n    cnhEncontrada: ultimaCNH,\n    historico: ordenadas,\n    statusDisponibilidade: "EM_PROCESSAMENTO",\n    mensagem: "⏳ Sua CNH consta em processamento/trânsito e ainda não deu entrada no balcão de atendimento."\n  };\n}\n\n'''
+          dtext = dtext[:cstart] + new_consulta + dtext[cend:]
+
+          # Replace direct public log INSERT with the RPC from the migration.
+          old_log = '''if (isSupabaseConfigured()) {\n    (async () => {\n      try {\n        await supabase.from("acessos_cidadao").insert([{\n          id: newLog.id,\n          numero: newLog.numero,\n          data_hora: newLog.data_hora,\n          cpf: newLog.cpf,\n          nome_titular: newLog.nome_titular || null,\n          situacao: newLog.situacao,\n          resultado_status: newLog.resultado_status,\n          canal: newLog.canal,\n          dispositivo: newLog.dispositivo || null,\n          cidade_origem: newLog.cidade_origem || null,\n          ip_mascarado: newLog.ip_mascarado || null\n        }]);\n      } catch {\n        // Tabela acessos_cidadao pode ainda não estar criada no Supabase\n      }\n    })();\n  }'''
+          new_log = '''if (isSupabaseConfigured()) {\n    void supabase.rpc("registrar_acesso_cidadao", {\n      p_id: newLog.id,\n      p_numero: newLog.numero || null,\n      p_data_hora: newLog.data_hora,\n      p_cpf: newLog.cpf,\n      p_nome_titular: newLog.nome_titular || null,\n      p_situacao: newLog.situacao,\n      p_resultado_status: newLog.resultado_status,\n      p_canal: newLog.canal,\n      p_dispositivo: newLog.dispositivo || null,\n      p_cidade_origem: newLog.cidade_origem || null,\n      p_ip_mascarado: newLog.ip_mascarado || null\n    }).then(({ error }) => {\n      if (error) console.warn("Aviso ao registrar consulta pública no Supabase:", error.message);\n    });\n  }'''
+          if old_log not in dtext:
+              raise SystemExit('Não encontrei o INSERT direto de acessos_cidadao em db.ts')
+          dtext = dtext.replace(old_log, new_log, 1)
+
+          db.write_text(dtext, encoding='utf-8')
+
+          # -----------------------------------------------------------------
+          # 3) Migration Phase 2: atomic optimistic concurrency + status RPCs
+          # -----------------------------------------------------------------
+          sql = root / 'public/supabase_phase2_sync.sql'
+          sql.write_text(r'''-- FASE 2: fonte oficial Supabase + cache Dexie + controle de conflito\n-- Execute no SQL Editor depois da migration da Fase 1.\n\nALTER TABLE public.geral_cnhs\n  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW());\n\nCREATE INDEX IF NOT EXISTS idx_geral_cnhs_updated_at_id\n  ON public.geral_cnhs (updated_at, id);\n\nCREATE OR REPLACE FUNCTION public.set_geral_cnhs_updated_at()\nRETURNS TRIGGER\nLANGUAGE plpgsql\nSET search_path = ''\nAS $$\nBEGIN\n  NEW.updated_at = TIMEZONE('utc'::text, NOW());\n  RETURN NEW;\nEND;\n$$;\n\nDROP TRIGGER IF EXISTS trg_geral_cnhs_updated_at ON public.geral_cnhs;\nCREATE TRIGGER trg_geral_cnhs_updated_at\nBEFORE INSERT OR UPDATE ON public.geral_cnhs\nFOR EACH ROW EXECUTE FUNCTION public.set_geral_cnhs_updated_at();\n\n-- Atualização atômica com optimistic concurrency. O registro só é alterado\n-- se a versão que o cliente leu ainda for a versão atual do servidor.\nCREATE OR REPLACE FUNCTION public.upsert_geral_cnh_sync(\n  p_id TEXT,\n  p_expected_updated_at TIMESTAMPTZ,\n  p_payload JSONB\n)\nRETURNS public.geral_cnhs\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = ''\nAS $$\nDECLARE\n  current_row public.geral_cnhs%ROWTYPE;\nBEGIN\n  SELECT * INTO current_row\n  FROM public.geral_cnhs\n  WHERE id = p_id\n  FOR UPDATE;\n\n  IF current_row.id IS NOT NULL\n     AND p_expected_updated_at IS NOT NULL\n     AND current_row.updated_at IS DISTINCT FROM p_expected_updated_at THEN\n    RAISE EXCEPTION 'SYNC_CONFLICT:%', current_row.updated_at\n      USING ERRCODE = '40001';\n  END IF;\n\n  INSERT INTO public.geral_cnhs AS g\n  SELECT (jsonb_populate_record(NULL::public.geral_cnhs, p_payload)).*\n  ON CONFLICT (id) DO UPDATE SET\n    ordem = EXCLUDED.ordem,\n    nome = EXCLUDED.nome,\n    cpf = EXCLUDED.cpf,\n    telefone = EXCLUDED.telefone,\n    gaveta = EXCLUDED.gaveta,\n    reparticao = EXCLUDED.reparticao,\n    situacao = EXCLUDED.situacao,\n    responsavel_id = EXCLUDED.responsavel_id,\n    responsavel_nome = EXCLUDED.responsavel_nome,\n    data_movimento = EXCLUDED.data_movimento,\n    usuario_id = EXCLUDED.usuario_id,\n    usuario_nome = EXCLUDED.usuario_nome,\n    memorando_numero = EXCLUDED.memorando_numero,\n    remessa = EXCLUDED.remessa,\n    observacao = EXCLUDED.observacao,\n    memorando_id = EXCLUDED.memorando_id,\n    candidato_id = EXCLUDED.candidato_id,\n    notificado_whatsapp = EXCLUDED.notificado_whatsapp,\n    notificado_at = EXCLUDED.notificado_at\n  RETURNING * INTO current_row;\n\n  RETURN current_row;\nEND;\n$$;\n\nREVOKE ALL ON FUNCTION public.upsert_geral_cnh_sync(TEXT, TIMESTAMPTZ, JSONB) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION public.upsert_geral_cnh_sync(TEXT, TIMESTAMPTZ, JSONB) TO anon, authenticated;\n\n-- Transição de status protegida por versão e pelo estado esperado.\nCREATE OR REPLACE FUNCTION public.transicionar_cnh_status(\n  p_id TEXT,\n  p_status_anterior TEXT,\n  p_status_novo TEXT,\n  p_usuario_id TEXT,\n  p_usuario_nome TEXT,\n  p_data_movimento TIMESTAMPTZ,\n  p_responsavel_id TEXT DEFAULT NULL,\n  p_responsavel_nome TEXT DEFAULT NULL,\n  p_gaveta TEXT DEFAULT NULL,\n  p_reparticao TEXT DEFAULT NULL,\n  p_observacao TEXT DEFAULT NULL\n)\nRETURNS public.geral_cnhs\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = ''\nAS $$\nDECLARE\n  result_row public.geral_cnhs%ROWTYPE;\nBEGIN\n  UPDATE public.geral_cnhs\n  SET situacao = p_status_novo,\n      usuario_id = p_usuario_id,\n      usuario_nome = p_usuario_nome,\n      data_movimento = COALESCE(p_data_movimento, TIMEZONE('utc'::text, NOW())),\n      responsavel_id = COALESCE(p_responsavel_id, responsavel_id),\n      responsavel_nome = COALESCE(p_responsavel_nome, responsavel_nome),\n      gaveta = COALESCE(p_gaveta, gaveta),\n      reparticao = COALESCE(p_reparticao, reparticao),\n      observacao = COALESCE(p_observacao, observacao)\n  WHERE id = p_id\n    AND situacao = p_status_anterior\n  RETURNING * INTO result_row;\n\n  IF result_row.id IS NULL THEN\n    RAISE EXCEPTION 'STATUS_CONFLICT:%', p_id USING ERRCODE = '40001';\n  END IF;\n\n  RETURN result_row;\nEND;\n$$;\n\nREVOKE ALL ON FUNCTION public.transicionar_cnh_status(TEXT, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION public.transicionar_cnh_status(TEXT, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT, TEXT, TEXT, TEXT) TO anon, authenticated;\n\nCOMMENT ON FUNCTION public.upsert_geral_cnh_sync(TEXT, TIMESTAMPTZ, JSONB) IS\n'Atualização otimista da Geral: impede sobrescrita de versão remota mais nova.';\nCOMMENT ON FUNCTION public.transicionar_cnh_status(TEXT, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ, TEXT, TEXT, TEXT, TEXT, TEXT) IS\n'Transição atômica de status da CNH, protegida contra estado anterior obsoleto.';\n''', encoding='utf-8')
+
+          # Remove this one-shot workflow from the branch after the generated commit.
+          # The removal is done in the same commit so it never becomes a permanent
+          # production dependency.
+          wf = root / '.github/workflows/apply-phase2-sync.yml'
+
+          # -----------------------------------------------------------------
+          # Validate syntax/build before committing.
+          # -----------------------------------------------------------------
+          PY
+
+      - name: Validate TypeScript and build
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+
+      - name: Commit generated changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/apply-phase2-sync.yml
+          git add src/services/dexieDb.ts src/services/db.ts public/supabase_phase2_sync.sql .github/workflows/apply-phase2-sync.yml
+          git diff --cached --quiet || git commit -m "fix: sync phase2 applied"
+          git push origin HEAD:fix/sync-cidadao-seguranca
