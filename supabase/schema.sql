@@ -148,6 +148,53 @@ CREATE TABLE IF NOT EXISTS public.mapeamento_localizacao (
     ativo BOOLEAN DEFAULT TRUE
 );
 
+-- 9. TABELA DE CONFIGURAÇÃO DO ÓRGÃO
+CREATE TABLE IF NOT EXISTS public.orgao_config (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    governo TEXT,
+    secretaria TEXT,
+    orgao TEXT,
+    sigla TEXT,
+    origem_padrao TEXT,
+    destino_padrao TEXT,
+    cidade_uf TEXT,
+    telefone TEXT,
+    email TEXT,
+    endereco TEXT,
+    subtitulo_relatorio TEXT,
+    logo TEXT,
+    updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
+);
+
+-- 10. TABELA DE LOGS DE ACESSO DO CIDADÃO
+CREATE TABLE IF NOT EXISTS public.acessos_cidadao (
+    id TEXT PRIMARY KEY,
+    numero INTEGER,
+    data_hora TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()),
+    cpf TEXT NOT NULL,
+    nome_titular TEXT,
+    situacao TEXT,
+    resultado_status TEXT,
+    canal TEXT,
+    dispositivo TEXT,
+    cidade_origem TEXT,
+    ip_mascarado TEXT
+);
+
+-- 11. TABELA DE IMAGENS E ANEXOS SINCRONIZADOS
+CREATE TABLE IF NOT EXISTS public.imagens_sync (
+    id TEXT PRIMARY KEY,
+    tabela_ref TEXT,
+    registro_id TEXT,
+    nome TEXT NOT NULL,
+    tipo TEXT,
+    tamanho INTEGER,
+    dados_base64 TEXT,
+    url_publica TEXT,
+    usuario_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
+);
+
 -- ==============================================================================
 -- ÍNDICES PARA ALTA PERFORMANCE DE CONSULTA
 -- ==============================================================================
@@ -161,6 +208,7 @@ CREATE INDEX IF NOT EXISTS idx_candidatos_memo ON public.candidatos(memorando_id
 CREATE INDEX IF NOT EXISTS idx_historico_geral ON public.historico_movimentacoes(geral_id);
 CREATE INDEX IF NOT EXISTS idx_auditoria_tabela_reg ON public.auditoria(tabela, registro_id);
 CREATE INDEX IF NOT EXISTS idx_responsaveis_cpf ON public.responsaveis(cpf);
+CREATE INDEX IF NOT EXISTS idx_acessos_cidadao_cpf ON public.acessos_cidadao(cpf);
 
 -- ==============================================================================
 -- ROW LEVEL SECURITY (RLS) E POLÍTICAS DE ACESSO
@@ -173,13 +221,19 @@ ALTER TABLE public.geral ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.historico_movimentacoes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.auditoria ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.mapeamento_localizacao ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.orgao_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.acessos_cidadao ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.imagens_sync ENABLE ROW LEVEL SECURITY;
 
 -- Política geral para usuários autenticados no Supabase (Acesso de leitura)
-CREATE POLICY "Leitura permitida a autenticados" ON public.geral FOR SELECT USING (true);
-CREATE POLICY "Leitura permitida a autenticados" ON public.memorandos FOR SELECT USING (true);
-CREATE POLICY "Leitura permitida a autenticados" ON public.candidatos FOR SELECT USING (true);
-CREATE POLICY "Leitura permitida a autenticados" ON public.responsaveis FOR SELECT USING (true);
-CREATE POLICY "Leitura permitida a autenticados" ON public.mapeamento_localizacao FOR SELECT USING (true);
-CREATE POLICY "Leitura permitida a autenticados" ON public.historico_movimentacoes FOR SELECT USING (true);
-CREATE POLICY "Leitura permitida a autenticados" ON public.auditoria FOR SELECT USING (true);
-CREATE POLICY "Leitura permitida a autenticados" ON public.usuarios FOR SELECT USING (true);
+CREATE POLICY "Leitura permitida a autenticados" ON public.geral FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Leitura permitida a autenticados" ON public.memorandos FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Leitura permitida a autenticados" ON public.candidatos FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Leitura permitida a autenticados" ON public.responsaveis FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Leitura permitida a autenticados" ON public.mapeamento_localizacao FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Leitura permitida a autenticados" ON public.historico_movimentacoes FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Leitura permitida a autenticados" ON public.auditoria FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Leitura permitida a autenticados" ON public.usuarios FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Leitura permitida a autenticados" ON public.orgao_config FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Leitura permitida a autenticados" ON public.acessos_cidadao FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Leitura permitida a autenticados" ON public.imagens_sync FOR ALL USING (true) WITH CHECK (true);

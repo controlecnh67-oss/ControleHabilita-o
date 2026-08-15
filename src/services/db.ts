@@ -2695,7 +2695,8 @@ export function exportDatabaseJSON(): string {
     geral: getStoredList("geral", SEED_GERAL),
     historico: getStoredList("historico", SEED_HISTORICO),
     auditoria: getStoredList("auditoria", SEED_AUDITORIA),
-    mapeamento: getStoredList("mapeamento", SEED_MAPEAMENTO)
+    mapeamento: getStoredList("mapeamento", SEED_MAPEAMENTO),
+    acessos_cidadao: getAcessosCidadaoLogs()
   };
   return JSON.stringify(data, null, 2);
 }
@@ -2711,11 +2712,12 @@ export function exportDatabaseExcel(): void {
     { name: "Candidatos", key: "candidatos", seed: SEED_CANDIDATOS },
     { name: "Protocolo Geral CNHs", key: "geral", seed: SEED_GERAL },
     { name: "Histórico Movimentos", key: "historico", seed: SEED_HISTORICO },
-    { name: "Auditoria Sistema", key: "auditoria", seed: SEED_AUDITORIA }
+    { name: "Auditoria Sistema", key: "auditoria", seed: SEED_AUDITORIA },
+    { name: "Consultas Cidadão", key: "acessos_cidadao", seed: [] }
   ];
 
   for (const col of collections) {
-    const list = getStoredList<any>(col.key, col.seed);
+    const list = col.key === "acessos_cidadao" ? getAcessosCidadaoLogs() : getStoredList<any>(col.key, col.seed);
     const formattedData = list.map((item: any) => {
       const copy: Record<string, any> = {};
       for (const k in item) {
@@ -2748,7 +2750,7 @@ export function exportTableExcel(tableName: string, label: string): void {
     auditoria: SEED_AUDITORIA
   };
 
-  const list = getStoredList<any>(tableName, seedsMap[tableName] || []);
+  const list = tableName === "acessos_cidadao" ? getAcessosCidadaoLogs() : getStoredList<any>(tableName, seedsMap[tableName] || []);
   const formattedData = list.map((item: any) => {
     const copy: Record<string, any> = {};
     for (const k in item) {
@@ -2809,6 +2811,12 @@ export function importDatabaseJSON(jsonContent: string): { success: boolean; mes
     if (Array.isArray(data.mapeamento)) {
       saveStoredList("mapeamento", data.mapeamento);
       counts.mapeamento = data.mapeamento.length;
+    }
+    if (Array.isArray(data.acessos_cidadao)) {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(data.acessos_cidadao));
+      }
+      counts.acessos_cidadao = data.acessos_cidadao.length;
     }
 
     return {
@@ -3263,7 +3271,17 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
   const results: SyncStatusItem[] = [];
 
   for (const item of collections) {
-    const localList = getStoredList(item.key, []);
+    let localCount = 0;
+    if (item.key === "acessos_cidadao") {
+      localCount = getAcessosCidadaoLogs().length;
+    } else if (item.key === "orgao") {
+      localCount = 1;
+    } else if (item.key === "imagens") {
+      localCount = 0;
+    } else {
+      localCount = getStoredList(item.key, []).length;
+    }
+
     let supCount: number | null = null;
     let status: 'synced' | 'pending' | 'error' | 'not_configured' = 'not_configured';
     let lastError: string | undefined = undefined;
@@ -3275,7 +3293,7 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
           .select("*", { count: "exact", head: true });
         if (!error && count !== null) {
           supCount = count;
-          status = localList.length === supCount ? 'synced' : 'pending';
+          status = localCount === supCount ? 'synced' : 'pending';
         } else if (error) {
           status = 'error';
           if (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('schema')) {
@@ -3294,7 +3312,7 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
       key: item.key,
       label: item.label,
       tableName: item.tableName,
-      localCount: localList.length,
+      localCount,
       supabaseCount: supCount,
       status,
       lastError
@@ -3685,7 +3703,7 @@ export async function syncLocalToSupabase(
   try {
     const acessosLogs = getAcessosCidadaoLogs();
     if (acessosLogs.length > 0) {
-      log("📦 Sincronizando 'acessos_cidadao' (Logs de Consulta do Cidadão)...");
+      log(`📦 Sincronizando 'acessos_cidadao' (${acessosLogs.length} registros de consultas do cidadão)...`);
       const payload = acessosLogs.map(a => ({
         id: a.id,
         numero: a.numero,
@@ -3700,11 +3718,12 @@ export async function syncLocalToSupabase(
         ip_mascarado: a.ip_mascarado || null
       }));
       const synced = await upsertInBatches("acessos_cidadao", payload, 250);
-      log(`✅ Tabela 'acessos_cidadao' sincronizada (${synced} registros).`);
+      log(`✅ Tabela 'acessos_cidadao' sincronizada com sucesso (${synced} registros).`);
       totalSynced += synced;
     }
   } catch (err: any) {
-    log(`ℹ️ Aviso em 'acessos_cidadao': ${err.message}`);
+    log(`❌ Erro em 'acessos_cidadao': ${err.message}. Verifique se a tabela foi criada no Supabase com as colunas corretas.`);
+    errors.push(`acessos_cidadao: ${err.message}`);
   }
 
   // 10. Configuração do Órgão e Logomarca

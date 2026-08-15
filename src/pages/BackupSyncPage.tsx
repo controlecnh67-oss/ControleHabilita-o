@@ -45,6 +45,7 @@ import {
   supabase, 
   isSupabaseConfigured 
 } from "../services/supabase";
+import { GoogleDriveBackupCard } from "../components/GoogleDriveBackupCard";
 
 export const BackupSyncPage: React.FC = () => {
   const [stats, setStats] = useState<SyncStatusItem[]>([]);
@@ -202,6 +203,20 @@ CREATE TABLE orgao_config (
   updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
 );
 
+CREATE TABLE acessos_cidadao (
+  id TEXT PRIMARY KEY,
+  numero INTEGER,
+  data_hora TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()),
+  cpf TEXT NOT NULL,
+  nome_titular TEXT,
+  situacao TEXT,
+  resultado_status TEXT,
+  canal TEXT,
+  dispositivo TEXT,
+  cidade_origem TEXT,
+  ip_mascarado TEXT
+);
+
 CREATE TABLE imagens_sync (
   id TEXT PRIMARY KEY,
   tabela_ref TEXT,
@@ -225,6 +240,7 @@ ALTER TABLE geral_cnhs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE historico_movimentacoes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auditoria ENABLE ROW LEVEL SECURITY;
 ALTER TABLE orgao_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE acessos_cidadao ENABLE ROW LEVEL SECURITY;
 ALTER TABLE imagens_sync ENABLE ROW LEVEL SECURITY;
 
 -- POLÍTICAS DE PERMISSÃO (RLS)
@@ -254,6 +270,9 @@ CREATE POLICY "Permitir acesso total em auditoria" ON auditoria FOR ALL USING (t
 
 DROP POLICY IF EXISTS "Permitir acesso total em orgao_config" ON orgao_config;
 CREATE POLICY "Permitir acesso total em orgao_config" ON orgao_config FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permitir acesso total em acessos_cidadao" ON acessos_cidadao;
+CREATE POLICY "Permitir acesso total em acessos_cidadao" ON acessos_cidadao FOR ALL USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Permitir acesso total em imagens_sync" ON imagens_sync;
 CREATE POLICY "Permitir acesso total em imagens_sync" ON imagens_sync FOR ALL USING (true) WITH CHECK (true);
@@ -285,7 +304,7 @@ CREATE POLICY "Permitir Delecao de Imagens" ON storage.objects FOR DELETE USING 
 DO $$
 DECLARE
   t text;
-  tabelas text[] := ARRAY['usuarios', 'responsaveis', 'mapeamento_localizacao', 'memorandos', 'candidatos', 'geral_cnhs', 'historico_movimentacoes', 'auditoria', 'orgao_config', 'imagens_sync'];
+  tabelas text[] := ARRAY['usuarios', 'responsaveis', 'mapeamento_localizacao', 'memorandos', 'candidatos', 'geral_cnhs', 'historico_movimentacoes', 'auditoria', 'orgao_config', 'acessos_cidadao', 'imagens_sync'];
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
     CREATE PUBLICATION supabase_realtime;
@@ -1032,6 +1051,9 @@ END $$;`;
           </table>
         </div>
       </div>
+
+      {/* Cartão: Integração com Google Drive (Backups Diários em CSV, Excel e JSON) */}
+      <GoogleDriveBackupCard />
 
       {/* Cartão 3: Ferramentas de Backup Físico (Excel, JSON e SQL) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

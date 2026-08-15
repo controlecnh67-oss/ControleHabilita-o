@@ -19,6 +19,7 @@ import { RelatoriosPage } from "./pages/RelatoriosPage";
 import { isTabAllowedForProfile, NavTab } from "./types";
 import { loadOrgaoConfigFromSupabase } from "./services/orgaoService";
 import { isSupabaseConfigured } from "./services/supabase";
+import { checkAndRunDailyGoogleDriveBackup } from "./services/googleDriveService";
 
 const MainLayout: React.FC = () => {
   const { user, isAuthenticated, isLoading, timeRemaining, logout } = useAuth();
@@ -37,6 +38,19 @@ const MainLayout: React.FC = () => {
       loadOrgaoConfigFromSupabase().catch(() => {});
     }
   }, []);
+
+  // Execução da rotina de verificação de backup diário automático para o Google Drive
+  useEffect(() => {
+    if (isAuthenticated) {
+      // Executa após 3 segundos da inicialização para não interferir na renderização inicial
+      const timer = setTimeout(() => {
+        checkAndRunDailyGoogleDriveBackup().catch((e) => {
+          console.warn("Aviso na verificação de backup diário do Google Drive:", e);
+        });
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [isAuthenticated]);
 
   useEffect(() => {
     const handleUrlChange = () => {
