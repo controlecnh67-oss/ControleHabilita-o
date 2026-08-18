@@ -19,8 +19,8 @@ export interface OrgaoConfig {
 export const DEFAULT_ORGAO_CONFIG: OrgaoConfig = {
   governo: "GOVERNO DO ESTADO DO PARÁ",
   secretaria: "SECRETARIA DE ESTADO DE SEGURANÇA PÚBLICA",
-  orgao: "DEPARTAMENTO DE TRÂNSITO DO ESTADO DO PARÁ",
-  sigla: "DETRAN/PA",
+  orgao: "AGÊNCIA DE ITAITUBA",
+  sigla: "AGÊNCIA ITAITUBA",
   origem_padrao: "DA AGÊNCIA DO DETRAN DE ITAITUBA-PA",
   destino_padrao: "PARA AGÊNCIA DO DETRAN DE SANTARÉM-PA",
   cidade_uf: "Itaituba - PA",
@@ -43,7 +43,16 @@ export function getOrgaoConfig(): OrgaoConfig {
     const raw = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
     if (raw) {
       const parsed = JSON.parse(raw);
+      if (parsed.orgao === "DEPARTAMENTO DE TRÂNSITO DO ESTADO DO PARÁ" || !parsed.orgao) {
+        parsed.orgao = "AGÊNCIA DE ITAITUBA";
+      }
+      if (parsed.sigla === "DETRAN/PA" || !parsed.sigla) {
+        parsed.sigla = "AGÊNCIA ITAITUBA";
+      }
       memoryConfig = { ...DEFAULT_ORGAO_CONFIG, ...parsed };
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryConfig));
+      }
       return memoryConfig!;
     }
   } catch (e) {

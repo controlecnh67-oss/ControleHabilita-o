@@ -181,7 +181,7 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <h1 className="text-sm font-extrabold tracking-tight text-white">DETRAN / PA</h1>
+              <h1 className="text-sm font-extrabold tracking-tight text-white">AGÊNCIA ITAITUBA</h1>
               <span className="bg-blue-500/20 text-blue-300 text-[10px] font-bold px-1.5 py-0.5 rounded border border-blue-400/30">
                 Público
               </span>
@@ -498,7 +498,7 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
 
       {/* Rodapé Mobile */}
       <footer className="text-center text-[10px] text-slate-500 space-y-1 pt-4">
-        <p>© 2026 DETRAN/PA - Sistema de Protocolo e Atendimento de CNHs</p>
+        <p>© 2026 AGÊNCIA ITAITUBA - Sistema de Protocolo e Atendimento de CNHs</p>
         <p className="text-slate-600">Sessão pública mobile e segura</p>
       </footer>
 

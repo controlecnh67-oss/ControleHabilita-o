@@ -122,7 +122,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onOpenConsultaPublica }) =
               <ShieldCheck className="w-8 h-8 text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-extrabold tracking-tight">DETRAN / PA</h1>
+              <h1 className="text-2xl font-extrabold tracking-tight">AGÊNCIA ITAITUBA</h1>
               <p className="text-blue-200 text-xs font-semibold uppercase tracking-wider mt-1">
                 Setor de Protocolo Geral
               </p>

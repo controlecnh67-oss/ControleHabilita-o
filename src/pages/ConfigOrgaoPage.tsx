@@ -365,7 +365,7 @@ export const ConfigOrgaoPage: React.FC = () => {
                     {formData.secretaria || "SECRETARIA DE ESTADO"}
                   </p>
                   <p className="text-[10px] font-bold text-slate-800 leading-tight">
-                    {formData.orgao || "DEPARTAMENTO DE TRÂNSITO"}
+                    {formData.orgao || "AGÊNCIA DE ITAITUBA"}
                   </p>
                 </div>
               </div>
@@ -431,7 +431,7 @@ export const ConfigOrgaoPage: React.FC = () => {
                   disabled={!canManage}
                   value={formData.orgao}
                   onChange={(e) => handleChange("orgao", e.target.value)}
-                  placeholder="Ex: DEPARTAMENTO DE TRÂNSITO DO ESTADO DO PARÁ"
+                  placeholder="Ex: AGÊNCIA DE ITAITUBA"
                   className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-bold"
                 />
               </div>

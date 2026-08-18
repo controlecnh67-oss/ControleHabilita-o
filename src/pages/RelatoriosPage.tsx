@@ -44,7 +44,7 @@ import {
 } from "recharts";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { getOrgaoConfig, addPDFHeaderLogo } from "../services/orgaoService";
+import { getOrgaoConfig } from "../services/orgaoService";
 import * as XLSX from "xlsx";
 import { 
   getGeralCNHs, 
@@ -487,32 +487,29 @@ export const RelatoriosPage: React.FC = () => {
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
 
-    // Cabeçalho Institucional DETRAN
-    doc.setFillColor(15, 23, 42); // slate-900
-    doc.rect(0, 0, pageWidth, 24, "F");
-
-    // Tenta desenhar a logo dentro do bloco azul/slate
-    addPDFHeaderLogo(doc, 10, 3, 18, 18);
-
-    doc.setTextColor(255, 255, 255);
+    // Cabeçalho Institucional Limpo e Claro (Fundo Branco Sem Logomarca)
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text(`${cfg.orgao.toUpperCase()} - ${cfg.sigla}`, pageWidth / 2, 10, { align: "center" });
-    doc.setFontSize(8.5);
-    doc.setFont("helvetica", "normal");
-    doc.text((cfg.subtitulo_relatorio || "COORDENADORIA DE HABILITAÇÃO & PROTOCOLO GERAL DE CNHs").toUpperCase(), pageWidth / 2, 16, { align: "center" });
-
-    // Faixa amarela institucional
-    doc.setFillColor(234, 179, 8); // amber-500
-    doc.rect(0, 24, pageWidth, 2, "F");
-
-    // Subtítulo do Relatório
-    doc.setTextColor(30, 41, 59);
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    doc.text("RELATÓRIO SETORIAL DE MOVIMENTAÇÃO DE CNHs E MEMORANDOS", 14, 34);
+    doc.setFontSize(13);
+    doc.setTextColor(15, 23, 42); // slate-900
+    doc.text("AGÊNCIA DE ITAITUBA", pageWidth / 2, 13, { align: "center" });
 
     doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(71, 85, 105); // slate-600
+    doc.text((cfg.subtitulo_relatorio || "COORDENADORIA DE HABILITAÇÃO & PROTOCOLO GERAL DE CNHs").toUpperCase(), pageWidth / 2, 19, { align: "center" });
+
+    // Linha divisória limpa e elegante
+    doc.setDrawColor(203, 213, 225); // slate-300
+    doc.setLineWidth(0.5);
+    doc.line(14, 25, pageWidth - 14, 25);
+
+    // Subtítulo do Relatório
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(13);
+    doc.setFont("helvetica", "bold");
+    doc.text("RELATÓRIO SETORIAL DE MOVIMENTAÇÃO DE CNHs E MEMORANDOS", 14, 33);
+
+    doc.setFontSize(8.5);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(100, 116, 139);
 
@@ -525,10 +522,10 @@ export const RelatoriosPage: React.FC = () => {
       ? "Setor Retaguarda (Elaboração de Memorandos & Remessas)" 
       : reparticaoFiltro;
 
-    doc.text(`Período de Análise: ${periodoStr} | Setor / Repartição: ${reparticaoLabel}`, 14, 40);
-    doc.text(`Emissão: ${new Date().toLocaleString("pt-BR")} | Emitido por: ${user?.nome_curto || user?.nome || "Servidor DETRAN"}`, 14, 45);
+    doc.text(`Período de Análise: ${periodoStr} | Setor / Repartição: ${reparticaoLabel}`, 14, 39);
+    doc.text(`Emissão: ${new Date().toLocaleString("pt-BR")} | Emitido por: ${user?.nome_curto || user?.nome || "Servidor Responsável"}`, 14, 44);
 
-    let currentY = 50;
+    let currentY = 49;
 
     // Tabela 1: Resumo dos Números Diários e Indicadores do Período
     doc.setFont("helvetica", "bold");
@@ -656,7 +653,7 @@ export const RelatoriosPage: React.FC = () => {
     // Linha de assinatura 2
     doc.line(120, currentY, 190, currentY);
     doc.text("Chefia de Protocolo e Habilitação", 155, currentY + 4, { align: "center" });
-    doc.text("Visto da Coordenadoria / DETRAN-AP", 155, currentY + 8, { align: "center" });
+    doc.text("Visto da Coordenadoria / Agência Itaituba", 155, currentY + 8, { align: "center" });
 
     // Numeração de Páginas
     const totalPages = (doc as any).internal.getNumberOfPages();
@@ -665,14 +662,14 @@ export const RelatoriosPage: React.FC = () => {
       doc.setFontSize(7.5);
       doc.setTextColor(148, 163, 184);
       doc.text(
-        `Página ${i} de ${totalPages} - Sistema Integrado de Protocolo de CNHs - DETRAN AP`,
+        `Página ${i} de ${totalPages} - Sistema Integrado de Protocolo de CNHs - AGÊNCIA ITAITUBA`,
         pageWidth / 2,
         287,
         { align: "center" }
       );
     }
 
-    doc.save(`Relatorio_Setorial_DETRAN_${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Relatorio_Setorial_Itaituba_${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
   // ---- EXPORTAÇÃO EXCEL ----
@@ -681,7 +678,7 @@ export const RelatoriosPage: React.FC = () => {
 
     // Planilha 1: Resumo Executivo
     const resumoData = [
-      ["DEPARTAMENTO ESTADUAL DE TRÂNSITO - DETRAN/AP"],
+      ["AGÊNCIA DE ITAITUBA - PROTOCOLO GERAL DE CNHS"],
       ["RELATÓRIO SETORIAL E ESTATÍSTICO DE PROTOCÓLO"],
       ["Período:", `${dateRange.start.toLocaleDateString("pt-BR")} até ${dateRange.end.toLocaleDateString("pt-BR")}`],
       ["Data de Exportação:", new Date().toLocaleString("pt-BR")],
