@@ -401,7 +401,7 @@ export const RelatoriosPage: React.FC = () => {
       totalAcoes: number;
     }> = {};
 
-    // Criar mapa de correspondência apenas dos usuários oficiais ativos da lista de usuários
+    // Criar mapa de correspondência de usuários oficiais
     const userLookupMap: Record<string, string> = {};
 
     usuarios.forEach((u) => {
@@ -421,43 +421,100 @@ export const RelatoriosPage: React.FC = () => {
       };
 
       if (u.id) userLookupMap[u.id] = key;
-      if (u.login) userLookupMap[u.login.trim().toLowerCase()] = key;
-      if (u.nome) userLookupMap[u.nome.trim().toLowerCase()] = key;
-      if (u.nome_curto) userLookupMap[u.nome_curto.trim().toLowerCase()] = key;
+      if (u.login) {
+        const cleanLogin = u.login.trim().toLowerCase().replace(/^@/, "");
+        userLookupMap[cleanLogin] = key;
+        userLookupMap[`@${cleanLogin}`] = key;
+      }
+      if (u.nome) {
+        const cleanNome = u.nome.trim().toLowerCase();
+        userLookupMap[cleanNome] = key;
+        // Mapear primeiro nome
+        const first = cleanNome.split(" ")[0];
+        if (first && !userLookupMap[first]) userLookupMap[first] = key;
+      }
+      if (u.nome_curto) {
+        const cleanCurto = u.nome_curto.trim().toLowerCase();
+        userLookupMap[cleanCurto] = key;
+      }
     });
 
-    // Função de busca estrita contra a lista oficial de usuários
-    const findUserId = (rawNameOrId?: string) => {
+    // Função de busca inteligente por ID, login ou nome
+    const findUserId = (rawNameOrId?: string | null): string | null => {
       if (!rawNameOrId) return null;
-      const lower = rawNameOrId.trim().toLowerCase();
-      return userLookupMap[rawNameOrId] || userLookupMap[lower] || null;
+      const str = String(rawNameOrId).trim();
+      const lower = str.toLowerCase();
+      const cleanAt = lower.replace(/^@/, "");
+
+      if (userLookupMap[str]) return userLookupMap[str];
+      if (userLookupMap[lower]) return userLookupMap[lower];
+      if (userLookupMap[cleanAt]) return userLookupMap[cleanAt];
+
+      // Busca por correspondência parcial
+      for (const [pattern, uId] of Object.entries(userLookupMap)) {
+        if (pattern.length >= 3 && (lower.includes(pattern) || pattern.includes(lower))) {
+          return uId;
+        }
+      }
+
+      // Se for um usuário não listado (ex: legado), criar dinamicamente para não perder a produção
+      if (!mapServidores[str]) {
+        mapServidores[str] = {
+          id: str,
+          nome: str,
+          login: str.toLowerCase().replace(/\s+/g, "."),
+          perfil: "Operador",
+          setor: "Protocolo",
+          recebidas: 0,
+          entregues: 0,
+          memorandos: 0,
+          remetidas: 0,
+          totalAcoes: 0
+        };
+        userLookupMap[str] = str;
+        userLookupMap[lower] = str;
+      }
+      return str;
     };
 
-    // Processar CNHs recebidas ou remetidas no período
+    // Rastrear quais CNHs já tiveram suas ações contabilizadas via histórico para evitar duplicação
+    const cnhsComHistoricoNoPeriodo = new Set<string>();
+
+    // 1. Processar o Histórico de Movimentações (Fonte da Verdade de Ações)
+    histFiltradoPeriodo.forEach((h) => {
+      if (h.geral_id) {
+        cnhsComHistoricoNoPeriodo.add(h.geral_id);
+      }
+      const uId = findUserId(h.usuario_id) || findUserId(h.usuario_nome);
+      if (uId && mapServidores[uId]) {
+        if (h.situacao_nova === "Recebida") {
+          mapServidores[uId].recebidas += 1;
+        } else if (h.situacao_nova === "Entregue") {
+          mapServidores[uId].entregues += 1;
+        } else if (h.situacao_nova === "Remetida") {
+          mapServidores[uId].remetidas += 1;
+        }
+      }
+    });
+
+    // 2. Processar CNHs que não possuem histórico explícito no período (ex: inserções diretas)
     cnhsFiltradasPeriodo.forEach((c) => {
+      if (cnhsComHistoricoNoPeriodo.has(c.id)) {
+        return; // Já contabilizado pelo histórico
+      }
       const uId = findUserId(c.usuario_id) || findUserId(c.usuario_nome);
       if (uId && mapServidores[uId]) {
         if (c.situacao === "Recebida") {
           mapServidores[uId].recebidas += 1;
+        } else if (c.situacao === "Entregue") {
+          mapServidores[uId].entregues += 1;
         } else if (c.situacao === "Remetida") {
           mapServidores[uId].remetidas += 1;
         }
       }
     });
 
-    // Processar Histórico de movimentações (Entregas e Remessas)
-    histFiltradoPeriodo.forEach((h) => {
-      const uId = findUserId(h.usuario_id) || findUserId(h.usuario_nome);
-      if (uId && mapServidores[uId]) {
-        if (h.situacao_nova === "Entregue") {
-          mapServidores[uId].entregues += 1;
-        } else if (h.situacao_nova === "Remetida" && h.situacao_anterior !== "Remetida") {
-          mapServidores[uId].remetidas += 1;
-        }
-      }
-    });
-
-    // Processar Memorandos
+    // 3. Processar Memorandos Elaborados no período
     memorandosPeriodo.forEach((m) => {
       const uId = findUserId(m.usuario_id) || findUserId(m.usuario_nome);
       if (uId && mapServidores[uId]) {
