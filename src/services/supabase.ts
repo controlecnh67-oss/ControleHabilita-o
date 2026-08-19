@@ -89,6 +89,42 @@ export function clearLocalSupabaseConfig(): void {
   }
 }
 
+/**
+ * Assina eventos do Supabase Realtime (PostgreSQL changes) em uma tabela pública.
+ * Retorna uma função de cancelamento (unsubscribe).
+ */
+export function subscribeToSupabaseRealtime(
+  table: string,
+  callback: (payload: any) => void
+): () => void {
+  if (!isSupabaseConfigured()) {
+    return () => {};
+  }
+  try {
+    const client = getSupabaseClient();
+    const channelName = `realtime_${table}_${Math.random().toString(36).substring(2, 8)}`;
+    const channel = client
+      .channel(channelName)
+      .on(
+        "postgres_changes" as any,
+        { event: "*", schema: "public", table },
+        (payload: any) => {
+          callback(payload);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      try {
+        client.removeChannel(channel);
+      } catch {}
+    };
+  } catch (err) {
+    console.warn(`Erro ao assinar Realtime para ${table}:`, err);
+    return () => {};
+  }
+}
+
 export function getPublicShareUrl(cpf?: string): string {
   if (typeof window === "undefined") return "";
   const url = new URL(window.location.origin + window.location.pathname);

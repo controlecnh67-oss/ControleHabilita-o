@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { 
   FileText, 
   Plus, 
@@ -17,7 +17,10 @@ import {
   ArrowRight,
   Download,
   ArrowDownAZ,
-  RotateCcw
+  RotateCcw,
+  RefreshCw,
+  Cloud,
+  CloudOff
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -35,6 +38,7 @@ import {
   remeterMemorando,
   reabrirMemorando
 } from "../services/db";
+import { isSupabaseConfigured, subscribeToSupabaseRealtime } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
 import { Badge } from "../components/ui/Badge";
@@ -56,11 +60,17 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
   const { user, canEdit } = useAuth();
   const [memorandos, setMemorandos] = useState<Memorando[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMemo, setSelectedMemo] = useState<Memorando | null>(null);
   const [candidatos, setCandidatos] = useState<Candidato[]>([]);
   const [loadingCands, setLoadingCands] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isCloudActive, setIsCloudActive] = useState<boolean>(() => isSupabaseConfigured());
+
+  const selectedMemoRef = useRef<Memorando | null>(null);
+  selectedMemoRef.current = selectedMemo;
+  const isFetchingRef = useRef(false);
 
   // Modais
   const [isMemoModalOpen, setIsMemoModalOpen] = useState(false);
@@ -87,28 +97,45 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
   const [submittingCand, setSubmittingCand] = useState(false);
   const [sortingCands, setSortingCands] = useState(false);
 
-  const fetchDados = async (targetId?: string | null) => {
-    setLoading(true);
+  const fetchDados = useCallback(async (targetId?: string | null, silent: boolean = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    if (!silent) setLoading(true);
+    setIsRefreshing(true);
     try {
+      setIsCloudActive(isSupabaseConfigured());
       const data = await getMemorandos();
       setMemorandos(data);
-      const idToFind = targetId !== undefined ? targetId : selectedMemo?.id;
+
+      const currentSelected = selectedMemoRef.current;
+      const idToFind = targetId !== undefined ? targetId : currentSelected?.id;
       if (idToFind) {
         const updated = data.find((m) => m.id === idToFind);
         if (updated) {
           setSelectedMemo(updated);
+          // Recarregar candidatos do memorando selecionado
+          try {
+            const cands = await getCandidatosByMemorando(updated.id);
+            setCandidatos(cands);
+          } catch (e) {
+            console.warn("Aviso ao carregar candidatos:", e);
+          }
         } else {
           setSelectedMemo(null);
+          setCandidatos([]);
         }
       } else if (targetId === null) {
         setSelectedMemo(null);
+        setCandidatos([]);
       }
     } catch (err) {
       console.error("Erro ao buscar memorandos:", err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
+      setIsRefreshing(false);
+      isFetchingRef.current = false;
     }
-  };
+  }, []);
 
   const fetchCandidatos = async (memoId: string) => {
     setLoadingCands(true);
@@ -123,8 +150,55 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
   };
 
   useEffect(() => {
+    // 1. Carga inicial
     fetchDados();
-  }, []);
+
+    // 2. Realtime do Supabase: escutar inserções/alterações/exclusões em 'memorandos' e 'candidatos'
+    const unsubMemos = subscribeToSupabaseRealtime("memorandos", () => {
+      fetchDados(undefined, true);
+    });
+
+    const unsubCands = subscribeToSupabaseRealtime("candidatos", () => {
+      fetchDados(undefined, true);
+    });
+
+    // 3. Evento global disparado quando dados são salvos localmente ou em outra aba
+    const handleSyncEvent = (e: any) => {
+      const detailType = e?.detail?.type;
+      if (detailType === "all" || detailType === "memorandos" || detailType === "candidatos") {
+        fetchDados(undefined, true);
+      }
+    };
+    window.addEventListener("detran_sync_updated", handleSyncEvent);
+
+    // 4. Sincronização automática quando o usuário volta para a aba ou janela
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        fetchDados(undefined, true);
+      }
+    };
+    const handleWindowFocus = () => {
+      fetchDados(undefined, true);
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleWindowFocus);
+
+    // 5. Polling de sincronização em segundo plano a cada 10 segundos
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fetchDados(undefined, true);
+      }
+    }, 10000);
+
+    return () => {
+      unsubMemos();
+      unsubCands();
+      window.removeEventListener("detran_sync_updated", handleSyncEvent);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleWindowFocus);
+      clearInterval(interval);
+    };
+  }, [fetchDados]);
 
   const handleSelectMemo = async (memo: Memorando) => {
     setSelectedMemo(memo);
@@ -669,7 +743,36 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={() => fetchDados(undefined, false)}
+            disabled={isRefreshing}
+            title={isCloudActive ? "Forçar sincronização com o banco de dados Supabase na nuvem" : "Atualizar dados locais"}
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium rounded-xl text-xs transition-all border border-slate-200 dark:border-slate-700 shrink-0 cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-blue-600 dark:text-blue-400 ${isRefreshing ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline">Sincronizar</span>
+          </button>
+
+          {isCloudActive ? (
+            <div 
+              title="Conectado ao Supabase: Sincronização em tempo real ativa entre computadores"
+              className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 rounded-xl text-[11px] font-medium"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <Cloud className="w-3.5 h-3.5" />
+              <span>Nuvem Ativa</span>
+            </div>
+          ) : (
+            <div 
+              title="Supabase não configurado neste navegador. Configure em 'Banco & Sync' para sincronizar com outras máquinas"
+              className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 rounded-xl text-[11px] font-medium"
+            >
+              <CloudOff className="w-3.5 h-3.5" />
+              <span>Modo Local</span>
+            </div>
+          )}
+
           <div className="relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
@@ -677,7 +780,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
               placeholder="Pesquisar número, remessa..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500 transition-all w-full sm:w-64"
+              className="pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500 transition-all w-full sm:w-56"
             />
           </div>
 

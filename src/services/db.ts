@@ -1224,6 +1224,34 @@ export async function getMemorandos(): Promise<Memorando[]> {
   })).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
 
+export async function getCandidatosByMemorando(memorando_id: string): Promise<Candidato[]> {
+  const deletedCandIds = getDeletedIds("candidatos");
+  if (isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase
+        .from("candidatos")
+        .select("*")
+        .eq("memorando_id", memorando_id);
+      if (!error && data && Array.isArray(data)) {
+        const validRemote = data.filter((c) => !deletedCandIds.has(c.id));
+        const localAll = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+        const remoteIds = new Set(validRemote.map((c) => c.id));
+        const otherCands = localAll.filter((c) => c.memorando_id !== memorando_id && !deletedCandIds.has(c.id));
+        const localThisMemo = localAll.filter((c) => c.memorando_id === memorando_id && !deletedCandIds.has(c.id) && !remoteIds.has(c.id));
+        const merged = [...otherCands, ...validRemote, ...localThisMemo];
+        saveStoredList("candidatos", merged);
+        return [...validRemote, ...localThisMemo].sort((a, b) => (parseInt(a.numero || "0", 10) - parseInt(b.numero || "0", 10)));
+      }
+    } catch (err) {
+      console.warn("Aviso ao buscar candidatos por memorando no Supabase:", err);
+    }
+  }
+  const cands = await getCandidatosAll();
+  return cands
+    .filter((c) => c.memorando_id === memorando_id)
+    .sort((a, b) => (parseInt(a.numero || "0", 10) - parseInt(b.numero || "0", 10)));
+}
+
 export async function createMemorando(
   data: { numero: string; remessa?: string },
   userId: string,
@@ -1233,12 +1261,17 @@ export async function createMemorando(
   if (list.some((m) => m.numero.trim().toLowerCase() === data.numero.trim().toLowerCase())) {
     throw new Error("Já existe um memorando com este número.");
   }
+
+  const memoId = typeof crypto !== "undefined" && crypto.randomUUID 
+    ? crypto.randomUUID() 
+    : (toValidUUID(`memo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`) || `memo-${Date.now()}`);
+
   let novo: Memorando = {
-    id: `memo-${Date.now()}`,
-    numero: data.numero,
+    id: memoId,
+    numero: data.numero.trim(),
     usuario_id: userId,
     usuario_nome: userNome,
-    remessa: data.remessa || "",
+    remessa: data.remessa ? data.remessa.trim() : "",
     status: "Em elaboração",
     created_at: new Date().toISOString(),
     candidatos_count: 0
@@ -1246,22 +1279,47 @@ export async function createMemorando(
 
   if (isSupabaseConfigured()) {
     try {
+      const payload: any = {
+        id: novo.id,
+        numero: novo.numero,
+        remessa: novo.remessa || null,
+        status: novo.status,
+        candidatos_count: 0,
+        created_at: novo.created_at
+      };
+
+      if (novo.usuario_nome) payload.usuario_nome = novo.usuario_nome;
+      if (novo.usuario_id) payload.usuario_id = novo.usuario_id;
+
       const { data: inserted, error } = await supabase
         .from("memorandos")
-        .insert([{
-          id: novo.id,
-          numero: novo.numero,
-          usuario_id: novo.usuario_id,
-          usuario_nome: novo.usuario_nome,
-          remessa: novo.remessa,
-          status: novo.status,
-          created_at: novo.created_at,
-          candidatos_count: 0
-        }])
+        .insert([payload])
         .select()
         .single();
+
       if (error) {
-        console.error("Erro no Supabase ao criar memorando:", error);
+        console.warn("Aviso no Supabase ao criar memorando, tentando envio seguro:", error.message);
+        // Fallback: tentar sem colunas opcionais ou foreign keys restritivas
+        const safePayload: any = {
+          id: novo.id,
+          numero: novo.numero,
+          remessa: novo.remessa || null,
+          status: novo.status,
+          created_at: novo.created_at
+        };
+        if (novo.usuario_nome) safePayload.usuario_nome = novo.usuario_nome;
+
+        const { data: insertedSafe, error: errorSafe } = await supabase
+          .from("memorandos")
+          .insert([safePayload])
+          .select()
+          .single();
+
+        if (errorSafe) {
+          console.error("Erro no Supabase ao salvar memorando:", errorSafe);
+        } else if (insertedSafe) {
+          novo = { ...novo, ...insertedSafe };
+        }
       } else if (inserted) {
         novo = { ...novo, ...inserted };
       }
@@ -1271,6 +1329,7 @@ export async function createMemorando(
   }
 
   saveStoredList("memorandos", [novo, ...list.filter((m) => m.id !== novo.id)]);
+  notifyDataSync("memorandos");
   await logAuditoria("memorandos", novo.numero, "Inclusão", userId, userNome, null, novo);
   return novo;
 }
@@ -1290,14 +1349,24 @@ export async function updateMemorando(
 
   if (isSupabaseConfigured()) {
     try {
-      const { error } = await supabase.from("memorandos").update(data).eq("id", id);
-      if (error) console.error("Erro no Supabase ao atualizar memorando:", error);
+      const updateData: any = { ...data };
+      delete updateData.candidatos_count; // coluna computada
+      const { error } = await supabase.from("memorandos").update(updateData).eq("id", id);
+      if (error) {
+        console.warn("Aviso ao atualizar memorando no Supabase:", error.message);
+        const safeData: any = {};
+        if (data.numero !== undefined) safeData.numero = data.numero;
+        if (data.remessa !== undefined) safeData.remessa = data.remessa;
+        if (data.status !== undefined) safeData.status = data.status;
+        await supabase.from("memorandos").update(safeData).eq("id", id);
+      }
     } catch (err) {
       console.warn("Aviso ao atualizar memorando no Supabase:", err);
     }
   }
 
   saveStoredList("memorandos", list);
+  notifyDataSync("memorandos");
 
   if (ant.status === "Remetido" && (data.numero || data.remessa !== undefined)) {
     const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
@@ -1308,7 +1377,7 @@ export async function updateMemorando(
         updatedGeral = true;
       }
     });
-    if (updatedGeral) saveStoredList("geral", updatedGeral);
+    if (updatedGeral) saveStoredList("geral", geralList);
   }
 
   await logAuditoria("memorandos", ant.numero, "Alteração", userId, userNome, ant, atualizado);
@@ -1367,15 +1436,11 @@ export async function deleteMemorando(id: string, userId: string, userNome: stri
 
   const filtrados = list.filter((m) => m.id !== id && !getDeletedIds("memorandos").has(m.id));
   saveStoredList("memorandos", filtrados);
+  notifyDataSync("memorandos");
 
   if (target) {
     await logAuditoria("memorandos", target.numero, "Exclusão", userId, userNome, target, null);
   }
-}
-
-export async function getCandidatosByMemorando(memorando_id: string): Promise<Candidato[]> {
-  const cands = await getCandidatosAll();
-  return cands.filter((c) => c.memorando_id === memorando_id);
 }
 
 export async function addCandidato(
@@ -1384,7 +1449,7 @@ export async function addCandidato(
   userId: string,
   userNome: string
 ): Promise<Candidato> {
-  const memos = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
+  const memos = await getMemorandos();
   const memo = memos.find((m) => m.id === memorando_id);
   if (!memo) throw new Error("Memorando não encontrado");
   if (memo.status !== "Em elaboração") {
@@ -1393,9 +1458,8 @@ export async function addCandidato(
   if (memo.usuario_id && memo.usuario_id !== userId) {
     throw new Error(`Apenas o usuário responsável (${memo.usuario_nome || "autor"}) que está elaborando este memorando pode adicionar candidatos.`);
   }
-  const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
 
-  // Verificar se o candidato já existe na lista deste memorando
+  const cands = await getCandidatosAll();
   const candsDoMemo = cands.filter((c) => c.memorando_id === memorando_id);
   const cleanNewCpf = (data.cpf || "").replace(/\D/g, "");
   const cleanNewNome = (data.nome || "").trim().toLowerCase();
@@ -1414,19 +1478,48 @@ export async function addCandidato(
     }
   }
 
+  const candId = typeof crypto !== "undefined" && crypto.randomUUID 
+    ? crypto.randomUUID() 
+    : (toValidUUID(`cand-${memorando_id}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`) || `cand-${Date.now()}`);
+
   let novo: Candidato = {
     ...data,
-    id: `cand-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    id: candId,
     memorando_id,
-    remessa: memo.remessa,
+    remessa: memo.remessa || "",
     created_at: new Date().toISOString()
   };
 
   if (isSupabaseConfigured()) {
     try {
-      const { data: inserted, error } = await supabase.from("candidatos").insert([novo]).select().single();
+      const candPayload: any = {
+        id: novo.id,
+        memorando_id: novo.memorando_id,
+        numero: novo.numero || null,
+        nome: novo.nome,
+        cpf: novo.cpf,
+        telefone: novo.telefone || null,
+        remessa: novo.remessa || null,
+        created_at: novo.created_at
+      };
+
+      const { data: inserted, error } = await supabase.from("candidatos").insert([candPayload]).select().single();
       if (error) {
-        console.error("Erro no Supabase ao adicionar candidato:", error);
+        console.warn("Aviso ao adicionar candidato no Supabase, tentando seguro:", error.message);
+        const minPayload: any = {
+          id: novo.id,
+          memorando_id: novo.memorando_id,
+          nome: novo.nome,
+          cpf: novo.cpf
+        };
+        if (novo.numero) minPayload.numero = novo.numero;
+        if (novo.telefone) minPayload.telefone = novo.telefone;
+        if (novo.remessa) minPayload.remessa = novo.remessa;
+
+        const { data: insertedMin, error: errorMin } = await supabase.from("candidatos").insert([minPayload]).select().single();
+        if (!errorMin && insertedMin) {
+          novo = { ...novo, ...insertedMin };
+        }
       } else if (inserted) {
         novo = { ...novo, ...inserted };
       }
@@ -1437,7 +1530,7 @@ export async function addCandidato(
 
   saveStoredList("candidatos", [...cands.filter((c) => c.id !== novo.id), novo]);
 
-  const newCount = (memo.candidatos_count || 0) + 1;
+  const newCount = candsDoMemo.length + 1;
   memo.candidatos_count = newCount;
   saveStoredList("memorandos", memos);
 
@@ -1449,6 +1542,7 @@ export async function addCandidato(
     }
   }
 
+  notifyDataSync("candidatos");
   await logAuditoria("candidatos", `${novo.nome} (${memo.numero})`, "Inclusão", userId, userNome, null, novo);
   return novo;
 }
@@ -1488,6 +1582,7 @@ export async function deleteCandidato(id: string, userId: string, userNome: stri
     }
   }
 
+  notifyDataSync("candidatos");
   await logAuditoria("candidatos", target.nome, "Exclusão", userId, userNome, target, null);
 }
 
@@ -1539,12 +1634,13 @@ export async function updateCandidato(
 
   cands[index] = atualizado;
   saveStoredList("candidatos", cands);
+  notifyDataSync("candidatos");
   await logAuditoria("candidatos", atualizado.nome, "Alteração", userId, userNome, target, atualizado);
   return atualizado;
 }
 
 export async function remeterMemorando(memorando_id: string, userId: string, userNome: string): Promise<number> {
-  const memos = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
+  const memos = await getMemorandos();
   const memoIndex = memos.findIndex((m) => m.id === memorando_id);
   if (memoIndex === -1) throw new Error("Memorando não encontrado");
   const memo = memos[memoIndex];
@@ -1580,7 +1676,10 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
   for (const cand of cands) {
     maxOrdem++;
     seq++;
-    const uniqueId = `cnh-memo-${memo.id.replace(/\W/g, "")}-${cand.id.replace(/\W/g, "")}-${Date.now()}-${seq}-${Math.random().toString(36).substring(2, 7)}`;
+    const uniqueId = typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : (toValidUUID(`cnh-memo-${memo.id.replace(/\W/g, "")}-${cand.id.replace(/\W/g, "")}-${Date.now()}-${seq}`) || `cnh-${Date.now()}-${seq}`);
+
     const novaCNH: GeralCNH = {
       id: uniqueId,
       ordem: maxOrdem,
@@ -1619,12 +1718,14 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
     }
   }
 
+  notifyDataSync("memorandos");
+  notifyDataSync("geral");
   await logAuditoria("memorandos", memo.numero, "Remessa", userId, userNome, { status: "Em elaboração" }, { status: "Remetido", total_remetidas: novasCNHs.length });
   return novasCNHs.length;
 }
 
 export async function reabrirMemorando(memorando_id: string, userId: string, userNome: string): Promise<number> {
-  const memos = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
+  const memos = await getMemorandos();
   const memoIndex = memos.findIndex((m) => m.id === memorando_id);
   if (memoIndex === -1) throw new Error("Memorando não encontrado");
   const memo = memos[memoIndex];
@@ -1655,6 +1756,8 @@ export async function reabrirMemorando(memorando_id: string, userId: string, use
     }
   }
 
+  notifyDataSync("memorandos");
+  notifyDataSync("geral");
   await logAuditoria(
     "memorandos",
     memo.numero,
