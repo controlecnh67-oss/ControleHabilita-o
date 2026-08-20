@@ -2114,6 +2114,65 @@ export interface ResultadoConsultaPublica {
   historico: GeralCNH[];
   statusDisponibilidade: "DISPONIVEL" | "ENTREGUE" | "EM_PROCESSAMENTO" | "NAO_ENCONTRADA";
   mensagem: string;
+  possuiDuplicatas?: boolean;
+}
+
+/**
+ * Ordena registros de CNH do mesmo CPF priorizando:
+ * 1. Data mais recente de movimentação / atualização da situação (data_movimento, updated_at, created_at)
+ * 2. Maior número de ordem (#) como critério de desempate ou prioridade sequencial
+ */
+export function sortCNHsByRecency(records: GeralCNH[]): GeralCNH[] {
+  return [...records].sort((a, b) => {
+    const getTime = (item: GeralCNH) => {
+      const dates = [item.data_movimento, item.updated_at, item.created_at];
+      let maxTime = 0;
+      for (const d of dates) {
+        if (d) {
+          const t = new Date(d).getTime();
+          if (!isNaN(t) && t > maxTime) {
+            maxTime = t;
+          }
+        }
+      }
+      return maxTime;
+    };
+
+    const timeA = getTime(a);
+    const timeB = getTime(b);
+
+    // Se houver diferença temporal perceptível (mais de 1 segundo), a data mais recente vence
+    if (Math.abs(timeA - timeB) > 1000) {
+      return timeB - timeA;
+    }
+
+    // Se as datas forem iguais/muito próximas (ex: mesmo lote de importação), desempata pelo maior número de ordem
+    const ordemA = Number(a.ordem) || 0;
+    const ordemB = Number(b.ordem) || 0;
+    if (ordemA !== ordemB) {
+      return ordemB - ordemA;
+    }
+
+    return timeB - timeA;
+  });
+}
+
+function matchCpfDigits(recordCpf: string | undefined | null, targetClean: string): boolean {
+  if (!recordCpf) return false;
+  const cClean = recordCpf.replace(/\D/g, "");
+  if (!cClean) return false;
+  const targetPad = targetClean.padStart(11, "0");
+  const cPad = cClean.padStart(11, "0");
+  const targetUnp = targetClean.replace(/^0+/, "");
+  const cUnp = cClean.replace(/^0+/, "");
+
+  return (
+    cClean === targetClean ||
+    cPad === targetPad ||
+    (targetUnp.length >= 7 && cUnp === targetUnp) ||
+    (cClean.length >= 9 && targetClean.endsWith(cClean)) ||
+    (targetClean.length >= 9 && cClean.endsWith(targetClean))
+  );
 }
 
 export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<ResultadoConsultaPublica> {
@@ -2132,10 +2191,9 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
     ? `${cleanCpf.slice(0, 3)}.${cleanCpf.slice(3, 6)}.${cleanCpf.slice(6, 9)}-${cleanCpf.slice(9)}`
     : (searchPad.length === 11 ? `${searchPad.slice(0, 3)}.${searchPad.slice(3, 6)}.${searchPad.slice(6, 9)}-${searchPad.slice(9)}` : cleanCpf);
 
-  let cnhsDoCidadao: GeralCNH[] = [];
-  let foundInSupabase = false;
+  const cnhsMap = new Map<string, GeralCNH>();
 
-  // 1. BUSCA DIRETA E INSTANTÂNEA NO BANCO DE DADOS SUPABASE (SEM CARREGAR A TABELA INTEIRA NO CELULAR)
+  // 1. BUSCA DIRETA E INSTANTÂNEA NO BANCO DE DADOS SUPABASE
   if (isSupabaseConfigured()) {
     try {
       const cpfFilters = [
@@ -2153,23 +2211,25 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
       const { data: supData, error: supError } = await supabase
         .from("geral_cnhs")
         .select("*")
-        .or(cpfFilters.join(","))
-        .order("ordem", { ascending: false });
+        .or(cpfFilters.join(","));
 
       if (!supError && Array.isArray(supData) && supData.length > 0) {
-        cnhsDoCidadao = supData as GeralCNH[];
-        foundInSupabase = true;
+        supData.forEach((row: any) => {
+          const norm = row.id ? (row as GeralCNH) : { ...row, id: `cnh-${row.ordem}` };
+          cnhsMap.set(norm.id || `ordem-${norm.ordem}`, norm);
+        });
       } else {
         // Fallback para caso a tabela remota esteja nomeada como 'geral'
         const { data: supDataGeral, error: supErrorGeral } = await supabase
           .from("geral")
           .select("*")
-          .or(cpfFilters.join(","))
-          .order("ordem", { ascending: false });
+          .or(cpfFilters.join(","));
 
         if (!supErrorGeral && Array.isArray(supDataGeral) && supDataGeral.length > 0) {
-          cnhsDoCidadao = supDataGeral as GeralCNH[];
-          foundInSupabase = true;
+          supDataGeral.forEach((row: any) => {
+            const norm = row.id ? (row as GeralCNH) : { ...row, id: `cnh-${row.ordem}` };
+            cnhsMap.set(norm.id || `ordem-${norm.ordem}`, norm);
+          });
         }
       }
     } catch (err) {
@@ -2177,47 +2237,36 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
     }
   }
 
-  // 2. SE NÃO ENCONTROU NO SUPABASE OU ESTÁ OFFLINE, BUSCA DIRETAMENTE NO CACHE LOCAL APENAS POR ESSE CPF (MUITO LEVE)
-  if (!foundInSupabase || cnhsDoCidadao.length === 0) {
-    try {
-      const rawStored = typeof localStorage !== "undefined" ? localStorage.getItem("detran_geral") : null;
-      let localList: GeralCNH[] = [];
-      if (rawStored) {
-        try {
-          localList = JSON.parse(rawStored);
-        } catch {}
-      }
-      if (!localList || localList.length === 0) {
-        localList = SEED_GERAL;
-      }
-
-      const matchLocal = localList.filter((c) => {
-        if (!c.cpf) return false;
-        const cClean = c.cpf.replace(/\D/g, "");
-        if (!cClean) return false;
-        const cPad = pad11(cClean);
-        const unpCand = cClean.replace(/^0+/, "");
-        return (
-          cClean === cleanCpf ||
-          cPad === searchPad ||
-          (unpaddedCpf.length >= 7 && unpCand === unpaddedCpf) ||
-          (cClean.length >= 9 && cleanCpf.endsWith(cClean)) ||
-          (cleanCpf.length >= 9 && cClean.endsWith(cleanCpf))
-        );
+  // 2. BUSCA NO INDEXEDDB LOCAL (DEXIE) E NO LOCALSTORAGE
+  try {
+    const dexieList = await getLocalGeralCNHs();
+    if (dexieList && dexieList.length > 0) {
+      dexieList.forEach((c) => {
+        if (matchCpfDigits(c.cpf, cleanCpf)) {
+          cnhsMap.set(c.id || `ordem-${c.ordem}`, c);
+        }
       });
-
-      if (matchLocal.length > 0) {
-        const map = new Map<string, GeralCNH>();
-        cnhsDoCidadao.forEach(c => map.set(c.id || `${c.ordem}`, c));
-        matchLocal.forEach(c => map.set(c.id || `${c.ordem}`, c));
-        cnhsDoCidadao = Array.from(map.values()).sort((a, b) => (b.ordem || 0) - (a.ordem || 0));
-      }
-    } catch (e) {
-      console.warn("Aviso ao filtrar CNH local:", e);
     }
+  } catch (err) {
+    console.warn("Aviso ao buscar CNHs no IndexedDB:", err);
   }
 
-  // 3. SE NÃO ENCONTROU EM CNHs, VERIFICA DIRETAMENTE NA TABELA DE CANDIDATOS DO SUPABASE / LOCAL
+  try {
+    const localList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+    if (localList && localList.length > 0) {
+      localList.forEach((c) => {
+        if (matchCpfDigits(c.cpf, cleanCpf)) {
+          cnhsMap.set(c.id || `ordem-${c.ordem}`, c);
+        }
+      });
+    }
+  } catch (e) {
+    console.warn("Aviso ao filtrar CNH local:", e);
+  }
+
+  let cnhsDoCidadao: GeralCNH[] = Array.from(cnhsMap.values());
+
+  // 3. SE NÃO ENCONTROU EM CNHs, VERIFICA NA TABELA DE CANDIDATOS DO SUPABASE / LOCAL
   if (cnhsDoCidadao.length === 0) {
     let candEncontrado: any = null;
 
@@ -2257,18 +2306,7 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
           candsList = SEED_CANDIDATOS;
         }
 
-        candEncontrado = candsList.find((cand) => {
-          if (!cand.cpf) return false;
-          const candCpfClean = cand.cpf.replace(/\D/g, "");
-          if (!candCpfClean) return false;
-          const candCpfPad = pad11(candCpfClean);
-          const unpaddedCand = candCpfClean.replace(/^0+/, "");
-          return (
-            candCpfClean === cleanCpf ||
-            candCpfPad === searchPad ||
-            (unpaddedCpf.length >= 7 && unpaddedCand === unpaddedCpf)
-          );
-        });
+        candEncontrado = candsList.find((cand) => matchCpfDigits(cand.cpf, cleanCpf));
       } catch (e) {
         console.warn("Aviso ao buscar em candidatos locais:", e);
       }
@@ -2310,7 +2348,8 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
         cnhEncontrada: cnhVirtual,
         historico: [cnhVirtual],
         statusDisponibilidade: "EM_PROCESSAMENTO",
-        mensagem: "⏳ Sua CNH consta em processamento/trânsito (Memorando em trânsito) e ainda não deu entrada no balcão de atendimento."
+        mensagem: "⏳ Sua CNH consta em processamento/trânsito (Memorando em trânsito) e ainda não deu entrada no balcão de atendimento.",
+        possuiDuplicatas: false
       };
     }
 
@@ -2329,12 +2368,13 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
       cnhEncontrada: null,
       historico: [],
       statusDisponibilidade: "NAO_ENCONTRADA",
-      mensagem: "Nenhum registro de CNH localizado para o CPF informado."
+      mensagem: "Nenhum registro de CNH localizado para o CPF informado.",
+      possuiDuplicatas: false
     };
   }
 
-  // 4. PROCESSAR E ENRIQUECER OS REGISTROS ENCONTRADOS
-  const ordenadas = [...cnhsDoCidadao].sort((a, b) => (b.ordem || 0) - (a.ordem || 0));
+  // 4. PROCESSAR E SELECIONAR O REGISTRO MAIS RECENTE (MAIOR NÚMERO DE ORDEM OU DATA DE ATUALIZAÇÃO MAIS RECENTE)
+  const ordenadas = sortCNHsByRecency(cnhsDoCidadao);
 
   // Resolver localização (gaveta/reparticao) se estiver vazia e a situação for "Recebida"
   for (const cnh of ordenadas) {
@@ -2349,13 +2389,13 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
     }
   }
 
-  // Verificar se há alguma CNH com status "Recebida" (Disponível no balcão)
-  const cnhRecebida = ordenadas.find((c) => c.situacao === "Recebida");
+  // O registro ativo/principal é sempre o registro mais recente no tempo ou de maior ordem
+  const cnhMaisRecente = ordenadas[0];
 
-  if (cnhRecebida) {
+  if (cnhMaisRecente.situacao === "Recebida") {
     registrarAcessoCidadaoLog({
       cpf: cleanCpf,
-      nome_titular: cnhRecebida.nome,
+      nome_titular: cnhMaisRecente.nome,
       situacao: "Recebida",
       resultado_status: "DISPONIVEL",
       canal: "App Android",
@@ -2364,20 +2404,18 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
     });
     return {
       cpfConsultado: cleanCpf,
-      cnhEncontrada: cnhRecebida,
+      cnhEncontrada: cnhMaisRecente,
       historico: ordenadas,
       statusDisponibilidade: "DISPONIVEL",
-      mensagem: "✅ Sua CNH já está disponível para retirada no balcão do DETRAN!"
+      mensagem: "✅ Sua CNH já está disponível para retirada no balcão do DETRAN!",
+      possuiDuplicatas: ordenadas.length > 1
     };
   }
 
-  // Se não tem nenhuma com status "Recebida", pegamos a mais recente para indicar a situação atual
-  const ultimaCNH = ordenadas[0];
-
-  if (ultimaCNH.situacao === "Entregue") {
+  if (cnhMaisRecente.situacao === "Entregue") {
     registrarAcessoCidadaoLog({
       cpf: cleanCpf,
-      nome_titular: ultimaCNH.nome,
+      nome_titular: cnhMaisRecente.nome,
       situacao: "Entregue",
       resultado_status: "ENTREGUE",
       canal: "App Android",
@@ -2386,17 +2424,18 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
     });
     return {
       cpfConsultado: cleanCpf,
-      cnhEncontrada: ultimaCNH,
+      cnhEncontrada: cnhMaisRecente,
       historico: ordenadas,
       statusDisponibilidade: "ENTREGUE",
-      mensagem: "ℹ️ A sua CNH consta como ENTREGUE no balcão."
+      mensagem: "ℹ️ A sua CNH consta como ENTREGUE no balcão.",
+      possuiDuplicatas: ordenadas.length > 1
     };
   }
 
   registrarAcessoCidadaoLog({
     cpf: cleanCpf,
-    nome_titular: ultimaCNH.nome,
-    situacao: (ultimaCNH.situacao as any) || "Pendente",
+    nome_titular: cnhMaisRecente.nome,
+    situacao: (cnhMaisRecente.situacao as any) || "Pendente",
     resultado_status: "EM_PROCESSAMENTO",
     canal: "App Android",
     dispositivo: "Navegador Web / Mobile",
@@ -2405,10 +2444,11 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
 
   return {
     cpfConsultado: cleanCpf,
-    cnhEncontrada: ultimaCNH,
+    cnhEncontrada: cnhMaisRecente,
     historico: ordenadas,
     statusDisponibilidade: "EM_PROCESSAMENTO",
-    mensagem: "⏳ Sua CNH consta em processamento/trânsito e ainda não deu entrada no balcão de atendimento."
+    mensagem: "⏳ Sua CNH consta em processamento/trânsito e ainda não deu entrada no balcão de atendimento.",
+    possuiDuplicatas: ordenadas.length > 1
   };
 }
 

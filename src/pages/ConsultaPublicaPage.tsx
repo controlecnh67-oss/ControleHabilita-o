@@ -17,7 +17,10 @@ import {
   Info,
   Sparkles,
   RefreshCw,
-  Download
+  Download,
+  History,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 import { consultarCnhPublicaPorCpf, ResultadoConsultaPublica, getPublicSearchCount } from "../services/db";
 import { formatCPF, formatDateTime } from "../lib/utils";
@@ -39,6 +42,7 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
   const [copiedLink, setCopiedLink] = useState(false);
   const [showQrCodeModal, setShowQrCodeModal] = useState(false);
   const [showInstallModal, setShowInstallModal] = useState(false);
+  const [showHistoricoCompleto, setShowHistoricoCompleto] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isStandalone, setIsStandalone] = useState(false);
   const [searchCount, setSearchCount] = useState(() => getPublicSearchCount());
@@ -467,6 +471,89 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
                 <p className="text-xs text-slate-400 leading-relaxed">
                   Não encontramos nenhuma CNH registrada para o CPF <strong className="text-slate-200 font-mono">{formatCPF(resultado.cpfConsultado)}</strong> no sistema de protocolo.
                 </p>
+              </div>
+            )}
+
+            {/* Histórico quando há múltiplos registros para o CPF */}
+            {resultado.historico && resultado.historico.length > 1 && (
+              <div className="bg-slate-800/90 border border-slate-700 rounded-3xl p-4 shadow-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <History className="w-4 h-4 text-blue-400 shrink-0" />
+                    <span className="text-xs font-bold text-slate-200">
+                      Histórico de Processos ({resultado.historico.length} registros)
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowHistoricoCompleto((prev) => !prev)}
+                    className="text-[11px] font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-1 cursor-pointer bg-blue-950/60 border border-blue-800/60 px-2.5 py-1 rounded-xl transition-colors"
+                  >
+                    <span>{showHistoricoCompleto ? "Ocultar" : "Ver todos"}</span>
+                    {showHistoricoCompleto ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Identificamos mais de uma emissão/movimentação para este CPF. O resultado principal acima exibe automaticamente o <strong className="text-slate-200">registro mais recente (Ordem #{resultado.cnhEncontrada?.ordem})</strong>.
+                </p>
+
+                {showHistoricoCompleto && (
+                  <div className="space-y-2 pt-1 border-t border-slate-700/80">
+                    {resultado.historico.map((item, idx) => {
+                      const isLatest = idx === 0;
+                      return (
+                        <div
+                          key={item.id || `hist-${item.ordem}-${idx}`}
+                          className={`p-3 rounded-2xl border text-xs space-y-1.5 transition-all ${
+                            isLatest
+                              ? "bg-blue-950/40 border-blue-500/60 shadow-md"
+                              : "bg-slate-900/60 border-slate-800 text-slate-400"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-black text-white text-sm">
+                                #{item.ordem}
+                              </span>
+                              <span
+                                className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full border ${
+                                  item.situacao === "Recebida"
+                                    ? "bg-emerald-950 text-emerald-300 border-emerald-800"
+                                    : item.situacao === "Entregue"
+                                    ? "bg-blue-950 text-blue-300 border-blue-800"
+                                    : "bg-amber-950 text-amber-300 border-amber-800"
+                                }`}
+                              >
+                                {item.situacao}
+                              </span>
+                            </div>
+                            {isLatest && (
+                              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full font-bold">
+                                ★ Registro Atual
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="text-[11px] text-slate-400 flex flex-wrap items-center justify-between gap-1 pt-1 border-t border-slate-800/80">
+                            <span>
+                              {item.gaveta ? `Local: ${item.gaveta} ${item.reparticao ? `(${item.reparticao})` : ""}` : "Sem gaveta alocada"}
+                            </span>
+                            <span className="font-mono text-slate-300">
+                              {item.data_movimento ? formatDateTime(item.data_movimento) : "Data não reg."}
+                            </span>
+                          </div>
+
+                          {item.responsavel_nome && (
+                            <p className="text-[10px] text-amber-300/90 font-medium">
+                              Retirado por: {item.responsavel_nome}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
