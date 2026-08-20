@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { 
   BarChart3, 
   Printer, 
@@ -91,8 +91,16 @@ export const RelatoriosPage: React.FC = () => {
   const [situacaoFiltro, setSituacaoFiltro] = useState<string>("todas");
   const [searchTerm, setSearchTerm] = useState<string>("");
 
-  const loadData = async () => {
-    setLoading(true);
+  const isFetchingRef = useRef(false);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const loadData = useCallback(async (showInitialLoader = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    if (showInitialLoader) {
+      setLoading(true);
+    }
     try {
       const [cnhsData, memosData, histData, respData, userData, candData] = await Promise.all([
         getGeralCNHs(),
@@ -115,43 +123,63 @@ export const RelatoriosPage: React.FC = () => {
       console.error("Erro ao carregar dados do relatório:", err);
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
-  };
+  }, []);
+
+  const scheduleLoadData = useCallback((delay = 400) => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      loadData(false);
+    }, delay);
+  }, [loadData]);
 
   useEffect(() => {
-    loadData();
+    loadData(true);
 
     const unsubRealtimeGeral = subscribeToSupabaseRealtime("geral_cnhs", () => {
-      loadData();
+      scheduleLoadData(500);
     });
 
     const unsubRealtimeHist = subscribeToSupabaseRealtime("historico_movimentacoes", () => {
-      loadData();
+      scheduleLoadData(500);
     });
 
     const unsubRealtimeMemos = subscribeToSupabaseRealtime("memorandos", () => {
-      loadData();
+      scheduleLoadData(500);
+    });
+
+    const unsubRealtimeCands = subscribeToSupabaseRealtime("candidatos", () => {
+      scheduleLoadData(500);
+    });
+
+    const unsubRealtimeResp = subscribeToSupabaseRealtime("responsaveis", () => {
+      scheduleLoadData(500);
+    });
+
+    const unsubRealtimeUser = subscribeToSupabaseRealtime("usuarios", () => {
+      scheduleLoadData(500);
     });
 
     const handleSync = (e: Event) => {
       const customEvt = e as CustomEvent;
-      if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "geral" || customEvt.detail.type === "historico" || customEvt.detail.type === "memorandos") {
-        loadData();
+      if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "geral" || customEvt.detail.type === "historico" || customEvt.detail.type === "memorandos" || customEvt.detail.type === "candidatos" || customEvt.detail.type === "responsaveis" || customEvt.detail.type === "usuarios") {
+        scheduleLoadData(350);
       }
     };
 
     const handleVisibilityOrFocus = () => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        loadData();
+        scheduleLoadData(300);
       }
     };
 
-    // Polling suave a cada 30 segundos se a aba estiver visível
+    // Polling suave a cada 40 segundos se a aba estiver visível
     const intervalId = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        loadData();
+        scheduleLoadData(0);
       }
-    }, 30000);
+    }, 40000);
 
     window.addEventListener("detran_sync_updated", handleSync);
     window.addEventListener("storage", handleSync);
@@ -159,16 +187,20 @@ export const RelatoriosPage: React.FC = () => {
     document.addEventListener("visibilitychange", handleVisibilityOrFocus);
 
     return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       unsubRealtimeGeral();
       unsubRealtimeHist();
       unsubRealtimeMemos();
+      unsubRealtimeCands();
+      unsubRealtimeResp();
+      unsubRealtimeUser();
       clearInterval(intervalId);
       window.removeEventListener("detran_sync_updated", handleSync);
       window.removeEventListener("storage", handleSync);
       window.removeEventListener("focus", handleVisibilityOrFocus);
       document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };
-  }, []);
+  }, [loadData, scheduleLoadData]);
 
   // Determinar faixa de datas ativas
   const dateRange = useMemo(() => {

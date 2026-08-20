@@ -751,7 +751,7 @@ export async function getMapeamentos(): Promise<MapeamentoLocalizacao[]> {
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<MapeamentoLocalizacao>("mapeamento_localizacao", 1000, "inicial", true);
-      if (data && data.length > 0) {
+      if (data && Array.isArray(data)) {
         saveStoredList("mapeamento", data);
         return data;
       }
@@ -791,6 +791,7 @@ export async function createMapeamento(
       if (!error && inserted) {
         const updatedList = [...list, inserted].sort((a, b) => a.inicial.localeCompare(b.inicial));
         saveStoredList("mapeamento", updatedList);
+        notifyDataSync("mapeamento");
         await logAuditoria("mapeamento", inserted.id, "Inclusão", userId, userNome, null, inserted);
         return inserted as MapeamentoLocalizacao;
       }
@@ -801,6 +802,7 @@ export async function createMapeamento(
 
   const updatedList = [...list, novo].sort((a, b) => a.inicial.localeCompare(b.inicial));
   saveStoredList("mapeamento", updatedList);
+  notifyDataSync("mapeamento");
   await logAuditoria("mapeamento", novo.id, "Inclusão", userId, userNome, null, novo);
   return novo;
 }
@@ -827,6 +829,7 @@ export async function updateMapeamento(
 
   const updated = list.map((m) => (m.id === id ? atualizado : m));
   saveStoredList("mapeamento", updated);
+  notifyDataSync("mapeamento");
   await logAuditoria("mapeamento", target.id, "Alteração", userId, userNome, target, atualizado);
 }
 
@@ -849,6 +852,7 @@ export async function deleteMapeamento(
 
   const updated = list.filter((m) => m.id !== id);
   saveStoredList("mapeamento", updated);
+  notifyDataSync("mapeamento");
   await logAuditoria("mapeamento", target.id, "Exclusão", userId, userNome, target, null);
 }
 
@@ -870,7 +874,7 @@ export async function getUsuarios(): Promise<Usuario[]> {
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<Usuario>("usuarios", 1000, "created_at", false);
-      if (data && data.length > 0) {
+      if (data && Array.isArray(data)) {
         const activeUsers = data.filter((u) => u.ativo !== false);
         saveStoredList("usuarios", activeUsers);
         return activeUsers;
@@ -928,6 +932,7 @@ export async function createUsuario(data: Omit<Usuario, "id" | "created_at">, ad
       if (inserted) {
         const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
         saveStoredList("usuarios", [inserted as Usuario, ...localList.filter(u => u.id !== inserted.id)]);
+        notifyDataSync("usuarios");
         await logAuditoria("usuarios", inserted.login, "Inclusão", adminId, adminNome, null, { nome: inserted.nome, perfil: inserted.perfil });
         return inserted as Usuario;
       }
@@ -941,6 +946,7 @@ export async function createUsuario(data: Omit<Usuario, "id" | "created_at">, ad
 
   const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
   saveStoredList("usuarios", [...localList, novo]);
+  notifyDataSync("usuarios");
   await logAuditoria("usuarios", novo.login, "Inclusão", adminId, adminNome, null, { nome: novo.nome, perfil: novo.perfil });
   return novo;
 }
@@ -990,6 +996,7 @@ export async function updateUsuario(id: string, data: Partial<Usuario>, adminId:
   if (lIndex !== -1) localList[lIndex] = atualizado;
   else localList.push(atualizado);
   saveStoredList("usuarios", localList);
+  notifyDataSync("usuarios");
 
   await logAuditoria("usuarios", ant.login, "Alteração", adminId, adminNome, ant, atualizado);
   return atualizado;
@@ -1018,6 +1025,7 @@ export async function deleteUsuario(id: string, adminId: string, adminNome: stri
   const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
   const filtrados = localList.filter((u) => u.id !== id);
   saveStoredList("usuarios", filtrados);
+  notifyDataSync("usuarios");
   await logAuditoria("usuarios", target.login, "Exclusão", adminId, adminNome, target, null);
 }
 
@@ -1029,7 +1037,7 @@ export async function getResponsaveis(): Promise<Responsavel[]> {
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<Responsavel>("responsaveis", 1000, "nome", true);
-      if (data && data.length > 0) {
+      if (data && Array.isArray(data)) {
         saveStoredList("responsaveis", data);
         return data;
       }
@@ -1070,6 +1078,7 @@ export async function createResponsavel(
       if (inserted) {
         const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
         saveStoredList("responsaveis", [inserted as Responsavel, ...localList]);
+        notifyDataSync("responsaveis");
         await logAuditoria("responsaveis", inserted.nome, "Inclusão", userId, userNome, null, inserted);
         return inserted as Responsavel;
       }
@@ -1080,6 +1089,7 @@ export async function createResponsavel(
 
   const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
   saveStoredList("responsaveis", [...localList, novo]);
+  notifyDataSync("responsaveis");
   await logAuditoria("responsaveis", novo.nome, "Inclusão", userId, userNome, null, novo);
   return novo;
 }
@@ -1107,6 +1117,7 @@ export async function updateResponsavel(
         const lIndex = localList.findIndex((r) => r.id === id);
         if (lIndex !== -1) localList[lIndex] = updatedSup as Responsavel;
         saveStoredList("responsaveis", localList);
+        notifyDataSync("responsaveis");
         await logAuditoria("responsaveis", ant.nome, "Alteração", userId, userNome, ant, updatedSup);
         return updatedSup as Responsavel;
       }
@@ -1119,6 +1130,7 @@ export async function updateResponsavel(
   const lIndex = localList.findIndex((r) => r.id === id);
   if (lIndex !== -1) localList[lIndex] = atualizado;
   saveStoredList("responsaveis", localList);
+  notifyDataSync("responsaveis");
   await logAuditoria("responsaveis", ant.nome, "Alteração", userId, userNome, ant, atualizado);
   return atualizado;
 }
@@ -1142,6 +1154,7 @@ export async function deleteResponsavel(id: string, userId: string, userNome: st
   const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
   const filtrados = localList.filter((r) => r.id !== id);
   saveStoredList("responsaveis", filtrados);
+  notifyDataSync("responsaveis");
   await logAuditoria("responsaveis", target.nome, "Exclusão", userId, userNome, target, null);
 }
 
@@ -2118,35 +2131,56 @@ export interface ResultadoConsultaPublica {
 }
 
 /**
- * Ordena registros de CNH do mesmo CPF priorizando:
- * 1. Data mais recente de movimentação / atualização da situação (data_movimento, updated_at, created_at)
+ * Ordena registros de CNH do mesmo CPF/candidato priorizando:
+ * 1. Data da atualização da situação mais recente (data_movimento, updated_at, created_at)
  * 2. Maior número de ordem (#) como critério de desempate ou prioridade sequencial
+ * Isso garante que quando há duplicatas de uma CNH/CPF, o cidadão sempre visualize o registro mais atualizado.
  */
+export function parseDateToTimestamp(val: any): number {
+  if (!val) return 0;
+  if (typeof val === "number") return val;
+  if (val instanceof Date) return val.getTime();
+  const str = String(val).trim();
+  if (!str) return 0;
+
+  // Formato ISO direto ou padrão Date
+  const directTs = new Date(str).getTime();
+  if (!isNaN(directTs)) return directTs;
+
+  // Formato brasileiro DD/MM/YYYY ou DD/MM/YYYY HH:mm:ss
+  const brMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (brMatch) {
+    const day = parseInt(brMatch[1], 10);
+    const month = parseInt(brMatch[2], 10) - 1;
+    const year = parseInt(brMatch[3], 10);
+    const hours = brMatch[4] ? parseInt(brMatch[4], 10) : 0;
+    const minutes = brMatch[5] ? parseInt(brMatch[5], 10) : 0;
+    const seconds = brMatch[6] ? parseInt(brMatch[6], 10) : 0;
+    const d = new Date(year, month, day, hours, minutes, seconds);
+    if (!isNaN(d.getTime())) return d.getTime();
+  }
+
+  return 0;
+}
+
 export function sortCNHsByRecency(records: GeralCNH[]): GeralCNH[] {
   return [...records].sort((a, b) => {
-    const getTime = (item: GeralCNH) => {
-      const dates = [item.data_movimento, item.updated_at, item.created_at];
-      let maxTime = 0;
-      for (const d of dates) {
-        if (d) {
-          const t = new Date(d).getTime();
-          if (!isNaN(t) && t > maxTime) {
-            maxTime = t;
-          }
-        }
-      }
-      return maxTime;
+    const getLatestTime = (item: GeralCNH) => {
+      const tsMovimento = parseDateToTimestamp(item.data_movimento);
+      const tsUpdated = parseDateToTimestamp(item.updated_at);
+      const tsCreated = parseDateToTimestamp(item.created_at);
+      return Math.max(tsMovimento, tsUpdated, tsCreated);
     };
 
-    const timeA = getTime(a);
-    const timeB = getTime(b);
+    const timeA = getLatestTime(a);
+    const timeB = getLatestTime(b);
 
-    // Se houver diferença temporal perceptível (mais de 1 segundo), a data mais recente vence
+    // Se houver diferença temporal perceptível (mais de 1 segundo), a data de atualização mais recente vence
     if (Math.abs(timeA - timeB) > 1000) {
       return timeB - timeA;
     }
 
-    // Se as datas forem iguais/muito próximas (ex: mesmo lote de importação), desempata pelo maior número de ordem
+    // Se as datas forem idênticas ou muito próximas, o maior número de ordem (#) prevalece
     const ordemA = Number(a.ordem) || 0;
     const ordemB = Number(b.ordem) || 0;
     if (ordemA !== ordemB) {
@@ -2759,7 +2793,10 @@ export async function getHistoricoList(): Promise<HistoricoMovimentacao[]> {
 
   // Garantir que todos os registros da tabela Geral possuem seu evento inicial no histórico
   try {
-    const geralList = await getGeralCNHs();
+    let geralList = await getLocalGeralCNHs();
+    if (!geralList || geralList.length === 0) {
+      geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+    }
     const mapGeralToCpf = new Map<string, string>();
     geralList.forEach((g) => {
       if (g.cpf) mapGeralToCpf.set(g.id, g.cpf);

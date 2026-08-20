@@ -1,18 +1,31 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { ShieldAlert, Search, Lock, User, Clock, Database, Activity, FileText, RefreshCw } from "lucide-react";
 import { RegistroAuditoria } from "../types";
 import { getAuditoriaList } from "../services/db";
+import { subscribeToSupabaseRealtime } from "../services/supabase";
 import { formatDateTime } from "../lib/utils";
 
 export const AuditoriaPage: React.FC = () => {
   const [auditoria, setAuditoria] = useState<RegistroAuditoria[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isBackgroundFetching, setIsBackgroundFetching] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [filtroAcao, setFiltroAcao] = useState<string>("todas");
   const [filtroTabela, setFiltroTabela] = useState<string>("todas");
 
-  const fetchDados = async () => {
-    setLoading(true);
+  const isFetchingRef = useRef(false);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const fetchDados = useCallback(async (isInitial = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    if (isInitial) {
+      setLoading(true);
+    } else {
+      setIsBackgroundFetching(true);
+    }
+
     try {
       const data = await getAuditoriaList();
       setAuditoria(data);
@@ -20,26 +33,68 @@ export const AuditoriaPage: React.FC = () => {
       console.error("Erro ao buscar auditoria:", err);
     } finally {
       setLoading(false);
+      setIsBackgroundFetching(false);
+      isFetchingRef.current = false;
     }
-  };
+  }, []);
+
+  const scheduleFetch = useCallback((delayMs: number = 300) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      fetchDados(false);
+    }, delayMs);
+  }, [fetchDados]);
 
   useEffect(() => {
-    fetchDados();
+    // 1. Carga inicial
+    fetchDados(true);
 
+    // 2. Realtime do Supabase (atualizações instantâneas de logs de auditoria de outros computadores)
+    const unsubRealtime = subscribeToSupabaseRealtime("auditoria", (payload) => {
+      console.log("⚡ [Realtime Auditoria] Novo registro em auditoria:", payload);
+      scheduleFetch(100);
+    });
+
+    // 3. Eventos locais e entre abas
     const handleSync = (e: Event) => {
       const customEvt = e as CustomEvent;
       if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "auditoria") {
-        fetchDados();
+        scheduleFetch(100);
       }
     };
 
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        scheduleFetch(200);
+      }
+    };
+
+    // Polling suave de segurança a cada 30 segundos se a aba estiver visível
+    const intervalId = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        scheduleFetch(0);
+      }
+    }, 30000);
+
     window.addEventListener("detran_sync_updated", handleSync);
     window.addEventListener("storage", handleSync);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+
     return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      unsubRealtime();
+      clearInterval(intervalId);
       window.removeEventListener("detran_sync_updated", handleSync);
       window.removeEventListener("storage", handleSync);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };
-  }, []);
+  }, [fetchDados, scheduleFetch]);
 
   const filtered = auditoria.filter((a) => {
     const matchSearch =

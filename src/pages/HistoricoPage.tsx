@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   History,
   Search,
@@ -38,6 +38,7 @@ export const HistoricoPage: React.FC = () => {
   const [historico, setHistorico] = useState<HistoricoMovimentacao[]>([]);
   const [responsaveis, setResponsaveis] = useState<Responsavel[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [filtroSituacao, setFiltroSituacao] = useState<string>("todas");
   const [periodoPreset, setPeriodoPreset] = useState<PeriodoPreset>("todos");
@@ -46,8 +47,19 @@ export const HistoricoPage: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
 
-  const fetchDados = async () => {
-    setLoading(true);
+  const isFetchingRef = useRef(false);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const fetchDados = useCallback(async (showInitialLoader = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    if (showInitialLoader) {
+      setLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
+
     try {
       const [data, dataResp] = await Promise.all([getHistoricoList(), getResponsaveis()]);
       setHistorico(data);
@@ -56,41 +68,50 @@ export const HistoricoPage: React.FC = () => {
       console.error("Erro ao carregar histórico:", err);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
+      isFetchingRef.current = false;
     }
-  };
+  }, []);
+
+  const scheduleFetch = useCallback((delay = 350) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      fetchDados(false);
+    }, delay);
+  }, [fetchDados]);
 
   useEffect(() => {
-    fetchDados();
+    fetchDados(true);
 
     const unsubRealtimeHist = subscribeToSupabaseRealtime("historico_movimentacoes", () => {
-      console.log("⚡ [Realtime Histórico] Atualização detectada em historico_movimentacoes");
-      fetchDados();
+      scheduleFetch(400);
     });
 
     const unsubRealtimeGeral = subscribeToSupabaseRealtime("geral_cnhs", () => {
-      console.log("⚡ [Realtime Histórico] Atualização detectada em geral_cnhs");
-      fetchDados();
+      scheduleFetch(400);
     });
 
     const handleSync = (e: Event) => {
       const customEvt = e as CustomEvent;
       if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "historico" || customEvt.detail.type === "geral") {
-        fetchDados();
+        scheduleFetch(300);
       }
     };
 
     const handleVisibilityOrFocus = () => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        fetchDados();
+        scheduleFetch(200);
       }
     };
 
-    // Polling suave a cada 15 segundos se a aba estiver visível
+    // Polling suave a cada 25 segundos se a aba estiver visível
     const intervalId = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        fetchDados();
+        scheduleFetch(0);
       }
-    }, 15000);
+    }, 25000);
 
     window.addEventListener("detran_sync_updated", handleSync);
     window.addEventListener("storage", handleSync);
@@ -98,6 +119,9 @@ export const HistoricoPage: React.FC = () => {
     document.addEventListener("visibilitychange", handleVisibilityOrFocus);
 
     return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
       unsubRealtimeHist();
       unsubRealtimeGeral();
       clearInterval(intervalId);
@@ -106,7 +130,7 @@ export const HistoricoPage: React.FC = () => {
       window.removeEventListener("focus", handleVisibilityOrFocus);
       document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };
-  }, []);
+  }, [fetchDados, scheduleFetch]);
 
   const getRespName = (nome?: string, id?: string) => {
     if (!nome && !id) return "-";
@@ -424,13 +448,13 @@ export const HistoricoPage: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={fetchDados}
-            disabled={loading}
+            onClick={() => fetchDados(false)}
+            disabled={isRefreshing || loading}
             className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
             title="Atualizar histórico"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin text-blue-500" : ""}`} />
-            <span>Atualizar</span>
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing || loading ? "animate-spin text-blue-500" : ""}`} />
+            <span>{isRefreshing ? "Atualizando..." : "Atualizar"}</span>
           </button>
 
           <button
@@ -572,8 +596,15 @@ export const HistoricoPage: React.FC = () => {
         </div>
 
         {/* Tabela do Histórico */}
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
-          {loading ? (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden relative">
+          {/* Barra sutil de carregamento em background quando estiver atualizando */}
+          {isRefreshing && (
+            <div className="absolute top-0 left-0 right-0 h-1 bg-blue-500/20 overflow-hidden z-10">
+              <div className="h-full bg-blue-600 animate-pulse w-full" />
+            </div>
+          )}
+
+          {loading && historico.length === 0 ? (
             <div className="p-16 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
               <RefreshCw className="w-6 h-6 text-blue-500 animate-spin" />
               <span>Carregando dados de histórico de movimentação...</span>

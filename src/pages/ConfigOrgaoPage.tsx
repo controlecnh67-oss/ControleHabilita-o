@@ -23,7 +23,7 @@ import {
   DEFAULT_ORGAO_CONFIG,
   updateAppFavicon 
 } from "../services/orgaoService";
-import { isSupabaseConfigured } from "../services/supabase";
+import { isSupabaseConfigured, subscribeToSupabaseRealtime } from "../services/supabase";
 
 export const ConfigOrgaoPage: React.FC = () => {
   const { user } = useAuth();
@@ -34,7 +34,7 @@ export const ConfigOrgaoPage: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
-  useEffect(() => {
+  const refreshConfig = () => {
     const loaded = getOrgaoConfig();
     setFormData(loaded);
 
@@ -45,6 +45,31 @@ export const ConfigOrgaoPage: React.FC = () => {
         }
       }).catch(() => {});
     }
+  };
+
+  useEffect(() => {
+    refreshConfig();
+
+    const unsubRealtime = subscribeToSupabaseRealtime("orgao_config", () => {
+      console.log("⚡ [Realtime Órgão] Configurações do órgão atualizadas remotamente");
+      refreshConfig();
+    });
+
+    const handleSync = (e: Event) => {
+      const customEvt = e as CustomEvent;
+      if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "orgao_config") {
+        refreshConfig();
+      }
+    };
+
+    window.addEventListener("detran_sync_updated", handleSync);
+    window.addEventListener("storage", handleSync);
+
+    return () => {
+      unsubRealtime();
+      window.removeEventListener("detran_sync_updated", handleSync);
+      window.removeEventListener("storage", handleSync);
+    };
   }, []);
 
   const handleChange = (field: keyof OrgaoConfig, value: string) => {

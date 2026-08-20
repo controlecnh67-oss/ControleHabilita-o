@@ -27,6 +27,7 @@ import {
   Activity
 } from "lucide-react";
 import { getAcessosCidadaoLogs, fetchAcessosCidadaoLogs, getPublicSearchCount } from "../services/db";
+import { subscribeToSupabaseRealtime } from "../services/supabase";
 import { AcessoCidadaoLog } from "../types";
 import { formatCPF, formatDateTime } from "../lib/utils";
 import * as XLSX from "xlsx";
@@ -93,6 +94,11 @@ export const AcessosCidadaoPage: React.FC = () => {
   useEffect(() => {
     loadLogs();
 
+    const unsubRealtime = subscribeToSupabaseRealtime("acessos_cidadao", () => {
+      console.log("⚡ [Realtime Acessos Cidadão] Novo log registrado remotamente");
+      loadLogs();
+    });
+
     const handleSync = (e: Event) => {
       const customEvt = e as CustomEvent;
       if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "acessos_cidadao") {
@@ -100,11 +106,23 @@ export const AcessosCidadaoPage: React.FC = () => {
       }
     };
 
+    const handleFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        loadLogs();
+      }
+    };
+
     window.addEventListener("detran_sync_updated", handleSync);
     window.addEventListener("storage", handleSync);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleFocus);
+
     return () => {
+      unsubRealtime();
       window.removeEventListener("detran_sync_updated", handleSync);
       window.removeEventListener("storage", handleSync);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleFocus);
     };
   }, []);
 

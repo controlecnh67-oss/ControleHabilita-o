@@ -102,7 +102,7 @@ export function subscribeToSupabaseRealtime(
   }
   try {
     const client = getSupabaseClient();
-    const channelName = `realtime_${table}_${Math.random().toString(36).substring(2, 8)}`;
+    const channelName = `realtime_${table}_${Math.random().toString(36).substring(2, 9)}`;
     const channel = client
       .channel(channelName)
       .on(
@@ -112,7 +112,11 @@ export function subscribeToSupabaseRealtime(
           callback(payload);
         }
       )
-      .subscribe();
+      .subscribe((status: string) => {
+        if (status === "SUBSCRIBED") {
+          // Conectado com sucesso ao canal Realtime
+        }
+      });
 
     return () => {
       try {
@@ -121,6 +125,44 @@ export function subscribeToSupabaseRealtime(
     };
   } catch (err) {
     console.warn(`Erro ao assinar Realtime para ${table}:`, err);
+    return () => {};
+  }
+}
+
+/**
+ * Assina eventos do Supabase Realtime para múltiplas tabelas em uma única inscrição.
+ */
+export function subscribeToMultipleSupabaseRealtime(
+  tables: string[],
+  callback: (table: string, payload: any) => void
+): () => void {
+  if (!isSupabaseConfigured() || !tables.length) {
+    return () => {};
+  }
+  try {
+    const client = getSupabaseClient();
+    const channelName = `realtime_multi_${Math.random().toString(36).substring(2, 9)}`;
+    let channel = client.channel(channelName);
+
+    tables.forEach((table) => {
+      channel = channel.on(
+        "postgres_changes" as any,
+        { event: "*", schema: "public", table },
+        (payload: any) => {
+          callback(table, payload);
+        }
+      );
+    });
+
+    channel.subscribe();
+
+    return () => {
+      try {
+        client.removeChannel(channel);
+      } catch {}
+    };
+  } catch (err) {
+    console.warn(`Erro ao assinar Realtime para múltiplas tabelas:`, err);
     return () => {};
   }
 }

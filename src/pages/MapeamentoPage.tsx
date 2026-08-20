@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { MapPin, Edit3, Save, X, Search, Info, CheckCircle2, Plus, Trash2 } from "lucide-react";
 import { MapeamentoLocalizacao } from "../types";
 import { getMapeamentos, updateMapeamento, createMapeamento, deleteMapeamento } from "../services/db";
+import { subscribeToSupabaseRealtime } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
 import { normalizeSearch } from "../lib/utils";
@@ -10,11 +11,15 @@ export const MapeamentoPage: React.FC = () => {
   const { user, canEdit } = useAuth();
   const [mapeamentos, setMapeamentos] = useState<MapeamentoLocalizacao[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isBackgroundFetching, setIsBackgroundFetching] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editGaveta, setEditGaveta] = useState("");
   const [editReparticao, setEditReparticao] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+
+  const isFetchingRef = useRef(false);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Estados para Modal de Adição
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -23,8 +28,16 @@ export const MapeamentoPage: React.FC = () => {
   const [newReparticao, setNewReparticao] = useState("Repartição 1");
   const [submitting, setSubmitting] = useState(false);
 
-  const fetchDados = async () => {
-    setLoading(true);
+  const fetchDados = useCallback(async (isInitial = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    if (isInitial) {
+      setLoading(true);
+    } else {
+      setIsBackgroundFetching(true);
+    }
+
     try {
       const data = await getMapeamentos();
       setMapeamentos(data);
@@ -32,12 +45,68 @@ export const MapeamentoPage: React.FC = () => {
       console.error("Erro ao buscar mapeamentos:", err);
     } finally {
       setLoading(false);
+      setIsBackgroundFetching(false);
+      isFetchingRef.current = false;
     }
-  };
+  }, []);
+
+  const scheduleFetch = useCallback((delayMs: number = 300) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      fetchDados(false);
+    }, delayMs);
+  }, [fetchDados]);
 
   useEffect(() => {
-    fetchDados();
-  }, []);
+    // 1. Carga inicial
+    fetchDados(true);
+
+    // 2. Realtime do Supabase (atualizações instantâneas de mapeamento de outros computadores)
+    const unsubRealtime = subscribeToSupabaseRealtime("mapeamento_localizacao", (payload) => {
+      console.log("⚡ [Realtime Mapeamento] Alteração detectada em mapeamento_localizacao:", payload);
+      scheduleFetch(100);
+    });
+
+    // 3. Eventos locais e entre abas
+    const handleSync = (e: Event) => {
+      const customEvt = e as CustomEvent;
+      if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "mapeamento") {
+        scheduleFetch(100);
+      }
+    };
+
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        scheduleFetch(200);
+      }
+    };
+
+    // Polling suave de segurança a cada 30 segundos se a aba estiver visível
+    const intervalId = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        scheduleFetch(0);
+      }
+    }, 30000);
+
+    window.addEventListener("detran_sync_updated", handleSync);
+    window.addEventListener("storage", handleSync);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      unsubRealtime();
+      clearInterval(intervalId);
+      window.removeEventListener("detran_sync_updated", handleSync);
+      window.removeEventListener("storage", handleSync);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+    };
+  }, [fetchDados, scheduleFetch]);
 
   const handleStartEdit = (item: MapeamentoLocalizacao) => {
     if (!canEdit) return;

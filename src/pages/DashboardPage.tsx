@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { 
   FolderArchive, 
   Send, 
@@ -33,13 +33,26 @@ import {
   Area
 } from "recharts";
 import { getDashboardStats } from "../services/db";
+import { subscribeToMultipleSupabaseRealtime } from "../services/supabase";
 
 export const DashboardPage: React.FC = () => {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [isBackgroundFetching, setIsBackgroundFetching] = useState(false);
 
-  const fetchStats = async () => {
-    setLoading(true);
+  const isFetchingRef = useRef(false);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const fetchStats = useCallback(async (isInitial = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    if (isInitial) {
+      setLoading(true);
+    } else {
+      setIsBackgroundFetching(true);
+    }
+
     try {
       const data = await getDashboardStats();
       setStats(data);
@@ -47,12 +60,68 @@ export const DashboardPage: React.FC = () => {
       console.error("Erro ao carregar estatísticas:", err);
     } finally {
       setLoading(false);
+      setIsBackgroundFetching(false);
+      isFetchingRef.current = false;
     }
-  };
+  }, []);
+
+  const scheduleFetch = useCallback((delayMs: number = 300) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      fetchStats(false);
+    }, delayMs);
+  }, [fetchStats]);
 
   useEffect(() => {
-    fetchStats();
-  }, []);
+    // 1. Carga inicial
+    fetchStats(true);
+
+    // 2. Realtime do Supabase (atualizações instantâneas de múltiplas tabelas em tempo real)
+    const unsubRealtime = subscribeToMultipleSupabaseRealtime(
+      ["geral_cnhs", "memorandos", "candidatos", "usuarios", "acessos_cidadao"],
+      (table, payload) => {
+        console.log(`⚡ [Realtime Dashboard] Mudança na tabela ${table}:`, payload);
+        scheduleFetch(200);
+      }
+    );
+
+    // 3. Eventos locais e entre abas
+    const handleSync = () => {
+      scheduleFetch(200);
+    };
+
+    const handleFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        scheduleFetch(300);
+      }
+    };
+
+    // Polling suave a cada 25 segundos
+    const intervalId = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        scheduleFetch(0);
+      }
+    }, 25000);
+
+    window.addEventListener("detran_sync_updated", handleSync);
+    window.addEventListener("storage", handleSync);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleFocus);
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      unsubRealtime();
+      clearInterval(intervalId);
+      window.removeEventListener("detran_sync_updated", handleSync);
+      window.removeEventListener("storage", handleSync);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleFocus);
+    };
+  }, [fetchStats, scheduleFetch]);
 
   if (loading || !stats) {
     return (

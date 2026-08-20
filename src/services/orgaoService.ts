@@ -1,4 +1,4 @@
-import { idbGet, idbSet } from "./db";
+import { idbGet, idbSet, notifyDataSync } from "./db";
 import { supabase, isSupabaseConfigured } from "./supabase";
 
 export interface OrgaoConfig {
@@ -186,6 +186,9 @@ export async function saveOrgaoConfig(config: OrgaoConfig): Promise<void> {
 
   // Atualiza também o favicon e ícone do app/atalho PWA
   updateAppFavicon(logoToSave);
+
+  // Notifica todas as abas e componentes sobre a nova configuração
+  notifyDataSync("orgao_config");
 }
 
 export async function loadOrgaoConfigFromSupabase(): Promise<OrgaoConfig | null> {

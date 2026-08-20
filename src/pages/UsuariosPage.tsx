@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Users, Plus, Search, Edit2, Trash2, ShieldCheck, CheckCircle2, Mail, Key, UserCheck, Eye, EyeOff, Lock, Shield } from "lucide-react";
 import { Usuario, PerfilAcesso, UsuarioSchema, PERMISSOES_SISTEMA, getPermissoesPadrao } from "../types";
 import { getUsuarios, createUsuario, updateUsuario, deleteUsuario } from "../services/db";
+import { subscribeToSupabaseRealtime } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
 import { formatCPF, formatDate, normalizeSearch, matchDigitsSafe } from "../lib/utils";
@@ -10,10 +11,14 @@ export const UsuariosPage: React.FC = () => {
   const { user } = useAuth();
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isBackgroundFetching, setIsBackgroundFetching] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<Usuario | null>(null);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const isFetchingRef = useRef(false);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Form State
   const [nomeCompleto, setNomeCompleto] = useState("");
@@ -27,8 +32,16 @@ export const UsuariosPage: React.FC = () => {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
-  const fetchDados = async () => {
-    setLoading(true);
+  const fetchDados = useCallback(async (isInitial = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    if (isInitial) {
+      setLoading(true);
+    } else {
+      setIsBackgroundFetching(true);
+    }
+
     try {
       const data = await getUsuarios();
       setUsuarios(data);
@@ -36,12 +49,68 @@ export const UsuariosPage: React.FC = () => {
       console.error("Erro ao buscar usuários:", err);
     } finally {
       setLoading(false);
+      setIsBackgroundFetching(false);
+      isFetchingRef.current = false;
     }
-  };
+  }, []);
+
+  const scheduleFetch = useCallback((delayMs: number = 300) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      fetchDados(false);
+    }, delayMs);
+  }, [fetchDados]);
 
   useEffect(() => {
-    fetchDados();
-  }, []);
+    // 1. Carga inicial
+    fetchDados(true);
+
+    // 2. Realtime do Supabase (atualizações instantâneas de usuários de outros computadores)
+    const unsubRealtime = subscribeToSupabaseRealtime("usuarios", (payload) => {
+      console.log("⚡ [Realtime Usuários] Alteração detectada em usuarios:", payload);
+      scheduleFetch(100);
+    });
+
+    // 3. Eventos locais e entre abas
+    const handleSync = (e: Event) => {
+      const customEvt = e as CustomEvent;
+      if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "usuarios") {
+        scheduleFetch(100);
+      }
+    };
+
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        scheduleFetch(200);
+      }
+    };
+
+    // Polling suave de segurança a cada 30 segundos se a aba estiver visível
+    const intervalId = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        scheduleFetch(0);
+      }
+    }, 30000);
+
+    window.addEventListener("detran_sync_updated", handleSync);
+    window.addEventListener("storage", handleSync);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      unsubRealtime();
+      clearInterval(intervalId);
+      window.removeEventListener("detran_sync_updated", handleSync);
+      window.removeEventListener("storage", handleSync);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+    };
+  }, [fetchDados, scheduleFetch]);
 
   const handleOpenModal = (item?: Usuario) => {
     setFormErrors({});
