@@ -67,6 +67,7 @@ import {
 } from "../types";
 import { formatCPF, formatDateTime, normalizeSearch } from "../lib/utils";
 import { useAuth } from "../context/AuthContext";
+import { subscribeToSupabaseRealtime } from "../services/supabase";
 
 type PeriodoTipo = "hoje" | "7d" | "30d" | "mes_atual" | "ano_atual" | "custom";
 
@@ -119,6 +120,54 @@ export const RelatoriosPage: React.FC = () => {
 
   useEffect(() => {
     loadData();
+
+    const unsubRealtimeGeral = subscribeToSupabaseRealtime("geral_cnhs", () => {
+      loadData();
+    });
+
+    const unsubRealtimeHist = subscribeToSupabaseRealtime("historico_movimentacoes", () => {
+      loadData();
+    });
+
+    const unsubRealtimeMemos = subscribeToSupabaseRealtime("memorandos", () => {
+      loadData();
+    });
+
+    const handleSync = (e: Event) => {
+      const customEvt = e as CustomEvent;
+      if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "geral" || customEvt.detail.type === "historico" || customEvt.detail.type === "memorandos") {
+        loadData();
+      }
+    };
+
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        loadData();
+      }
+    };
+
+    // Polling suave a cada 30 segundos se a aba estiver visível
+    const intervalId = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        loadData();
+      }
+    }, 30000);
+
+    window.addEventListener("detran_sync_updated", handleSync);
+    window.addEventListener("storage", handleSync);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+
+    return () => {
+      unsubRealtimeGeral();
+      unsubRealtimeHist();
+      unsubRealtimeMemos();
+      clearInterval(intervalId);
+      window.removeEventListener("detran_sync_updated", handleSync);
+      window.removeEventListener("storage", handleSync);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+    };
   }, []);
 
   // Determinar faixa de datas ativas

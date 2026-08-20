@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { HistoricoMovimentacao, Responsavel } from "../types";
 import { getHistoricoList, getResponsaveis } from "../services/db";
+import { subscribeToSupabaseRealtime } from "../services/supabase";
 import { Badge } from "../components/ui/Badge";
 import { formatDateTime, formatCPF, normalizeSearch, matchDigitsSafe } from "../lib/utils";
 import * as XLSX from "xlsx";
@@ -61,6 +62,16 @@ export const HistoricoPage: React.FC = () => {
   useEffect(() => {
     fetchDados();
 
+    const unsubRealtimeHist = subscribeToSupabaseRealtime("historico_movimentacoes", () => {
+      console.log("⚡ [Realtime Histórico] Atualização detectada em historico_movimentacoes");
+      fetchDados();
+    });
+
+    const unsubRealtimeGeral = subscribeToSupabaseRealtime("geral_cnhs", () => {
+      console.log("⚡ [Realtime Histórico] Atualização detectada em geral_cnhs");
+      fetchDados();
+    });
+
     const handleSync = (e: Event) => {
       const customEvt = e as CustomEvent;
       if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "historico" || customEvt.detail.type === "geral") {
@@ -68,11 +79,32 @@ export const HistoricoPage: React.FC = () => {
       }
     };
 
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        fetchDados();
+      }
+    };
+
+    // Polling suave a cada 15 segundos se a aba estiver visível
+    const intervalId = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        fetchDados();
+      }
+    }, 15000);
+
     window.addEventListener("detran_sync_updated", handleSync);
     window.addEventListener("storage", handleSync);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+
     return () => {
+      unsubRealtimeHist();
+      unsubRealtimeGeral();
+      clearInterval(intervalId);
       window.removeEventListener("detran_sync_updated", handleSync);
       window.removeEventListener("storage", handleSync);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };
   }, []);
 

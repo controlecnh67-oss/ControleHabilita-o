@@ -103,8 +103,23 @@ export async function getMeta(key: string): Promise<any> {
 /**
  * Normaliza objetos do Supabase para ter campos updated_at e formatos corretos
  */
-function normalizeCNHRecord(item: any): GeralCNH {
+export function normalizeCNHRecord(item: any): GeralCNH {
   const now = new Date().toISOString();
+  let situacao: any = "Recebida";
+  const rawSit = String(item.situacao || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  if (rawSit.includes("entreg")) situacao = "Entregue";
+  else if (rawSit.includes("pend")) situacao = "Pendente";
+  else if (rawSit.includes("remet") || rawSit.includes("trans")) situacao = "Remetida";
+  else if (rawSit.includes("receb")) situacao = "Recebida";
+  else if (item.situacao) situacao = item.situacao;
+
+  let dataMov = item.data_movimento || item.data || item.created_at || now;
+  try {
+    dataMov = new Date(dataMov).toISOString();
+  } catch {
+    dataMov = now;
+  }
+
   return {
     id: item.id || `cnh-${item.ordem || Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
     ordem: Number(item.ordem) || 0,
@@ -117,24 +132,24 @@ function normalizeCNHRecord(item: any): GeralCNH {
     notificado_at: item.notificado_at || undefined,
     gaveta: item.gaveta || "",
     reparticao: item.reparticao || "",
-    situacao: item.situacao || "Remetida",
+    situacao: situacao,
     responsavel_id: item.responsavel_id || undefined,
     responsavel_nome: item.responsavel_nome || item.responsavel || undefined,
-    data_movimento: item.data_movimento || item.data || item.created_at || now,
+    data_movimento: dataMov,
     usuario_id: item.usuario_id || "sistema",
     usuario_nome: item.usuario_nome || item.usuario || "Agente DETRAN",
     memorando_numero: item.memorando_numero || undefined,
     remessa: item.remessa || undefined,
     observacao: item.observacao || item.obs || undefined,
-    created_at: item.created_at || item.data_movimento || now,
-    updated_at: item.updated_at || item.data_movimento || item.created_at || now
+    created_at: item.created_at || dataMov || now,
+    updated_at: item.updated_at || dataMov || item.created_at || now
   };
 }
 
 /**
  * Executa a sincronização com o Supabase.
  * - Se o IndexedDB estiver vazio: realiza a Sincronização Inicial Completa paginada em blocos de 1.000 registros sem limites.
- * - Se já possuir registros: realiza a Sincronização Inteligente por Delta usando updated_at > ultima_data.
+ * - Se já possuir registros: realiza a Sincronização Inteligente por Delta e busca os mais recentes.
  */
 export async function syncGeralWithSupabase(forceFull: boolean = false): Promise<SyncStats> {
   const startTime = Date.now();
@@ -214,51 +229,64 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
       console.log(`✅ [ControleCNH IndexedDB] Sincronização Completa finalizada: ${totalDownloaded} registros em ${duration}ms.`);
       return finalStats;
     } else {
-      // Sincronização Inteligente por Delta (updated_at)
+      // Sincronização Inteligente Delta + Registros Recentes
       console.log("⚡ [ControleCNH IndexedDB] Iniciando Sincronização Inteligente Delta...");
 
-      // Buscar maior updated_at do IndexedDB
+      // Buscar maior updated_at do IndexedDB com margem de segurança de 5 minutos
       let maxUpdatedAt: string | null = await getMeta("max_updated_at");
 
       if (!maxUpdatedAt) {
-        // Encontrar maior data_movimento ou updated_at na base local
         const lastRecord = await dexieDb.geral.orderBy("updated_at").last();
         if (lastRecord && lastRecord.updated_at) {
           maxUpdatedAt = lastRecord.updated_at;
         }
       }
 
-      let query = supabase.from("geral_cnhs").select("*");
+      let deltaRecordsMap = new Map<string, GeralCNH>();
 
-      if (maxUpdatedAt) {
-        query = query.gt("updated_at", maxUpdatedAt);
-      }
-
-      let { data: deltaData, error: deltaError } = await query;
-
-      // Se der erro por falta da coluna updated_at na tabela remota, buscar por created_at ou ordenação
-      if (deltaError && (deltaError.message.includes("updated_at") || deltaError.code === "42703")) {
-        console.warn("Coluna updated_at não existe no Supabase. Realizando verificação de novos por created_at.");
-        const lastCreatedRecord = await dexieDb.geral.orderBy("created_at").last();
-        let fallbackQuery = supabase.from("geral_cnhs").select("*");
-        if (lastCreatedRecord && lastCreatedRecord.created_at) {
-          fallbackQuery = fallbackQuery.gt("created_at", lastCreatedRecord.created_at);
+      // 1. Consulta por delta baseado em updated_at se disponível
+      try {
+        let query = supabase.from("geral_cnhs").select("*");
+        if (maxUpdatedAt) {
+          // Retrocede 5 minutos na verificação delta para prevenir perda por atraso de relógio
+          try {
+            const bufferDate = new Date(new Date(maxUpdatedAt).getTime() - 5 * 60 * 1000).toISOString();
+            query = query.gt("updated_at", bufferDate);
+          } catch {
+            query = query.gt("updated_at", maxUpdatedAt);
+          }
         }
-        const fallbackRes = await fallbackQuery;
-        deltaData = fallbackRes.data;
-        deltaError = fallbackRes.error;
+        const { data: deltaData, error: deltaErr } = await query;
+        if (!deltaErr && deltaData && deltaData.length > 0) {
+          deltaData.forEach((row) => {
+            const norm = normalizeCNHRecord(row);
+            deltaRecordsMap.set(norm.id, norm);
+          });
+        }
+      } catch (e) {
+        console.warn("Aviso na consulta por updated_at:", e);
       }
 
-      if (deltaError) {
-        throw new Error(`Erro ao buscar delta no Supabase: ${deltaError.message}`);
+      // 2. Consulta complementar dos últimos 300 registros modificados ou criados recentemente
+      try {
+        let recentQuery = supabase.from("geral_cnhs").select("*").order("data_movimento", { ascending: false }).limit(300);
+        const { data: recentData, error: recentErr } = await recentQuery;
+        if (!recentErr && recentData && recentData.length > 0) {
+          recentData.forEach((row) => {
+            const norm = normalizeCNHRecord(row);
+            deltaRecordsMap.set(norm.id, norm);
+          });
+        }
+      } catch (e) {
+        console.warn("Aviso na consulta de recentes por data_movimento:", e);
       }
 
-      if (deltaData && deltaData.length > 0) {
-        const updatedRecords = deltaData.map(normalizeCNHRecord);
+      const updatedRecords = Array.from(deltaRecordsMap.values());
+
+      if (updatedRecords.length > 0) {
         await dexieDb.geral.bulkPut(updatedRecords);
-        console.log(`🔄 [ControleCNH IndexedDB] Delta aplicado: ${updatedRecords.length} registros atualizados/inseridos.`);
+        console.log(`🔄 [ControleCNH IndexedDB] Delta aplicado: ${updatedRecords.length} registros atualizados/sincronizados.`);
 
-        // Atualiza max_updated_at
         let newestDate = maxUpdatedAt;
         for (const rec of updatedRecords) {
           if (rec.updated_at && (!newestDate || rec.updated_at > newestDate)) {
@@ -322,7 +350,7 @@ export async function getLocalGeralCNHs(): Promise<GeralCNH[]> {
 }
 
 // Disparar evento global de sincronização
-function notifySyncUpdated(type: string = "geral") {
+export function notifySyncUpdated(type: string = "geral") {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("detran_sync_updated", { detail: { type, timestamp: Date.now() } }));
   }
@@ -338,59 +366,70 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
 
   // 2. Se o Supabase estiver configurado, envia para a nuvem
   if (isSupabaseConfigured()) {
+    const primaryPayload: any = {
+      id: normalized.id,
+      ordem: normalized.ordem,
+      nome: normalized.nome,
+      cpf: normalized.cpf,
+      telefone: normalized.telefone || null,
+      gaveta: normalized.gaveta || "",
+      reparticao: normalized.reparticao || "",
+      situacao: normalized.situacao,
+      responsavel_id: normalized.responsavel_id || null,
+      responsavel_nome: normalized.responsavel_nome || null,
+      data_movimento: normalized.data_movimento,
+      usuario_id: normalized.usuario_id || null,
+      usuario_nome: normalized.usuario_nome || null,
+      memorando_numero: normalized.memorando_numero || null,
+      remessa: normalized.remessa || null,
+      observacao: normalized.observacao || null,
+      memorando_id: normalized.memorando_id || null,
+      candidato_id: normalized.candidato_id || null,
+      created_at: normalized.created_at,
+      updated_at: normalized.updated_at
+    };
+
+    if (normalized.notificado_whatsapp !== undefined) {
+      primaryPayload.notificado_whatsapp = normalized.notificado_whatsapp;
+    }
+    if (normalized.notificado_at) {
+      primaryPayload.notificado_at = normalized.notificado_at;
+    }
+
     try {
-      const payload: any = {
-        id: normalized.id,
-        ordem: normalized.ordem,
-        nome: normalized.nome,
-        cpf: normalized.cpf,
-        telefone: normalized.telefone || null,
-        gaveta: normalized.gaveta || "",
-        reparticao: normalized.reparticao || "",
-        situacao: normalized.situacao,
-        responsavel_id: normalized.responsavel_id || null,
-        responsavel_nome: normalized.responsavel_nome || null,
-        data_movimento: normalized.data_movimento,
-        usuario_id: normalized.usuario_id || null,
-        usuario_nome: normalized.usuario_nome || null,
-        memorando_numero: normalized.memorando_numero || null,
-        remessa: normalized.remessa || null,
-        observacao: normalized.observacao || null,
-        memorando_id: normalized.memorando_id || null,
-        candidato_id: normalized.candidato_id || null,
-        created_at: normalized.created_at,
-        updated_at: normalized.updated_at
-      };
-
-      if (normalized.notificado_whatsapp !== undefined) {
-        payload.notificado_whatsapp = normalized.notificado_whatsapp;
-      }
-      if (normalized.notificado_at) {
-        payload.notificado_at = normalized.notificado_at;
-      }
-
-      const { error } = await supabase.from("geral_cnhs").upsert(payload, { onConflict: "id" });
+      const { error } = await supabase.from("geral_cnhs").upsert(primaryPayload, { onConflict: "id" });
       if (error) {
-        console.warn("Aviso ao sincronizar alteração com Supabase (tentando payload simplificado):", error.message);
-        // Tentar payload sem chaves opcionais caso foreign keys falhem
-        const fallbackPayload = {
-          id: normalized.id,
-          ordem: normalized.ordem,
-          nome: normalized.nome,
-          cpf: normalized.cpf,
-          gaveta: normalized.gaveta || "",
-          reparticao: normalized.reparticao || "",
-          situacao: normalized.situacao,
-          data_movimento: normalized.data_movimento,
-          responsavel_nome: normalized.responsavel_nome || null,
-          usuario_nome: normalized.usuario_nome || null,
-          observacao: normalized.observacao || null,
-          updated_at: normalized.updated_at
+        console.warn("Aviso ao fazer upsert completo em geral_cnhs (tentando payload seguro):", error.message);
+        // Tentativa 1: Sem chaves estrangeiras que possam violar constraints (FKs)
+        const safeFkPayload = {
+          ...primaryPayload,
+          responsavel_id: null,
+          usuario_id: null,
+          memorando_id: null,
+          candidato_id: null
         };
-        await supabase.from("geral_cnhs").upsert(fallbackPayload, { onConflict: "id" });
+        const resFk = await supabase.from("geral_cnhs").upsert(safeFkPayload, { onConflict: "id" });
+        if (resFk.error) {
+          console.warn("Aviso ao tentar upsert sem FKs (tentando colunas básicas):", resFk.error.message);
+          // Tentativa 2: Apenas colunas básicas garantidas (sem updated_at ou colunas opcionais)
+          const basicPayload = {
+            id: normalized.id,
+            ordem: normalized.ordem,
+            nome: normalized.nome,
+            cpf: normalized.cpf,
+            gaveta: normalized.gaveta || "",
+            reparticao: normalized.reparticao || "",
+            situacao: normalized.situacao,
+            data_movimento: normalized.data_movimento,
+            responsavel_nome: normalized.responsavel_nome || null,
+            usuario_nome: normalized.usuario_nome || null,
+            observacao: normalized.observacao || null
+          };
+          await supabase.from("geral_cnhs").upsert(basicPayload, { onConflict: "id" });
+        }
       }
     } catch (err) {
-      console.warn("Erro ao enviar para Supabase:", err);
+      console.warn("Erro ao sincronizar geral_cnhs com Supabase:", err);
     }
   }
 
@@ -443,7 +482,15 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[]): Promise<void>
         const chunk = payloads.slice(i, i + 250);
         const { error } = await supabase.from("geral_cnhs").upsert(chunk, { onConflict: "id" });
         if (error) {
-          console.warn("Aviso ao salvar lote no Supabase:", error.message);
+          console.warn("Aviso ao salvar lote no Supabase, tentando sem foreign keys:", error.message);
+          const safeChunk = chunk.map((item) => ({
+            ...item,
+            responsavel_id: null,
+            usuario_id: null,
+            memorando_id: null,
+            candidato_id: null
+          }));
+          await supabase.from("geral_cnhs").upsert(safeChunk, { onConflict: "id" });
         }
       }
     } catch (err) {

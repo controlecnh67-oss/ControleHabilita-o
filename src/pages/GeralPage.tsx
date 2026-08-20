@@ -57,8 +57,8 @@ import {
   importSpreadsheetData,
   getPublicSearchCount
 } from "../services/db";
-import { subscribeSyncStatus, syncGeralWithSupabase, SyncStats } from "../services/dexieDb";
-import { getPublicShareUrl } from "../services/supabase";
+import { subscribeSyncStatus, syncGeralWithSupabase, SyncStats, dexieDb, normalizeCNHRecord } from "../services/dexieDb";
+import { getPublicShareUrl, subscribeToSupabaseRealtime } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
 import { Badge } from "../components/ui/Badge";
@@ -474,13 +474,48 @@ export const GeralPage: React.FC = () => {
       fetchDados();
     });
 
-    // 4. Executar sincronização automática a cada 5 minutos (300.000 ms)
+    // 4. Assinar Realtime do Supabase para refletir instantaneamente movimentações e status de outros computadores
+    const unsubRealtimeGeral = subscribeToSupabaseRealtime("geral_cnhs", async (payload: any) => {
+      console.log("⚡ [Realtime Geral] Mudança detectada na tabela geral_cnhs:", payload);
+      try {
+        if (payload?.eventType === "DELETE" && payload.old?.id) {
+          await dexieDb.geral.delete(payload.old.id);
+          setCnhs((prev) => prev.filter((c) => c.id !== payload.old.id));
+        } else if (payload?.new?.id) {
+          const norm = normalizeCNHRecord(payload.new);
+          await dexieDb.geral.put(norm);
+          setCnhs((prev) => {
+            const exists = prev.some((c) => c.id === norm.id);
+            if (exists) {
+              return prev.map((c) => (c.id === norm.id ? { ...c, ...norm } : c));
+            } else {
+              return [norm, ...prev].sort((a, b) => b.ordem - a.ordem);
+            }
+          });
+        }
+      } catch (e) {
+        console.warn("Aviso ao processar evento Realtime de geral_cnhs:", e);
+      }
+      fetchDados();
+    });
+
+    const unsubRealtimeHist = subscribeToSupabaseRealtime("historico_movimentacoes", () => {
+      console.log("⚡ [Realtime Geral] Nova movimentação registrada em historico_movimentacoes");
+      syncGeralWithSupabase(false).then(() => fetchDados());
+    });
+
+    const unsubRealtimeResp = subscribeToSupabaseRealtime("responsaveis", () => {
+      fetchDados();
+    });
+
+    // 5. Executar sincronização automática periódica (a cada 15 segundos se a aba estiver visível)
     const intervalId = setInterval(() => {
-      console.log("⏰ Executando sincronização automática de 5 minutos...");
-      syncGeralWithSupabase(false).then(() => {
-        fetchDados();
-      });
-    }, 300000);
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        syncGeralWithSupabase(false).then(() => {
+          fetchDados();
+        });
+      }
+    }, 15000);
 
     const handleSync = (e: Event) => {
       const customEvt = e as CustomEvent;
@@ -489,14 +524,27 @@ export const GeralPage: React.FC = () => {
       }
     };
 
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        syncGeralWithSupabase(false).then(() => fetchDados());
+      }
+    };
+
     window.addEventListener("detran_sync_updated", handleSync);
     window.addEventListener("storage", handleSync);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
 
     return () => {
       unsubscribe();
+      unsubRealtimeGeral();
+      unsubRealtimeHist();
+      unsubRealtimeResp();
       clearInterval(intervalId);
       window.removeEventListener("detran_sync_updated", handleSync);
       window.removeEventListener("storage", handleSync);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };
   }, []);
 
