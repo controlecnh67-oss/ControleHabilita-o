@@ -144,6 +144,7 @@ CREATE TABLE geral_cnhs (
   candidato_id TEXT REFERENCES candidatos(id) ON DELETE SET NULL,
   nome TEXT NOT NULL,
   cpf TEXT NOT NULL,
+  telefone TEXT,
   gaveta TEXT,
   reparticao TEXT,
   situacao TEXT NOT NULL DEFAULT 'Recebida' CHECK (situacao IN ('Remetida', 'Recebida', 'Pendente', 'Entregue')),
@@ -155,7 +156,10 @@ CREATE TABLE geral_cnhs (
   memorando_numero TEXT,
   remessa TEXT,
   observacao TEXT,
-  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
+  notificado_whatsapp BOOLEAN DEFAULT false,
+  notificado_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()),
+  updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
 );
 
 CREATE TABLE historico_movimentacoes (

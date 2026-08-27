@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { 
   ShieldCheck, 
   Search, 
@@ -20,11 +20,18 @@ import {
   Download,
   History,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  ExternalLink,
+  Calendar
 } from "lucide-react";
-import { consultarCnhPublicaPorCpf, ResultadoConsultaPublica, getPublicSearchCount } from "../services/db";
+import { 
+  consultarCnhPublicaPorCpf, 
+  ResultadoConsultaPublica, 
+  getPublicSearchCount,
+  fetchPublicSearchCount 
+} from "../services/db";
 import { formatCPF, formatDateTime } from "../lib/utils";
-import { getPublicShareUrl, saveLocalSupabaseConfig } from "../services/supabase";
+import { getPublicShareUrl, saveLocalSupabaseConfig, subscribeToSupabaseRealtime } from "../services/supabase";
 
 interface ConsultaPublicaPageProps {
   onBackToLogin?: () => void;
@@ -45,7 +52,54 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
   const [showHistoricoCompleto, setShowHistoricoCompleto] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isStandalone, setIsStandalone] = useState(false);
-  const [searchCount, setSearchCount] = useState(() => getPublicSearchCount());
+  const [searchCount, setSearchCount] = useState<number>(() => getPublicSearchCount());
+
+  // Atualizar contagem sincronizada com o banco Supabase
+  const refreshSearchCount = useCallback(async () => {
+    try {
+      const cnt = await fetchPublicSearchCount();
+      if (typeof cnt === "number" && cnt >= 0) {
+        setSearchCount(cnt);
+      }
+    } catch {
+      setSearchCount(getPublicSearchCount());
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshSearchCount();
+
+    // Ouvir novos registros inseridos no Supabase em tempo real
+    const unsubRealtime = subscribeToSupabaseRealtime("acessos_cidadao", () => {
+      refreshSearchCount();
+    });
+
+    const handleSync = (e: Event) => {
+      const customEvt = e as CustomEvent;
+      if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "acessos_cidadao") {
+        refreshSearchCount();
+      }
+    };
+
+    const handleFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        refreshSearchCount();
+      }
+    };
+
+    window.addEventListener("detran_sync_updated", handleSync);
+    window.addEventListener("storage", handleSync);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleFocus);
+
+    return () => {
+      unsubRealtime();
+      window.removeEventListener("detran_sync_updated", handleSync);
+      window.removeEventListener("storage", handleSync);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleFocus);
+    };
+  }, [refreshSearchCount]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -120,7 +174,8 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
 
       const res = await consultarCnhPublicaPorCpf(cleanCpf);
       setResultado(res);
-      setSearchCount(getPublicSearchCount());
+      // Atualizar contagem imediatamente
+      refreshSearchCount();
     } catch (err: any) {
       setError(err.message || "Erro ao consultar banco de dados.");
       setResultado(null);
@@ -451,19 +506,47 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
                 </div>
 
                 <p className="text-xs text-amber-200 leading-relaxed">
-                  A sua CNH foi remetida pelo setor emissor (Ordem #{resultado.cnhEncontrada.ordem}), mas ainda não deu entrada física no balcão de atendimento para retirada.
+                  A sua CNH foi remetida pelo setor emissor {resultado.cnhEncontrada.ordem > 0 ? `(Ordem #${resultado.cnhEncontrada.ordem})` : ""}, mas ainda não deu entrada física no balcão de atendimento para retirada.
                 </p>
                 
-                <div className="p-3 bg-slate-900/60 rounded-2xl border border-amber-900 text-xs text-slate-300">
-                  <p><strong className="text-slate-400">Titular:</strong> {resultado.cnhEncontrada.nome}</p>
+                <div className="p-3.5 bg-slate-900/60 rounded-2xl border border-amber-900 text-xs text-slate-300 space-y-2">
+                  <p><strong className="text-slate-400">Titular:</strong> <span className="text-white font-bold">{resultado.cnhEncontrada.nome}</span></p>
                   <p><strong className="text-slate-400">Situação Atual:</strong> <span className="text-amber-300 font-bold">{resultado.cnhEncontrada.situacao}</span></p>
+                  
+                  {(resultado.cnhEncontrada.data_movimento || resultado.cnhEncontrada.created_at) && (
+                    <div className="flex items-center gap-1.5 pt-1 border-t border-slate-800/80">
+                      <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span className="text-slate-400 font-medium">Data da Remessa:</span>
+                      <span className="font-mono font-bold text-amber-200">
+                        {formatDateTime(resultado.cnhEncontrada.data_movimento || resultado.cnhEncontrada.created_at)}
+                      </span>
+                    </div>
+                  )}
+
+                  {resultado.cnhEncontrada.remessa && (
+                    <p><strong className="text-slate-400">Remessa / Memorando:</strong> <span className="font-mono text-slate-200">{resultado.cnhEncontrada.remessa}</span></p>
+                  )}
+                </div>
+
+                {/* Botão Acompanhe seu processo (Renach) */}
+                <div className="pt-1">
+                  <a
+                    id="btn-acompanhe-processo-transito"
+                    href="https://sistemas-renach.detran.pa.gov.br/renach/renach-web/servicos/acompanhamentoPA/indexAcompanhamentoPA.jsf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-3 bg-amber-900/40 hover:bg-amber-900/80 text-amber-200 hover:text-white font-bold text-xs rounded-2xl border border-amber-600/50 shadow-md transition-all cursor-pointer"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Acompanhe seu processo no DETRAN/PA</span>
+                  </a>
                 </div>
               </div>
             )}
 
             {/* STATUS NÃO ENCONTRADA */}
             {resultado.statusDisponibilidade === "NAO_ENCONTRADA" && (
-              <div className="bg-slate-800/90 border-2 border-slate-700 rounded-3xl p-5 shadow-xl text-center space-y-3 text-slate-300">
+              <div className="bg-slate-800/90 border-2 border-slate-700 rounded-3xl p-5 shadow-xl text-center space-y-3.5 text-slate-300">
                 <div className="w-12 h-12 rounded-2xl bg-slate-700 mx-auto flex items-center justify-center text-slate-400">
                   <Search className="w-6 h-6" />
                 </div>
@@ -471,6 +554,23 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
                 <p className="text-xs text-slate-400 leading-relaxed">
                   Não encontramos nenhuma CNH registrada para o CPF <strong className="text-slate-200 font-mono">{formatCPF(resultado.cpfConsultado)}</strong> no sistema de protocolo.
                 </p>
+
+                {/* Botão Acompanhe seu processo (Renach) */}
+                <div className="pt-1.5 space-y-2">
+                  <a
+                    id="btn-acompanhe-processo-nao-encontrado"
+                    href="https://sistemas-renach.detran.pa.gov.br/renach/renach-web/servicos/acompanhamentoPA/indexAcompanhamentoPA.jsf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs sm:text-sm rounded-2xl shadow-lg shadow-blue-950/60 border border-blue-400/40 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+                  >
+                    <ExternalLink className="w-4 h-4 text-blue-200" />
+                    <span>Acompanhe seu processo</span>
+                  </a>
+                  <p className="text-[11px] text-slate-400 leading-tight">
+                    Acompanhe a emissão e situação da sua CNH no portal oficial do DETRAN/PA.
+                  </p>
+                </div>
               </div>
             )}
 

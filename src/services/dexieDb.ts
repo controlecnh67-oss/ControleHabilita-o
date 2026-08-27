@@ -229,8 +229,27 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
       console.log(`✅ [ControleCNH IndexedDB] Sincronização Completa finalizada: ${totalDownloaded} registros em ${duration}ms.`);
       return finalStats;
     } else {
-      // Sincronização Inteligente Delta + Registros Recentes
-      console.log("⚡ [ControleCNH IndexedDB] Iniciando Sincronização Inteligente Delta...");
+      // Sincronização Inteligente Delta + Registros Recentes + Detecção de Divergência
+      console.log("⚡ [ControleCNH IndexedDB] Iniciando Sincronização Inteligente com Supabase...");
+
+      // Verificar contagem exata no Supabase para detectar grandes discrepâncias
+      let remoteCount: number | null = null;
+      try {
+        const { count, error: countErr } = await supabase
+          .from("geral_cnhs")
+          .select("*", { count: "exact", head: true });
+        if (!countErr && count !== null) {
+          remoteCount = count;
+        }
+      } catch (e) {
+        console.warn("Aviso ao checar contagem no Supabase:", e);
+      }
+
+      // Se a base local estiver muito defasada em relação ao Supabase (>100 registros de diferença), faz full sync
+      if (remoteCount !== null && (localCount === 0 || remoteCount - localCount > 100)) {
+        console.log(`🔄 Base local defasada (${localCount} local vs ${remoteCount} nuvem). Executando sincronização completa...`);
+        return await syncGeralWithSupabase(true);
+      }
 
       // Buscar maior updated_at do IndexedDB com margem de segurança de 5 minutos
       let maxUpdatedAt: string | null = await getMeta("max_updated_at");
@@ -242,15 +261,14 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
         }
       }
 
-      let deltaRecordsMap = new Map<string, GeralCNH>();
+      const deltaRecordsMap = new Map<string, GeralCNH>();
 
-      // 1. Consulta por delta baseado em updated_at se disponível
+      // Estratégia 1: Consulta por delta baseado em updated_at
       try {
         let query = supabase.from("geral_cnhs").select("*");
         if (maxUpdatedAt) {
-          // Retrocede 5 minutos na verificação delta para prevenir perda por atraso de relógio
           try {
-            const bufferDate = new Date(new Date(maxUpdatedAt).getTime() - 5 * 60 * 1000).toISOString();
+            const bufferDate = new Date(new Date(maxUpdatedAt).getTime() - 10 * 60 * 1000).toISOString();
             query = query.gt("updated_at", bufferDate);
           } catch {
             query = query.gt("updated_at", maxUpdatedAt);
@@ -267,10 +285,14 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
         console.warn("Aviso na consulta por updated_at:", e);
       }
 
-      // 2. Consulta complementar dos últimos 300 registros modificados ou criados recentemente
+      // Estratégia 2: Consulta dos últimos 500 registros modificados por data_movimento
       try {
-        let recentQuery = supabase.from("geral_cnhs").select("*").order("data_movimento", { ascending: false }).limit(300);
-        const { data: recentData, error: recentErr } = await recentQuery;
+        const { data: recentData, error: recentErr } = await supabase
+          .from("geral_cnhs")
+          .select("*")
+          .order("data_movimento", { ascending: false })
+          .limit(500);
+
         if (!recentErr && recentData && recentData.length > 0) {
           recentData.forEach((row) => {
             const norm = normalizeCNHRecord(row);
@@ -279,6 +301,24 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
         }
       } catch (e) {
         console.warn("Aviso na consulta de recentes por data_movimento:", e);
+      }
+
+      // Estratégia 3: Consulta dos últimos 200 registros criados mais recentemente (maiores ordens)
+      try {
+        const { data: topOrdemData, error: topOrdemErr } = await supabase
+          .from("geral_cnhs")
+          .select("*")
+          .order("ordem", { ascending: false })
+          .limit(200);
+
+        if (!topOrdemErr && topOrdemData && topOrdemData.length > 0) {
+          topOrdemData.forEach((row) => {
+            const norm = normalizeCNHRecord(row);
+            deltaRecordsMap.set(norm.id, norm);
+          });
+        }
+      } catch (e) {
+        console.warn("Aviso na consulta por maior ordem:", e);
       }
 
       const updatedRecords = Array.from(deltaRecordsMap.values());
@@ -297,7 +337,7 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
           await setMeta("max_updated_at", newestDate);
         }
       } else {
-        console.log("✨ [ControleCNH IndexedDB] Nenhum registro novo/alterado encontrado.");
+        console.log("✨ [ControleCNH IndexedDB] Sincronização delta: Nenhum registro alterado pendente.");
       }
 
       const syncTime = new Date().toISOString();

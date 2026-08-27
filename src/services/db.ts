@@ -1927,19 +1927,53 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
 
 // Interface e Função para Contador de Consultas Públicas Mobile por Cidadão
 export function getPublicSearchCount(): number {
-  if (typeof window === "undefined") return 120;
+  if (typeof window === "undefined") return 0;
+  const stored = localStorage.getItem("detran_public_search_count");
+  if (stored) {
+    const val = parseInt(stored, 10);
+    if (!isNaN(val) && val >= 0) return val;
+  }
   const logs = getAcessosCidadaoLogs();
+  return logs.length;
+}
+
+export async function fetchPublicSearchCount(): Promise<number> {
+  if (isSupabaseConfigured()) {
+    try {
+      // 1. Busca a contagem exata e em tempo real diretamente na tabela acessos_cidadao do Supabase
+      const { count, error } = await supabase
+        .from("acessos_cidadao")
+        .select("*", { count: "exact", head: true });
+
+      if (!error && typeof count === "number") {
+        if (typeof window !== "undefined") {
+          localStorage.setItem("detran_public_search_count", count.toString());
+        }
+        return count;
+      }
+    } catch (err) {
+      console.warn("Aviso ao buscar contagem exata de acessos do Supabase:", err);
+    }
+  }
+
+  // Fallback para logs locais/sincronizados
+  const logs = await fetchAcessosCidadaoLogs();
   const count = logs.length;
-  try {
+  if (typeof window !== "undefined") {
     localStorage.setItem("detran_public_search_count", count.toString());
-  } catch {
-    // ignore
   }
   return count;
 }
 
 export function incrementPublicSearchCount(): number {
-  return getPublicSearchCount();
+  if (typeof window === "undefined") return 0;
+  const current = getPublicSearchCount();
+  const next = current + 1;
+  try {
+    localStorage.setItem("detran_public_search_count", next.toString());
+  } catch {}
+  notifyDataSync("acessos_cidadao");
+  return next;
 }
 
 // ============================================================================
@@ -1970,13 +2004,9 @@ export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
     return local;
   }
   try {
-    const { data, error } = await supabase
-      .from("acessos_cidadao")
-      .select("*")
-      .order("data_hora", { ascending: false })
-      .limit(500);
+    const data = await fetchAllRowsFromSupabase<AcessoCidadaoLog>("acessos_cidadao", 1000, "data_hora", false);
 
-    if (!error && data && data.length > 0) {
+    if (data && data.length > 0) {
       const map = new Map<string, AcessoCidadaoLog>();
       data.forEach((d: any) => map.set(d.id, d));
       local.forEach((l) => {
@@ -1988,7 +2018,8 @@ export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
         (a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime()
       );
       if (typeof window !== "undefined") {
-        localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(merged.slice(0, 500)));
+        localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(merged.slice(0, 1000)));
+        localStorage.setItem("detran_public_search_count", Math.max(merged.length, data.length).toString());
       }
       return merged;
     }
@@ -2009,7 +2040,7 @@ export function registrarAcessoCidadaoLog(logData: Omit<AcessoCidadaoLog, "id" |
   };
   const updated = [newLog, ...currentLogs];
   if (typeof window !== "undefined") {
-    localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(updated.slice(0, 500)));
+    localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(updated.slice(0, 1000)));
   }
   incrementPublicSearchCount();
 
@@ -2363,6 +2394,7 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
         data_movimento: candEncontrado.created_at || new Date().toISOString(),
         usuario_id: "sistema",
         usuario_nome: "Sistema DETRAN",
+        remessa: candEncontrado.remessa || "",
         observacao: "Processo cadastrado em memorando de envio.",
         created_at: candEncontrado.created_at || new Date().toISOString()
       };
@@ -2511,11 +2543,15 @@ export async function createGeralManual(
     reparticao = loc.reparticao;
   }
 
+  const uniqueId = typeof crypto !== "undefined" && crypto.randomUUID 
+    ? crypto.randomUUID() 
+    : (toValidUUID(`cnh-manual-${Date.now()}-${Math.random()}`) || `cnh-manual-${Date.now()}`);
+
   const nova: GeralCNH = {
-    id: `cnh-manual-${Date.now()}`,
+    id: uniqueId,
     ordem: maxOrdem,
-    nome: data.nome,
-    cpf: data.cpf,
+    nome: data.nome.trim(),
+    cpf: data.cpf.trim(),
     gaveta,
     reparticao,
     situacao: data.situacao,
