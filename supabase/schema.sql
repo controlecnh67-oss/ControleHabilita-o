@@ -1,7 +1,7 @@
 -- ==============================================================================
 -- SISTEMA DE CONTROLE DE CNH - DETRAN (SETOR DE PROTOCOLO)
 -- SCRIPT MESTRE DE BANCO DE DADOS POSTGRESQL + SUPABASE AUTH + REALTIME + STORAGE
--- Versão 3.0.0 - Oficial, Idempotente e Compatível com Vercel / Supabase
+-- Versão 3.1.0 - Totalmente Idempotente, Tolerante a Falhas e Compatível com Supabase
 -- ==============================================================================
 
 -- 0. EXTENSÕES DO POSTGRESQL
@@ -40,11 +40,17 @@ CREATE TABLE IF NOT EXISTS public.usuarios (
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- Garante que colunas existam caso a tabela tenha sido criada em versão anterior
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS permissoes JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE;
+
 CREATE OR REPLACE TRIGGER trigger_usuarios_updated_at
 BEFORE UPDATE ON public.usuarios
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
--- Se a tabela usuarios já existia com coluna 'senha', removemos para garantir conformidade de segurança
+-- Se a tabela usuarios já existia com coluna 'senha', removemos para conformidade de segurança
 DO $$
 BEGIN
     IF EXISTS (
@@ -70,6 +76,10 @@ CREATE TABLE IF NOT EXISTS public.responsaveis (
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE;
+
 CREATE OR REPLACE TRIGGER trigger_responsaveis_updated_at
 BEFORE UPDATE ON public.responsaveis
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
@@ -91,18 +101,24 @@ BEFORE DELETE ON public.responsaveis
 FOR EACH ROW EXECUTE FUNCTION public.proteger_registro_proprietario();
 
 -- Inserção idempotente do Responsável padrão "Proprietário"
-INSERT INTO public.responsaveis (id, nome, cpf, telefone, observacao, ativo)
-VALUES (
-    'a0000000-0000-0000-0000-000000000001',
-    'Proprietário',
-    '000.000.000-00',
-    '(93) 00000-0000',
-    'Titular da CNH retirando seu próprio documento no guichê',
-    TRUE
-)
-ON CONFLICT (cpf) DO UPDATE SET
-    nome = EXCLUDED.nome,
-    ativo = TRUE;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM public.responsaveis WHERE id = 'a0000000-0000-0000-0000-000000000001' OR cpf = '000.000.000-00') THEN
+        INSERT INTO public.responsaveis (id, nome, cpf, telefone, observacao, ativo)
+        VALUES (
+            'a0000000-0000-0000-0000-000000000001',
+            'Proprietário',
+            '000.000.000-00',
+            '(93) 00000-0000',
+            'Titular da CNH retirando seu próprio documento no guichê',
+            TRUE
+        );
+    ELSE
+        UPDATE public.responsaveis 
+        SET nome = 'Proprietário', ativo = TRUE 
+        WHERE id = 'a0000000-0000-0000-0000-000000000001' OR cpf = '000.000.000-00';
+    END IF;
+END $$;
 
 -- ==============================================================================
 -- 4. TABELA DE MAPEAMENTO DE LOCALIZAÇÃO (Gavetas e Repartições por Inicial)
@@ -117,39 +133,47 @@ CREATE TABLE IF NOT EXISTS public.mapeamento_localizacao (
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+ALTER TABLE public.mapeamento_localizacao ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.mapeamento_localizacao ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.mapeamento_localizacao ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE;
+
 CREATE OR REPLACE TRIGGER trigger_mapeamento_updated_at
 BEFORE UPDATE ON public.mapeamento_localizacao
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 -- Seed inicial de mapeamento A-Z
-INSERT INTO public.mapeamento_localizacao (inicial, gaveta, reparticao, ativo) VALUES
-('A', 'GAVETA 1', 'REPARTIÇÃO 1', true),
-('B', 'GAVETA 1', 'REPARTIÇÃO 2', true),
-('C', 'GAVETA 1', 'REPARTIÇÃO 3', true),
-('D', 'GAVETA 1', 'REPARTIÇÃO 4', true),
-('E', 'GAVETA 1', 'REPARTIÇÃO 5', true),
-('F', 'GAVETA 2', 'REPARTIÇÃO 1', true),
-('G', 'GAVETA 2', 'REPARTIÇÃO 2', true),
-('H', 'GAVETA 2', 'REPARTIÇÃO 3', true),
-('I', 'GAVETA 2', 'REPARTIÇÃO 4', true),
-('J', 'GAVETA 2', 'REPARTIÇÃO 5', true),
-('K', 'GAVETA 3', 'REPARTIÇÃO 1', true),
-('L', 'GAVETA 3', 'REPARTIÇÃO 2', true),
-('M', 'GAVETA 3', 'REPARTIÇÃO 3', true),
-('N', 'GAVETA 3', 'REPARTIÇÃO 4', true),
-('O', 'GAVETA 3', 'REPARTIÇÃO 5', true),
-('P', 'GAVETA 4', 'REPARTIÇÃO 1', true),
-('Q', 'GAVETA 4', 'REPARTIÇÃO 2', true),
-('R', 'GAVETA 4', 'REPARTIÇÃO 3', true),
-('S', 'GAVETA 4', 'REPARTIÇÃO 4', true),
-('T', 'GAVETA 4', 'REPARTIÇÃO 5', true),
-('U', 'GAVETA 5', 'REPARTIÇÃO 1', true),
-('V', 'GAVETA 5', 'REPARTIÇÃO 2', true),
-('W', 'GAVETA 5', 'REPARTIÇÃO 3', true),
-('X', 'GAVETA 5', 'REPARTIÇÃO 4', true),
-('Y', 'GAVETA 5', 'REPARTIÇÃO 5', true),
-('Z', 'GAVETA 5', 'REPARTIÇÃO 5', true)
-ON CONFLICT (inicial) DO NOTHING;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM public.mapeamento_localizacao LIMIT 1) THEN
+        INSERT INTO public.mapeamento_localizacao (inicial, gaveta, reparticao, ativo) VALUES
+        ('A', 'GAVETA 1', 'REPARTIÇÃO 1', true),
+        ('B', 'GAVETA 1', 'REPARTIÇÃO 2', true),
+        ('C', 'GAVETA 1', 'REPARTIÇÃO 3', true),
+        ('D', 'GAVETA 1', 'REPARTIÇÃO 4', true),
+        ('E', 'GAVETA 1', 'REPARTIÇÃO 5', true),
+        ('F', 'GAVETA 2', 'REPARTIÇÃO 1', true),
+        ('G', 'GAVETA 2', 'REPARTIÇÃO 2', true),
+        ('H', 'GAVETA 2', 'REPARTIÇÃO 3', true),
+        ('I', 'GAVETA 2', 'REPARTIÇÃO 4', true),
+        ('J', 'GAVETA 2', 'REPARTIÇÃO 5', true),
+        ('K', 'GAVETA 3', 'REPARTIÇÃO 1', true),
+        ('L', 'GAVETA 3', 'REPARTIÇÃO 2', true),
+        ('M', 'GAVETA 3', 'REPARTIÇÃO 3', true),
+        ('N', 'GAVETA 3', 'REPARTIÇÃO 4', true),
+        ('O', 'GAVETA 3', 'REPARTIÇÃO 5', true),
+        ('P', 'GAVETA 4', 'REPARTIÇÃO 1', true),
+        ('Q', 'GAVETA 4', 'REPARTIÇÃO 2', true),
+        ('R', 'GAVETA 4', 'REPARTIÇÃO 3', true),
+        ('S', 'GAVETA 4', 'REPARTIÇÃO 4', true),
+        ('T', 'GAVETA 4', 'REPARTIÇÃO 5', true),
+        ('U', 'GAVETA 5', 'REPARTIÇÃO 1', true),
+        ('V', 'GAVETA 5', 'REPARTIÇÃO 2', true),
+        ('W', 'GAVETA 5', 'REPARTIÇÃO 3', true),
+        ('X', 'GAVETA 5', 'REPARTIÇÃO 4', true),
+        ('Y', 'GAVETA 5', 'REPARTIÇÃO 5', true),
+        ('Z', 'GAVETA 5', 'REPARTIÇÃO 5', true);
+    END IF;
+END $$;
 
 -- ==============================================================================
 -- 5. TABELA DE MEMORANDOS
@@ -165,6 +189,10 @@ CREATE TABLE IF NOT EXISTS public.memorandos (
     created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS candidatos_count INTEGER DEFAULT 0;
 
 CREATE OR REPLACE TRIGGER trigger_memorandos_updated_at
 BEFORE UPDATE ON public.memorandos
@@ -183,6 +211,10 @@ CREATE TABLE IF NOT EXISTS public.candidatos (
     remessa VARCHAR(100),
     created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS remessa VARCHAR(100);
+ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS telefone VARCHAR(50);
 
 -- ==============================================================================
 -- 7. TABELA OFICIAL: GERAL_CNHS (Tabela Principal de Controle de CNHs e Protocolo)
@@ -214,6 +246,17 @@ CREATE TABLE IF NOT EXISTS public.geral_cnhs (
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS notificado_whatsapp BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS notificado_at TIMESTAMPTZ;
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS remessa VARCHAR(100);
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS memorando_numero VARCHAR(100);
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS responsavel_nome VARCHAR(255);
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS usuario_nome VARCHAR(255);
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS observacao TEXT;
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS telefone VARCHAR(50);
+
 CREATE OR REPLACE TRIGGER trigger_geral_cnhs_updated_at
 BEFORE UPDATE ON public.geral_cnhs
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
@@ -225,18 +268,23 @@ BEGIN
         SELECT 1 FROM information_schema.tables 
         WHERE table_schema = 'public' AND table_name = 'geral' AND table_type = 'BASE TABLE'
     ) THEN
-        -- Copia registros da tabela legada que ainda não existam em geral_cnhs
+        ALTER TABLE public.geral ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+        ALTER TABLE public.geral ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+
         INSERT INTO public.geral_cnhs (
             id, ordem, memorando_id, candidato_id, nome, cpf, gaveta, reparticao,
             situacao, responsavel_id, data_movimento, usuario_id, observacao, created_at, updated_at
         )
         SELECT 
-            id, ordem, memorando_id, candidato_id, nome, cpf, gaveta, reparticao,
-            situacao, responsavel_id, data_movimento, usuario_id, observacao, created_at, created_at
+            id, 
+            COALESCE(ordem, nextval('public.geral_cnhs_ordem_seq')), 
+            memorando_id, candidato_id, nome, cpf, gaveta, reparticao,
+            situacao, responsavel_id, data_movimento, usuario_id, observacao, 
+            COALESCE(created_at, timezone('utc'::text, now())), 
+            COALESCE(updated_at, timezone('utc'::text, now()))
         FROM public.geral
         ON CONFLICT (id) DO NOTHING;
 
-        -- Converte a tabela legada em view para manter compatibilidade total
         DROP TABLE public.geral CASCADE;
         CREATE OR REPLACE VIEW public.geral AS SELECT * FROM public.geral_cnhs;
     ELSIF NOT EXISTS (
@@ -325,27 +373,33 @@ CREATE TABLE IF NOT EXISTS public.orgao_config (
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+ALTER TABLE public.orgao_config ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+
 CREATE OR REPLACE TRIGGER trigger_orgao_config_updated_at
 BEFORE UPDATE ON public.orgao_config
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 -- Registro padrão de configuração do órgão
-INSERT INTO public.orgao_config (id, governo, secretaria, orgao, sigla, origem_padrao, destino_padrao, cidade_uf, telefone, email, endereco, subtitulo_relatorio)
-VALUES (
-    'default',
-    'GOVERNO DO ESTADO DO PARÁ',
-    'SECRETARIA DE ESTADO DE TRANSPORTES',
-    'DEPARTAMENTO DE TRÂNSITO DO ESTADO DO PARÁ',
-    'DETRAN/PA - Agência Itaituba',
-    'Agência DETRAN Itaituba',
-    'Coordenação de Habilitação / RENACH',
-    'Itaituba - PA',
-    '(93) 3518-1234',
-    'protocolo.itaituba@detran.pa.gov.br',
-    'Rod. Transamazônica, Km 02 - Bela Vista',
-    'Setor de Protocolo e Controle de CNHs'
-)
-ON CONFLICT (id) DO NOTHING;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM public.orgao_config WHERE id = 'default') THEN
+        INSERT INTO public.orgao_config (id, governo, secretaria, orgao, sigla, origem_padrao, destino_padrao, cidade_uf, telefone, email, endereco, subtitulo_relatorio)
+        VALUES (
+            'default',
+            'GOVERNO DO ESTADO DO PARÁ',
+            'SECRETARIA DE ESTADO DE TRANSPORTES',
+            'DEPARTAMENTO DE TRÂNSITO DO ESTADO DO PARÁ',
+            'DETRAN/PA - Agência Itaituba',
+            'Agência DETRAN Itaituba',
+            'Coordenação de Habilitação / RENACH',
+            'Itaituba - PA',
+            '(93) 3518-1234',
+            'protocolo.itaituba@detran.pa.gov.br',
+            'Rod. Transamazônica, Km 02 - Bela Vista',
+            'Setor de Protocolo e Controle de CNHs'
+        );
+    END IF;
+END $$;
 
 -- ==============================================================================
 -- 11. TABELA DE LOGS DE CONSULTA DO CIDADÃO (Consulta Pública por CPF)
@@ -405,18 +459,25 @@ CREATE INDEX IF NOT EXISTS idx_acessos_cidadao_cpf ON public.acessos_cidadao(cpf
 -- 14. SUPABASE REALTIME REPLICATION (Habilita sincronização instantânea multi-máquina)
 -- ==============================================================================
 DO $$
+DECLARE
+    tbl text;
+    tbls text[] := ARRAY['geral_cnhs', 'memorandos', 'candidatos', 'responsaveis', 'mapeamento_localizacao', 'acessos_cidadao', 'orgao_config'];
 BEGIN
-    -- Adiciona as tabelas principais à publicação realtime do Supabase se existirem
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.geral_cnhs;
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.memorandos;
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.candidatos;
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.responsaveis;
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.mapeamento_localizacao;
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.acessos_cidadao;
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.orgao_config;
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
-    WHEN undefined_object THEN NULL;
+    IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        FOREACH tbl IN ARRAY tbls LOOP
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_publication_tables 
+                WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = tbl
+            ) THEN
+                BEGIN
+                    EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', tbl);
+                EXCEPTION
+                    WHEN duplicate_object OR duplicate_table OR undefined_object THEN
+                        NULL;
+                END;
+            END IF;
+        END LOOP;
+    END IF;
 END $$;
 
 -- ==============================================================================
@@ -483,11 +544,9 @@ CREATE POLICY "usuarios_admin_manage_policy" ON public.usuarios
     );
 
 -- Políticas para GERAL_CNHS (Controle de CNHs)
--- 1. Leitura pública para consulta de Cidadão por CPF ou operadores autenticados
 CREATE POLICY "geral_cnhs_read_policy" ON public.geral_cnhs
     FOR SELECT TO authenticated, anon USING (true);
 
--- 2. Modificação por operadores autenticados (Admin, Supervisor, Operador)
 CREATE POLICY "geral_cnhs_write_policy" ON public.geral_cnhs
     FOR ALL TO authenticated
     USING (
@@ -606,13 +665,17 @@ CREATE POLICY "imagens_sync_write_policy" ON public.imagens_sync
 -- ==============================================================================
 -- 16. CONFIGURAÇÃO DE STORAGE DO SUPABASE (Buckets para Logos e Anexos)
 -- ==============================================================================
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('orgao_logos', 'orgao_logos', true)
-ON CONFLICT (id) DO UPDATE SET public = true;
-
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('anexos_detran', 'anexos_detran', true)
-ON CONFLICT (id) DO UPDATE SET public = true;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'buckets') THEN
+        IF NOT EXISTS (SELECT 1 FROM storage.buckets WHERE id = 'orgao_logos') THEN
+            INSERT INTO storage.buckets (id, name, public) VALUES ('orgao_logos', 'orgao_logos', true);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM storage.buckets WHERE id = 'anexos_detran') THEN
+            INSERT INTO storage.buckets (id, name, public) VALUES ('anexos_detran', 'anexos_detran', true);
+        END IF;
+    END IF;
+END $$;
 
 -- Políticas de Storage para o bucket orgao_logos
 DO $$
