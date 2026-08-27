@@ -22,7 +22,13 @@ async function startServer() {
         cleanPhone = `55${cleanPhone}`;
       }
 
-      const apiKey = process.env.WASENDER_API_KEY || "5024d94704689c8a194cad62b9d33fa6bb130cfb4aae1b5df09a6d6362736166";
+      const apiKey = process.env.WASENDER_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({
+          success: false,
+          error: "Chave de API do Wasender não configurada no servidor (WASENDER_API_KEY)."
+        });
+      }
 
       // Testar endpoints documentados da Wasender API
       const endpoints = [

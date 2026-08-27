@@ -1,13 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Usuario, PerfilUsuario } from "../types";
 import { getUsuarios, logAuditoria } from "../services/db";
+import { supabase, isSupabaseConfigured } from "../services/supabase";
 
 interface AuthContextType {
   user: Usuario | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (loginOrEmail: string, senha?: string) => Promise<boolean>;
-  loginAsProfile: (perfil: PerfilUsuario) => Promise<boolean>;
   logout: () => Promise<void>;
   hasAccess: (allowedProfiles: PerfilUsuario[]) => boolean;
   canEdit: boolean;
@@ -26,12 +26,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const lastActivityRef = useRef<number>(Date.now());
   const [timeRemaining, setTimeRemaining] = useState<number>(30 * 60);
 
-  // Carregar sessão salva ao inicializar
+  // Carregar sessão salva ao inicializar e ouvir mudanças no Supabase Auth
   useEffect(() => {
+    let isMounted = true;
+
     const checkSession = async () => {
       try {
+        if (isSupabaseConfigured()) {
+          // 1. Tentar recuperar sessão nativa do Supabase Auth
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.user && isMounted) {
+            const usuarios = await getUsuarios();
+            const found = usuarios.find(
+              (u) =>
+                (u.id === session.user.id ||
+                  (u.email && session.user.email && u.email.toLowerCase() === session.user.email.toLowerCase())) &&
+                u.ativo !== false
+            );
+            if (found) {
+              setUser(found);
+              sessionStorage.setItem("detran_active_user_id", found.id);
+              lastActivityRef.current = Date.now();
+              return;
+            }
+          }
+        }
+
+        // 2. Fallback para sessão local salva em sessionStorage
         const savedUserId = sessionStorage.getItem("detran_active_user_id");
-        if (savedUserId) {
+        if (savedUserId && isMounted) {
           const usuarios = await getUsuarios();
           const found = usuarios.find((u) => u.id === savedUserId && u.ativo !== false);
           if (found) {
@@ -41,22 +64,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             sessionStorage.removeItem("detran_active_user_id");
           }
         }
-        // Exclui chave antiga de autologin se existir para evitar login indesejado
-        if (typeof localStorage !== "undefined") {
-          localStorage.removeItem("detran_auto_logged");
-        }
       } catch (err) {
         console.error("Erro ao verificar sessão Auth:", err);
       } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
+
     checkSession();
+
+    // Ouvir alterações de estado de autenticação no Supabase (login, logout, token refresh)
+    let authListenerSubscription: any = null;
+    if (isSupabaseConfigured()) {
+      const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (event === "SIGNED_IN" && session?.user) {
+          const usuarios = await getUsuarios();
+          const found = usuarios.find(
+            (u) =>
+              (u.id === session.user.id ||
+                (u.email && session.user.email && u.email.toLowerCase() === session.user.email.toLowerCase())) &&
+              u.ativo !== false
+          );
+          if (found && isMounted) {
+            setUser(found);
+            sessionStorage.setItem("detran_active_user_id", found.id);
+            lastActivityRef.current = Date.now();
+          }
+        } else if (event === "SIGNED_OUT") {
+          if (isMounted) {
+            setUser(null);
+            sessionStorage.removeItem("detran_active_user_id");
+            sessionStorage.removeItem("detran_active_tab");
+          }
+        }
+      });
+      authListenerSubscription = authListener.subscription;
+    }
+
+    return () => {
+      isMounted = false;
+      if (authListenerSubscription) {
+        authListenerSubscription.unsubscribe();
+      }
+    };
   }, []);
 
   const logout = useCallback(async () => {
     if (user) {
-      await logAuditoria("usuarios", user.login, "Logout", user.id, user.nome_curto, null, { causa: "Logout pelo usuário ou inatividade" });
+      await logAuditoria("usuarios", user.login, "Logout", user.id, user.nome_curto, null, {
+        causa: "Logout pelo usuário ou inatividade"
+      });
+    }
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.auth.signOut();
+      } catch (e) {
+        console.warn("Aviso ao encerrar sessão Supabase Auth:", e);
+      }
     }
     setUser(null);
     sessionStorage.removeItem("detran_active_user_id");
@@ -100,10 +166,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     try {
       const usuarios = await getUsuarios();
+      const cleanInput = loginOrEmail.trim().toLowerCase();
+
       const found = usuarios.find(
         (u) =>
-          (u.login.toLowerCase() === loginOrEmail.toLowerCase() ||
-            u.email.toLowerCase() === loginOrEmail.toLowerCase()) &&
+          (u.login.toLowerCase() === cleanInput ||
+            u.email.toLowerCase() === cleanInput) &&
           u.ativo !== false
       );
 
@@ -111,7 +179,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error("Usuário não encontrado ou inativo no sistema.");
       }
 
-      if (senha && found.senha && found.senha !== senha) {
+      // Se o Supabase estiver configurado e a senha for informada, tenta autenticar via Supabase Auth
+      if (isSupabaseConfigured() && senha) {
+        const targetEmail = found.email || (cleanInput.includes("@") ? cleanInput : `${found.login}@detran.pa.gov.br`);
+        try {
+          const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+            email: targetEmail,
+            password: senha
+          });
+
+          if (authError) {
+            // Se o usuário ainda não tiver sido criado no auth.users do Supabase, tenta cadastrar automaticamente
+            if (authError.message.toLowerCase().includes("invalid login credentials")) {
+              const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+                email: targetEmail,
+                password: senha,
+                options: {
+                  data: {
+                    nome: found.nome,
+                    nome_curto: found.nome_curto,
+                    login: found.login,
+                    perfil: found.perfil
+                  }
+                }
+              });
+
+              if (signUpError && !signUpData?.user) {
+                // Se falhar o auto-cadastro ou credenciais inválidas reais, lança erro
+                throw new Error("Credenciais inválidas. Verifique seu login e senha.");
+              }
+            } else {
+              throw new Error(authError.message || "Erro ao autenticar com Supabase Auth.");
+            }
+          }
+        } catch (supabaseAuthErr: any) {
+          console.warn("Aviso na autenticação Supabase Auth:", supabaseAuthErr);
+          // Permite prosseguir se for ambiente offline/desenvolvimento ou validação local
+          if (found.senha && found.senha !== senha) {
+            throw new Error("Senha incorreta para este usuário.");
+          }
+        }
+      } else if (senha && found.senha && found.senha !== senha) {
         throw new Error("Senha incorreta para este usuário.");
       }
 
@@ -122,24 +230,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return true;
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const loginAsProfile = async (perfil: PerfilUsuario): Promise<boolean> => {
-    try {
-      const usuarios = await getUsuarios();
-      const found = usuarios.find((u) => u.perfil === perfil && u.ativo !== false);
-      if (!found) {
-        throw new Error(`Nenhum usuário ativo encontrado com o perfil ${perfil}.`);
-      }
-      setUser(found);
-      sessionStorage.setItem("detran_active_user_id", found.id);
-      lastActivityRef.current = Date.now();
-      await logAuditoria("usuarios", found.login, "Login", found.id, found.nome_curto, null, { modo: `Troca Rápida para ${perfil}` });
-      return true;
-    } catch (err) {
-      console.error("Erro na troca de perfil:", err);
-      throw err;
     }
   };
 
@@ -164,14 +254,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isAuthenticated: !!user,
     isLoading,
     login,
-    loginAsProfile,
     logout,
     hasAccess,
     canEdit,
     canManageUsers,
     timeRemaining,
     updateCurrentUser
-  }), [user, isLoading, login, loginAsProfile, logout, hasAccess, canEdit, canManageUsers, timeRemaining, updateCurrentUser]);
+  }), [user, isLoading, login, logout, hasAccess, canEdit, canManageUsers, timeRemaining, updateCurrentUser]);
 
   return (
     <AuthContext.Provider value={contextValue}>

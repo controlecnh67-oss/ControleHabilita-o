@@ -18,8 +18,10 @@ import { AcessosCidadaoPage } from "./pages/AcessosCidadaoPage";
 import { RelatoriosPage } from "./pages/RelatoriosPage";
 import { isTabAllowedForProfile, NavTab } from "./types";
 import { loadOrgaoConfigFromSupabase } from "./services/orgaoService";
-import { isSupabaseConfigured } from "./services/supabase";
+import { isSupabaseConfigured, subscribeToMultipleSupabaseRealtime } from "./services/supabase";
 import { checkAndRunDailyGoogleDriveBackup } from "./services/googleDriveService";
+import { dexieDb, normalizeCNHRecord, notifySyncUpdated, syncGeralWithSupabase } from "./services/dexieDb";
+import { notifyDataSync } from "./services/db";
 
 const MainLayout: React.FC = () => {
   const { user, isAuthenticated, isLoading, timeRemaining, logout } = useAuth();
@@ -37,6 +39,56 @@ const MainLayout: React.FC = () => {
     if (isSupabaseConfigured()) {
       loadOrgaoConfigFromSupabase().catch(() => {});
     }
+  }, []);
+
+  // Sincronização em Tempo Real (Supabase Realtime) Multi-Máquina
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+
+    const tablesToWatch = [
+      "geral_cnhs",
+      "memorandos",
+      "candidatos",
+      "responsaveis",
+      "mapeamento_localizacao",
+      "acessos_cidadao",
+      "orgao_config"
+    ];
+
+    const unsubscribe = subscribeToMultipleSupabaseRealtime(tablesToWatch, async (table, payload) => {
+      if (table === "geral_cnhs") {
+        const eventType = payload.eventType;
+        if ((eventType === "INSERT" || eventType === "UPDATE") && payload.new) {
+          try {
+            const normalized = normalizeCNHRecord(payload.new);
+            await dexieDb.geral.put(normalized);
+            notifySyncUpdated("geral");
+          } catch (e) {
+            console.warn("Erro ao atualizar registro Realtime em geral_cnhs:", e);
+          }
+        } else if (eventType === "DELETE" && payload.old?.id) {
+          try {
+            await dexieDb.geral.delete(payload.old.id);
+            notifySyncUpdated("geral");
+          } catch (e) {
+            console.warn("Erro ao excluir registro Realtime em geral_cnhs:", e);
+          }
+        }
+      } else {
+        notifyDataSync(table);
+      }
+    });
+
+    // Ao focar na aba do navegador, efetua delta-sync automático
+    const handleFocus = () => {
+      syncGeralWithSupabase(false).catch(() => {});
+    };
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener("focus", handleFocus);
+    };
   }, []);
 
   // Execução da rotina de verificação de backup diário automático para o Google Drive

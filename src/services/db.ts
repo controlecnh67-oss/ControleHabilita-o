@@ -1832,13 +1832,21 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
   await initStorage();
   let rawList: GeralCNH[] = await getLocalGeralCNHs();
 
-  // Se o IndexedDB estiver totalmente vazio e o Supabase configurado, realiza a sincronização paginada inicial
-  if (rawList.length === 0 && isSupabaseConfigured()) {
-    try {
-      await syncGeralWithSupabase(true);
-      rawList = await getLocalGeralCNHs();
-    } catch (err) {
-      console.warn("Aviso ao sincronizar inicialmente com Supabase:", err);
+  // Se o Supabase estiver configurado:
+  if (isSupabaseConfigured()) {
+    if (rawList.length === 0) {
+      // Primeira carga: sincronização paginada completa
+      try {
+        await syncGeralWithSupabase(true);
+        rawList = await getLocalGeralCNHs();
+      } catch (err) {
+        console.warn("Aviso ao sincronizar inicialmente com Supabase:", err);
+      }
+    } else {
+      // Em segundo plano (não bloqueia UI): busca alterações/recebimentos recentes de outras máquinas
+      syncGeralWithSupabase(false).catch((err) => {
+        console.warn("Aviso na sincronização delta em segundo plano:", err);
+      });
     }
   }
 
