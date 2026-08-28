@@ -37,7 +37,9 @@ import {
   Copy,
   Check,
   ExternalLink,
-  ScanLine
+  ScanLine,
+  CopyCheck,
+  Layers
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -65,6 +67,7 @@ import { Modal } from "../components/ui/Modal";
 import { Badge } from "../components/ui/Badge";
 import { OcrScannerModal } from "../components/OcrScannerModal";
 import { ExcelRecebimentoModal } from "../components/ExcelRecebimentoModal";
+import { DuplicatasModal } from "../components/DuplicatasModal";
 import { formatCPF, formatPhone, formatDateTime, normalizeSearch, matchDigitsSafe } from "../lib/utils";
 
 // Helper para exibir Gaveta e Repartição de forma compacta (apenas número/código) na tabela
@@ -125,6 +128,9 @@ export const GeralPage: React.FC = () => {
 
   // Modal Importação Excel de CNHs Recebidas
   const [isExcelRecebidasModalOpen, setIsExcelRecebidasModalOpen] = useState(false);
+
+  // Modal Varredura de Duplicatas
+  const [isDuplicatasModalOpen, setIsDuplicatasModalOpen] = useState(false);
 
   // Modal Escaneamento OCR (PDF / Imagem)
   const [isOcrModalOpen, setIsOcrModalOpen] = useState(false);
@@ -447,6 +453,14 @@ export const GeralPage: React.FC = () => {
     setMessage({
       type: "success",
       text: `✅ Sucesso! ${updatedCount} CNH(s) tiveram o status alterado de REMETIDA para RECEBIDA a partir da planilha Excel com gavetas e repartições alocadas automaticamente (Total na planilha: ${totalExtracted}).`,
+    });
+    fetchDados();
+  };
+
+  const handleDuplicatasSuccess = (deletedCount: number, groupsFixedCount: number) => {
+    setMessage({
+      type: "success",
+      text: `🧹 Varredura concluída com sucesso! ${deletedCount} registro(s) duplicados foram excluídos e auditados em ${groupsFixedCount} grupo(s).`,
     });
     fetchDados();
   };
@@ -1144,6 +1158,17 @@ export const GeralPage: React.FC = () => {
               <Printer className="w-4 h-4 text-purple-600 dark:text-purple-400" />
               <span>Imprimir (PDF)</span>
             </button>
+
+            {canEdit && (
+              <button
+                onClick={() => setIsDuplicatasModalOpen(true)}
+                title="Executar varredura por duplicatas (mesmo CPF, mesmo Nome ou similaridade) com modal de auditoria para exclusão em lote"
+                className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900 text-rose-800 dark:text-rose-200 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-rose-300 dark:border-rose-800"
+              >
+                <CopyCheck className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                <span>🔍 Varredura de Duplicatas</span>
+              </button>
+            )}
 
             {canEdit && (
               <button
@@ -3277,6 +3302,15 @@ export const GeralPage: React.FC = () => {
         geralList={cnhs}
         currentUser={user}
         onSuccess={handleExcelRecebidasSuccess}
+      />
+
+      {/* Modal de Varredura de Duplicatas & Auditoria de Exclusão em Lote */}
+      <DuplicatasModal
+        isOpen={isDuplicatasModalOpen}
+        onClose={() => setIsDuplicatasModalOpen(false)}
+        geralList={cnhs}
+        currentUser={user}
+        onSuccess={handleDuplicatasSuccess}
       />
     </>
   );
