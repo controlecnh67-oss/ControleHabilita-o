@@ -2628,6 +2628,77 @@ export async function receberCNH(id: string, userId: string, userNome: string): 
   return { geral: atualizado, isVazio };
 }
 
+// Recebimento em Lote de CNHs (utilizado pelo Escaneamento OCR e ações em massa)
+export async function receberCNHsBulk(
+  items: Array<{ id: string; observacaoExtra?: string }>,
+  userId: string,
+  userNome: string
+): Promise<{ updatedCount: number; updatedCNHs: GeralCNH[] }> {
+  if (!items || items.length === 0) return { updatedCount: 0, updatedCNHs: [] };
+
+  const geralList = await getGeralCNHs();
+  const idMap = new Map<string, string | undefined>();
+  items.forEach((item) => idMap.set(item.id, item.observacaoExtra));
+
+  const now = new Date().toISOString();
+  const updatedCNHs: GeralCNH[] = [];
+
+  for (let i = 0; i < geralList.length; i++) {
+    const cnh = geralList[i];
+    if (idMap.has(cnh.id)) {
+      const extraObs = idMap.get(cnh.id);
+      const loc = await findLocalizacaoPorNome(cnh.nome);
+      const oldSituacao = cnh.situacao;
+
+      const atualizado: GeralCNH = {
+        ...cnh,
+        situacao: "Recebida",
+        gaveta: loc.gaveta,
+        reparticao: loc.reparticao,
+        data_movimento: now,
+        usuario_id: userId,
+        usuario_nome: userNome,
+        observacao: `${cnh.observacao ? cnh.observacao + " | " : ""}${extraObs ? extraObs + " - " : ""}Recebida no protocolo - Alocada em ${loc.gaveta} ${loc.reparticao}`
+      };
+
+      geralList[i] = atualizado;
+      updatedCNHs.push(atualizado);
+
+      await logHistorico(
+        atualizado.id,
+        atualizado.ordem,
+        atualizado.nome,
+        oldSituacao,
+        "Recebida",
+        userId,
+        userNome,
+        `Recebimento via OCR - Alocado na ${loc.gaveta} / ${loc.reparticao}`,
+        undefined,
+        undefined,
+        atualizado.cpf
+      );
+
+      await logAuditoria(
+        "geral",
+        `Ordem #${atualizado.ordem}`,
+        "Recebimento",
+        userId,
+        userNome,
+        { situacao: oldSituacao },
+        { situacao: "Recebida", gaveta: loc.gaveta, reparticao: loc.reparticao }
+      );
+    }
+  }
+
+  if (updatedCNHs.length > 0) {
+    saveStoredList("geral", geralList);
+    await saveLocalGeralCNHsBulk(updatedCNHs);
+    notifyDataSync("geral");
+  }
+
+  return { updatedCount: updatedCNHs.length, updatedCNHs };
+}
+
 // Entrega de CNH (Botão 📤 Entregar - Na tela Geral)
 // Somente disponível quando Situação = Recebida (ou Pendente)
 // Grava: Situação = Entregue, Responsável, Data, Usuário Logado

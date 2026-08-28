@@ -36,7 +36,8 @@ import {
   MessageSquare,
   Copy,
   Check,
-  ExternalLink
+  ExternalLink,
+  ScanLine
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -62,6 +63,7 @@ import { getPublicShareUrl, subscribeToSupabaseRealtime } from "../services/supa
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
 import { Badge } from "../components/ui/Badge";
+import { OcrScannerModal } from "../components/OcrScannerModal";
 import { formatCPF, formatPhone, formatDateTime, normalizeSearch, matchDigitsSafe } from "../lib/utils";
 
 // Helper para exibir Gaveta e Repartição de forma compacta (apenas número/código) na tabela
@@ -119,6 +121,9 @@ export const GeralPage: React.FC = () => {
 
   // Feedback Message
   const [message, setMessage] = useState<{ type: "success" | "warning" | "error"; text: string } | null>(null);
+
+  // Modal Escaneamento OCR (PDF / Imagem)
+  const [isOcrModalOpen, setIsOcrModalOpen] = useState(false);
 
   // Modal Impressão PDF
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
@@ -424,6 +429,14 @@ export const GeralPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleOcrSuccess = (updatedCount: number, totalExtracted: number) => {
+    setMessage({
+      type: "success",
+      text: `✅ Sucesso! ${updatedCount} CNH(s) tiveram o status alterado de REMETIDA para RECEBIDA com gavetas e repartições alocadas automaticamente (Total no documento: ${totalExtracted}).`,
+    });
+    fetchDados();
   };
 
   useEffect(() => {
@@ -1071,6 +1084,17 @@ export const GeralPage: React.FC = () => {
               <Printer className="w-4 h-4 text-purple-600 dark:text-purple-400" />
               <span>Imprimir (PDF)</span>
             </button>
+
+            {canEdit && (
+              <button
+                onClick={() => setIsOcrModalOpen(true)}
+                title="Escanear documento (PDF ou Imagem) via OCR com IA para conferência e recebimento de CNHs"
+                className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-indigo-200 dark:border-indigo-800"
+              >
+                <ScanLine className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                <span>📷 Escanear OCR</span>
+              </button>
+            )}
 
             {canEdit && (
               <button
@@ -3165,6 +3189,15 @@ export const GeralPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Modal de Escaneamento OCR com IA */}
+      <OcrScannerModal
+        isOpen={isOcrModalOpen}
+        onClose={() => setIsOcrModalOpen(false)}
+        geralList={cnhs}
+        currentUser={user}
+        onSuccess={handleOcrSuccess}
+      />
     </>
   );
 };
