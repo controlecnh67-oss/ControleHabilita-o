@@ -54,6 +54,55 @@ export const OcrScannerModal: React.FC<OcrScannerModalProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Contadores para os filtros e cartões
+  const stats = useMemo(() => {
+    if (!results) return { total: 0, remetidas: 0, pendentes: 0, jaRecebidas: 0, jaEntregues: 0, naoEncontradas: 0, selecionadas: 0 };
+    return {
+      total: results.length,
+      remetidas: results.filter((r) => r.category === "ready_to_receive").length,
+      pendentes: results.filter((r) => r.category === "pending").length,
+      jaRecebidas: results.filter((r) => r.category === "already_received").length,
+      jaEntregues: results.filter((r) => r.category === "already_delivered").length,
+      naoEncontradas: results.filter((r) => r.category === "not_found").length,
+      selecionadas: results.filter((r) => r.selected && r.cnhMatched !== null).length,
+    };
+  }, [results]);
+
+  // Itens filtrados para a tabela
+  const filteredResults = useMemo(() => {
+    if (!results) return [];
+    return results.filter((item) => {
+      // Filtro de categoria
+      if (filterCategory === "ready_to_receive" && item.category !== "ready_to_receive") return false;
+      if (filterCategory === "pending" && item.category !== "pending") return false;
+      if (filterCategory === "already_received" && item.category !== "already_received" && item.category !== "already_delivered") return false;
+      if (filterCategory === "not_found" && item.category !== "not_found") return false;
+      if (filterCategory === "selected" && !item.selected) return false;
+
+      // Filtro de busca por texto
+      if (searchTerm.trim() !== "") {
+        const query = searchTerm.toLowerCase();
+        const nomeOcr = (item.extracted.nome || "").toLowerCase();
+        const cpfOcr = (item.extracted.cpf || "").toLowerCase();
+        const nomeGeral = (item.cnhMatched?.nome || "").toLowerCase();
+        const cpfGeral = (item.cnhMatched?.cpf || "").toLowerCase();
+        const remessa = (item.extracted.remessa || "").toLowerCase();
+        const ordem = item.cnhMatched?.ordem ? `#${item.cnhMatched.ordem}` : "";
+
+        return (
+          nomeOcr.includes(query) ||
+          cpfOcr.includes(query) ||
+          nomeGeral.includes(query) ||
+          cpfGeral.includes(query) ||
+          remessa.includes(query) ||
+          ordem.includes(query)
+        );
+      }
+
+      return true;
+    });
+  }, [results, filterCategory, searchTerm]);
+
   if (!isOpen) return null;
 
   const handleFileChange = (file: File) => {
@@ -197,55 +246,6 @@ export const OcrScannerModal: React.FC<OcrScannerModalProps> = ({
       prev ? prev.map((r) => ({ ...r, selected: false })) : null
     );
   };
-
-  // Contadores para os filtros e cartões
-  const stats = useMemo(() => {
-    if (!results) return { total: 0, remetidas: 0, pendentes: 0, jaRecebidas: 0, jaEntregues: 0, naoEncontradas: 0, selecionadas: 0 };
-    return {
-      total: results.length,
-      remetidas: results.filter((r) => r.category === "ready_to_receive").length,
-      pendentes: results.filter((r) => r.category === "pending").length,
-      jaRecebidas: results.filter((r) => r.category === "already_received").length,
-      jaEntregues: results.filter((r) => r.category === "already_delivered").length,
-      naoEncontradas: results.filter((r) => r.category === "not_found").length,
-      selecionadas: results.filter((r) => r.selected && r.cnhMatched !== null).length,
-    };
-  }, [results]);
-
-  // Itens filtrados para a tabela
-  const filteredResults = useMemo(() => {
-    if (!results) return [];
-    return results.filter((item) => {
-      // Filtro de categoria
-      if (filterCategory === "ready_to_receive" && item.category !== "ready_to_receive") return false;
-      if (filterCategory === "pending" && item.category !== "pending") return false;
-      if (filterCategory === "already_received" && item.category !== "already_received" && item.category !== "already_delivered") return false;
-      if (filterCategory === "not_found" && item.category !== "not_found") return false;
-      if (filterCategory === "selected" && !item.selected) return false;
-
-      // Filtro de busca por texto
-      if (searchTerm.trim() !== "") {
-        const query = searchTerm.toLowerCase();
-        const nomeOcr = (item.extracted.nome || "").toLowerCase();
-        const cpfOcr = (item.extracted.cpf || "").toLowerCase();
-        const nomeGeral = (item.cnhMatched?.nome || "").toLowerCase();
-        const cpfGeral = (item.cnhMatched?.cpf || "").toLowerCase();
-        const remessa = (item.extracted.remessa || "").toLowerCase();
-        const ordem = item.cnhMatched?.ordem ? `#${item.cnhMatched.ordem}` : "";
-
-        return (
-          nomeOcr.includes(query) ||
-          cpfOcr.includes(query) ||
-          nomeGeral.includes(query) ||
-          cpfGeral.includes(query) ||
-          remessa.includes(query) ||
-          ordem.includes(query)
-        );
-      }
-
-      return true;
-    });
-  }, [results, filterCategory, searchTerm]);
 
   // Confirmação de recebimento em massa
   const handleConfirmRecebimento = async () => {
