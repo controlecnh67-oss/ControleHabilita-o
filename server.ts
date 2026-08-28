@@ -62,49 +62,70 @@ Regras de Extração:
 
 Retorne a lista com TODOS os nomes identificados. Não omita nenhum nome presente na lista.`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: [
-          {
-            inlineData: {
-              mimeType: mimeType,
-              data: cleanBase64,
-            },
-          },
-          {
-            text: promptText,
-          },
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            description: "Lista de registros de condutores e CNHs extraídos do documento",
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                nome: {
-                  type: Type.STRING,
-                  description: "Nome completo do condutor / titular",
-                },
-                cpf: {
-                  type: Type.STRING,
-                  description: "CPF do titular (ex: 000.000.000-00 ou 11 dígitos)",
-                },
-                remessa: {
-                  type: Type.STRING,
-                  description: "Número da remessa ou memorando se visível",
-                },
-                observacao: {
-                  type: Type.STRING,
-                  description: "Observações ou categoria anotada no documento",
+      const candidateModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.7-flash"];
+      let response: any = null;
+      let lastError: any = null;
+
+      for (const modelName of candidateModels) {
+        try {
+          response = await ai.models.generateContent({
+            model: modelName,
+            contents: [
+              {
+                inlineData: {
+                  mimeType: mimeType,
+                  data: cleanBase64,
                 },
               },
-              required: ["nome"],
+              {
+                text: promptText,
+              },
+            ],
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.ARRAY,
+                description: "Lista de registros de condutores e CNHs extraídos do documento",
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    nome: {
+                      type: Type.STRING,
+                      description: "Nome completo do condutor / titular",
+                    },
+                    cpf: {
+                      type: Type.STRING,
+                      description: "CPF do titular (ex: 000.000.000-00 ou 11 dígitos)",
+                    },
+                    remessa: {
+                      type: Type.STRING,
+                      description: "Número da remessa ou memorando se visível",
+                    },
+                    observacao: {
+                      type: Type.STRING,
+                      description: "Observações ou categoria anotada no documento",
+                    },
+                  },
+                  required: ["nome"],
+                },
+              },
             },
-          },
-        },
-      });
+          });
+
+          if (response && response.text) {
+            break; // Sucesso na geração
+          }
+        } catch (err: any) {
+          lastError = err;
+          console.warn(`Tentativa com modelo ${modelName} falhou (${err?.status || err?.message}). Tentando próximo modelo...`);
+          // Pequena pausa antes de tentar o próximo modelo caso seja 503/429
+          await new Promise((r) => setTimeout(r, 600));
+        }
+      }
+
+      if (!response || !response.text) {
+        throw lastError || new Error("Não foi possível processar o documento com os modelos disponíveis no momento.");
+      }
 
       let rawText = response.text ? response.text.trim() : "[]";
       if (rawText.startsWith("```")) {

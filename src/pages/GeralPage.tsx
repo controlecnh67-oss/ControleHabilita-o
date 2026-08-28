@@ -64,6 +64,7 @@ import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
 import { Badge } from "../components/ui/Badge";
 import { OcrScannerModal } from "../components/OcrScannerModal";
+import { ExcelRecebimentoModal } from "../components/ExcelRecebimentoModal";
 import { formatCPF, formatPhone, formatDateTime, normalizeSearch, matchDigitsSafe } from "../lib/utils";
 
 // Helper para exibir Gaveta e Repartição de forma compacta (apenas número/código) na tabela
@@ -121,6 +122,9 @@ export const GeralPage: React.FC = () => {
 
   // Feedback Message
   const [message, setMessage] = useState<{ type: "success" | "warning" | "error"; text: string } | null>(null);
+
+  // Modal Importação Excel de CNHs Recebidas
+  const [isExcelRecebidasModalOpen, setIsExcelRecebidasModalOpen] = useState(false);
 
   // Modal Escaneamento OCR (PDF / Imagem)
   const [isOcrModalOpen, setIsOcrModalOpen] = useState(false);
@@ -435,6 +439,14 @@ export const GeralPage: React.FC = () => {
     setMessage({
       type: "success",
       text: `✅ Sucesso! ${updatedCount} CNH(s) tiveram o status alterado de REMETIDA para RECEBIDA com gavetas e repartições alocadas automaticamente (Total no documento: ${totalExtracted}).`,
+    });
+    fetchDados();
+  };
+
+  const handleExcelRecebidasSuccess = (updatedCount: number, totalExtracted: number) => {
+    setMessage({
+      type: "success",
+      text: `✅ Sucesso! ${updatedCount} CNH(s) tiveram o status alterado de REMETIDA para RECEBIDA a partir da planilha Excel com gavetas e repartições alocadas automaticamente (Total na planilha: ${totalExtracted}).`,
     });
     fetchDados();
   };
@@ -1084,6 +1096,17 @@ export const GeralPage: React.FC = () => {
               <Printer className="w-4 h-4 text-purple-600 dark:text-purple-400" />
               <span>Imprimir (PDF)</span>
             </button>
+
+            {canEdit && (
+              <button
+                onClick={() => setIsExcelRecebidasModalOpen(true)}
+                title="Importar planilha Excel (.xlsx, .xls, .csv) com lista de nomes de CNHs recebidas para conferência e alteração de status para RECEBIDA"
+                className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-200 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-emerald-300 dark:border-emerald-800"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>📥 Importar Excel (Recebidas)</span>
+              </button>
+            )}
 
             {canEdit && (
               <button
@@ -3197,6 +3220,15 @@ export const GeralPage: React.FC = () => {
         geralList={cnhs}
         currentUser={user}
         onSuccess={handleOcrSuccess}
+      />
+
+      {/* Modal de Importação e Conferência de Excel para Recebimento de CNHs */}
+      <ExcelRecebimentoModal
+        isOpen={isExcelRecebidasModalOpen}
+        onClose={() => setIsExcelRecebidasModalOpen(false)}
+        geralList={cnhs}
+        currentUser={user}
+        onSuccess={handleExcelRecebidasSuccess}
       />
     </>
   );
