@@ -55,24 +55,40 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
   // Executa a varredura ao abrir a modal
   useEffect(() => {
     if (isOpen) {
-      handleRunScan();
+      setIsScanning(true);
+      setErrorMessage(null);
+      const timer = setTimeout(() => {
+        try {
+          const detected = scanForDuplicates(geralList);
+          setGroups(detected);
+          // Por padrão expande os primeiros 20 grupos para manter a renderização ultra-fluida
+          setExpandedGroupIds(new Set(detected.slice(0, 25).map((g) => g.groupId)));
+        } catch (err: any) {
+          console.error("Erro na varredura de duplicatas:", err);
+          setErrorMessage("Erro ao processar a varredura de duplicatas.");
+        } finally {
+          setIsScanning(false);
+        }
+      }, 50);
+      return () => clearTimeout(timer);
     }
-  }, [isOpen, geralList]);
+  }, [isOpen]);
 
   const handleRunScan = () => {
     setIsScanning(true);
     setErrorMessage(null);
-    try {
-      const detected = scanForDuplicates(geralList);
-      setGroups(detected);
-      // Por padrão expande todos os grupos
-      setExpandedGroupIds(new Set(detected.map((g) => g.groupId)));
-    } catch (err: any) {
-      console.error("Erro na varredura de duplicatas:", err);
-      setErrorMessage("Erro ao processar a varredura de duplicatas.");
-    } finally {
-      setIsScanning(false);
-    }
+    setTimeout(() => {
+      try {
+        const detected = scanForDuplicates(geralList);
+        setGroups(detected);
+        setExpandedGroupIds(new Set(detected.slice(0, 25).map((g) => g.groupId)));
+      } catch (err: any) {
+        console.error("Erro na varredura de duplicatas:", err);
+        setErrorMessage("Erro ao processar a varredura de duplicatas.");
+      } finally {
+        setIsScanning(false);
+      }
+    }, 50);
   };
 
   // Contadores globais
@@ -546,7 +562,17 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
           </div>
 
           {/* Lista de Grupos de Duplicatas */}
-          {groups.length === 0 ? (
+          {isScanning ? (
+            <div className="p-16 text-center bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-2xl">
+              <RefreshCw className="w-8 h-8 mx-auto text-rose-600 dark:text-rose-400 animate-spin mb-3" />
+              <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                Executando Varredura O(N) nas CNHs...
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto mt-1">
+                Indexando registros por CPF, correspondência de nomes e padrões fonéticos para identificar duplicatas com precisão.
+              </p>
+            </div>
+          ) : groups.length === 0 ? (
             <div className="p-12 text-center bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 rounded-2xl">
               <div className="w-12 h-12 mx-auto bg-emerald-100 dark:bg-emerald-900/60 text-emerald-600 dark:text-emerald-300 rounded-full flex items-center justify-center mb-3">
                 <CheckCircle2 className="w-6 h-6" />

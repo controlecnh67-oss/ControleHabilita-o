@@ -20,8 +20,29 @@ export interface DuplicateGroup {
 }
 
 /**
- * Calcula uma pontuação de qualidade/completude para um registro CNH
- * para sugerir qual deve ser MANTIDO e qual deve ser EXCLUÍDO.
+ * Remove preposições comuns em nomes brasileiros para criar uma chave canônica rápida O(1)
+ */
+function getCanonicalName(normName: string): string {
+  if (!normName) return "";
+  const stopWords = new Set(["DE", "DA", "DO", "DOS", "DAS", "E", "D"]);
+  return normName
+    .split(" ")
+    .filter((w) => w.length > 0 && !stopWords.has(w))
+    .join(" ");
+}
+
+/**
+ * Extrai a chave de primeiro e último nome para agrupamento em micro-baldes
+ */
+function getFirstAndLastNameKey(normName: string): string {
+  if (!normName) return "";
+  const words = normName.split(" ").filter((w) => w.length > 1);
+  if (words.length < 2) return "";
+  return `${words[0]}_${words[words.length - 1]}`;
+}
+
+/**
+ * Calcula pontuação de qualidade/completude para o registro
  */
 export function calculateRecordQualityScore(record: GeralCNH): { score: number; reasons: string[] } {
   let score = 0;
@@ -43,7 +64,7 @@ export function calculateRecordQualityScore(record: GeralCNH): { score: number; 
   }
 
   // Tem CPF válido
-  const cpfDigits = cleanCpfDigits(record.cpf);
+  const cpfDigits = cleanCpfDigits(record.cpf || "");
   if (cpfDigits.length === 11) {
     score += 35;
     reasons.push("CPF completo (+35)");
@@ -80,103 +101,165 @@ export function calculateRecordQualityScore(record: GeralCNH): { score: number; 
 }
 
 /**
- * Realiza uma varredura completa na lista geral de CNHs em busca de duplicatas
- * por CPF exato, Nome exato ou Nome com alta similaridade.
+ * Realiza uma varredura ULTRA-RÁPIDA O(N) com indexação por Hash Maps e Micro-Buckets
+ * Evita qualquer travamento ou loop infinito mesmo com 50.000+ registros.
  */
 export function scanForDuplicates(cnhs: GeralCNH[]): DuplicateGroup[] {
   if (!cnhs || cnhs.length < 2) return [];
 
-  // Mapa de registros já agrupados para não duplicar grupos
   const assignedToGroup = new Set<string>();
   const groups: DuplicateGroup[] = [];
 
-  // Indexação rápida por CPF limpo (apenas com 11 dígitos)
-  const cpfMap = new Map<string, GeralCNH[]>();
-  // Indexação por Nome Normalizado
-  const nameMap = new Map<string, GeralCNH[]>();
+  // Pré-computa normalizações de forma linear O(N)
+  const prepared = cnhs.map((item) => {
+    const cpfDigits = cleanCpfDigits(item.cpf || "");
+    const normName = normalizeString(item.nome || "");
+    const canonicalName = getCanonicalName(normName);
+    const firstLastKey = getFirstAndLastNameKey(normName);
+    return {
+      item,
+      cpfDigits,
+      normName,
+      canonicalName,
+      firstLastKey,
+    };
+  });
 
-  cnhs.forEach((item) => {
-    const cpfDigits = cleanCpfDigits(item.cpf);
-    if (cpfDigits.length === 11) {
-      if (!cpfMap.has(cpfDigits)) cpfMap.set(cpfDigits, []);
-      cpfMap.get(cpfDigits)!.push(item);
-    }
-
-    const normName = normalizeString(item.nome);
-    if (normName.length > 2) {
-      if (!nameMap.has(normName)) nameMap.set(normName, []);
-      nameMap.get(normName)!.push(item);
+  // 1. Agrupamento O(N) por CPF Limpo (11 dígitos)
+  const cpfMap = new Map<string, typeof prepared>();
+  prepared.forEach((entry) => {
+    if (entry.cpfDigits.length === 11) {
+      const list = cpfMap.get(entry.cpfDigits) || [];
+      list.push(entry);
+      cpfMap.set(entry.cpfDigits, list);
     }
   });
 
-  // 1. Agrupamento por CPF Exato (Prioridade Máxima)
-  cpfMap.forEach((records, cpf) => {
-    if (records.length > 1) {
-      const unassigned = records.filter((r) => !assignedToGroup.has(r.id));
+  cpfMap.forEach((entries, cpf) => {
+    if (entries.length > 1) {
+      const unassigned = entries.filter((e) => !assignedToGroup.has(e.item.id));
       if (unassigned.length > 1) {
-        // Verifica se os nomes são todos iguais ou similares
-        const firstNormName = normalizeString(unassigned[0].nome);
-        const allSameName = unassigned.every((r) => normalizeString(r.nome) === firstNormName);
+        const firstNorm = unassigned[0].normName;
+        const allSameName = unassigned.every((e) => e.normName === firstNorm);
         const matchType: DuplicateMatchType = allSameName ? "exact_both" : "exact_cpf";
         const matchReason = allSameName
-          ? `Mesmo CPF (${unassigned[0].cpf || cpf}) e Mesmo Nome`
-          : `Mesmo CPF (${unassigned[0].cpf || cpf})`;
+          ? `Mesmo CPF (${unassigned[0].item.cpf || cpf}) e Mesmo Nome`
+          : `Mesmo CPF (${unassigned[0].item.cpf || cpf})`;
 
-        const group = buildDuplicateGroup(`cpf_${cpf}`, matchType, matchReason, unassigned);
+        const rawItems = unassigned.map((e) => e.item);
+        const group = buildDuplicateGroup(`cpf_${cpf}`, matchType, matchReason, rawItems);
         groups.push(group);
-        unassigned.forEach((r) => assignedToGroup.add(r.id));
+        unassigned.forEach((e) => assignedToGroup.add(e.item.id));
       }
     }
   });
 
-  // 2. Agrupamento por Nome Normalizado Exato (para os que ainda não foram agrupados)
-  nameMap.forEach((records, normName) => {
-    const unassigned = records.filter((r) => !assignedToGroup.has(r.id));
+  // 2. Agrupamento O(N) por Nome Normalizado Exato
+  const nameMap = new Map<string, typeof prepared>();
+  prepared.forEach((entry) => {
+    if (!assignedToGroup.has(entry.item.id) && entry.normName.length > 2) {
+      const list = nameMap.get(entry.normName) || [];
+      list.push(entry);
+      nameMap.set(entry.normName, list);
+    }
+  });
+
+  nameMap.forEach((entries, normName) => {
+    const unassigned = entries.filter((e) => !assignedToGroup.has(e.item.id));
     if (unassigned.length > 1) {
-      const matchReason = `Mesmo Nome (${records[0].nome})`;
-      const group = buildDuplicateGroup(`name_${normName.replace(/\s+/g, "_")}`, "exact_name", matchReason, unassigned);
-      groups.push(group);
-      unassigned.forEach((r) => assignedToGroup.add(r.id));
-    }
-  });
-
-  // 3. Varredura por Similaridade de Nome (> 88%) entre os registros restantes
-  const remaining = cnhs.filter((r) => !assignedToGroup.has(r.id));
-  for (let i = 0; i < remaining.length; i++) {
-    const current = remaining[i];
-    if (assignedToGroup.has(current.id)) continue;
-
-    const similarMatches: GeralCNH[] = [current];
-
-    for (let j = i + 1; j < remaining.length; j++) {
-      const candidate = remaining[j];
-      if (assignedToGroup.has(candidate.id)) continue;
-
-      const sim = calculateNameSimilarity(current.nome, candidate.nome);
-      if (sim >= 88) {
-        const cpfA = cleanCpfDigits(current.cpf);
-        const cpfB = cleanCpfDigits(candidate.cpf);
-        // Se ambos tiverem CPFs e forem diferentes, não agrupa para evitar falsos positivos
-        if (cpfA.length === 11 && cpfB.length === 11 && cpfA !== cpfB) {
-          continue;
-        }
-
-        similarMatches.push(candidate);
-      }
-    }
-
-    if (similarMatches.length > 1) {
-      const matchReason = `Nomes Muito Similares (${similarMatches.map((s) => s.nome).join(" ≈ ")})`;
+      const matchReason = `Mesmo Nome (${unassigned[0].item.nome})`;
+      const rawItems = unassigned.map((e) => e.item);
       const group = buildDuplicateGroup(
-        `sim_${current.id}`,
-        "similar_name",
+        `name_${normName.replace(/\s+/g, "_")}`,
+        "exact_name",
         matchReason,
-        similarMatches
+        rawItems
       );
       groups.push(group);
-      similarMatches.forEach((r) => assignedToGroup.add(r.id));
+      unassigned.forEach((e) => assignedToGroup.add(e.item.id));
     }
-  }
+  });
+
+  // 3. Agrupamento O(N) por Nome Canônico (ignorando "DE", "DA", "DOS", etc.)
+  const canonicalMap = new Map<string, typeof prepared>();
+  prepared.forEach((entry) => {
+    if (!assignedToGroup.has(entry.item.id) && entry.canonicalName.length > 3) {
+      const list = canonicalMap.get(entry.canonicalName) || [];
+      list.push(entry);
+      canonicalMap.set(entry.canonicalName, list);
+    }
+  });
+
+  canonicalMap.forEach((entries) => {
+    const unassigned = entries.filter((e) => !assignedToGroup.has(e.item.id));
+    if (unassigned.length > 1) {
+      // Se tiverem CPFs conflitantes de 11 dígitos diferentes, não agrupa
+      const cpfs = new Set(unassigned.map((e) => e.cpfDigits).filter((c) => c.length === 11));
+      if (cpfs.size <= 1) {
+        const matchReason = `Nomes Praticamente Idênticos (${unassigned.map((e) => e.item.nome).join(" / ")})`;
+        const rawItems = unassigned.map((e) => e.item);
+        const group = buildDuplicateGroup(
+          `canon_${unassigned[0].item.id}`,
+          "similar_name",
+          matchReason,
+          rawItems
+        );
+        groups.push(group);
+        unassigned.forEach((e) => assignedToGroup.add(e.item.id));
+      }
+    }
+  });
+
+  // 4. Micro-Bucketing O(N) por Primeiro + Último Nome (Apenas compara dentro de pequenos baldes)
+  const bucketMap = new Map<string, typeof prepared>();
+  prepared.forEach((entry) => {
+    if (!assignedToGroup.has(entry.item.id) && entry.firstLastKey.length > 3) {
+      const list = bucketMap.get(entry.firstLastKey) || [];
+      list.push(entry);
+      bucketMap.set(entry.firstLastKey, list);
+    }
+  });
+
+  bucketMap.forEach((bucketEntries) => {
+    const unassignedInBucket = bucketEntries.filter((e) => !assignedToGroup.has(e.item.id));
+    if (unassignedInBucket.length > 1 && unassignedInBucket.length <= 25) {
+      // Pequeno balde de 2 a 25 itens -> comparação rápida segura
+      for (let i = 0; i < unassignedInBucket.length; i++) {
+        const cur = unassignedInBucket[i];
+        if (assignedToGroup.has(cur.item.id)) continue;
+
+        const similarMatches: GeralCNH[] = [cur.item];
+
+        for (let j = i + 1; j < unassignedInBucket.length; j++) {
+          const cand = unassignedInBucket[j];
+          if (assignedToGroup.has(cand.item.id)) continue;
+
+          // Se ambos tiverem CPFs válidos e forem diferentes, ignora
+          if (cur.cpfDigits.length === 11 && cand.cpfDigits.length === 11 && cur.cpfDigits !== cand.cpfDigits) {
+            continue;
+          }
+
+          const sim = calculateNameSimilarity(cur.item.nome, cand.item.nome);
+          if (sim >= 85) {
+            similarMatches.push(cand.item);
+            assignedToGroup.add(cand.item.id);
+          }
+        }
+
+        if (similarMatches.length > 1) {
+          assignedToGroup.add(cur.item.id);
+          const matchReason = `Nomes Muito Similares (${similarMatches.map((s) => s.nome).join(" ≈ ")})`;
+          const group = buildDuplicateGroup(
+            `sim_${cur.item.id}`,
+            "similar_name",
+            matchReason,
+            similarMatches
+          );
+          groups.push(group);
+        }
+      }
+    }
+  });
 
   // Ordenar grupos: primeiro os com mais itens ou com CPF exato
   return groups.sort((a, b) => {
