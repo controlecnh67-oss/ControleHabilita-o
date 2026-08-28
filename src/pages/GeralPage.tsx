@@ -761,39 +761,87 @@ export const GeralPage: React.FC = () => {
     if (!user || !selectedCNHForEntrega) return;
 
     let targetRespId = selectedRespId;
+    let targetRespNome = "Proprietário";
+
     if (tipoRetirante === "proprietario") {
-      const prop = responsaveis.find((r) => r.nome === "Proprietário" || r.nome === "PROPRIETÁRIO(A)" || r.id === "e2335b1e");
+      const prop = responsaveis.find(
+        (r) =>
+          r.nome === "Proprietário" ||
+          r.nome === "PROPRIETÁRIO(A)" ||
+          r.nome.toLowerCase().includes("proprietário") ||
+          r.nome.toLowerCase().includes("proprietario") ||
+          r.id === "e2335b1e"
+      );
       if (!prop) {
         alert("Erro: Registro padrão Proprietário não encontrado.");
         return;
       }
       targetRespId = prop.id;
+      targetRespNome = prop.nome;
     } else {
       if (!targetRespId) {
         alert("Por favor, selecione ou cadastre o responsável / despachante que está retirando a CNH.");
         return;
       }
+      const foundResp = responsaveis.find((r) => r.id === targetRespId);
+      if (foundResp) {
+        targetRespNome = foundResp.nome;
+      }
     }
 
-    setSubmittingEntrega(true);
+    const cnhToDeliver = selectedCNHForEntrega;
+    const entregaObs = entregaObservacao;
+
+    // 1. FECHA A MODAL INSTANTANEAMENTE (0ms de atraso visual)
+    setIsEntregaModalOpen(false);
+    setSelectedCNHForEntrega(null);
+    setEntregaObservacao("");
+
+    // 2. ATUALIZAÇÃO OTIMISTA IMEDIATA NA TABELA
+    const nowIso = new Date().toISOString();
+    setCnhs((prev) =>
+      prev.map((item) =>
+        item.id === cnhToDeliver.id
+          ? {
+              ...item,
+              situacao: "Entregue",
+              responsavel_id: targetRespId,
+              responsavel_nome: targetRespNome,
+              data_movimento: nowIso,
+              usuario_id: user.id,
+              usuario_nome: user.nome_curto,
+              observacao: `${item.observacao ? item.observacao + " | " : ""}Entregue para: ${targetRespNome}${
+                entregaObs ? ` (${entregaObs})` : ""
+              }`,
+            }
+          : item
+      )
+    );
+
+    setMessage({
+      type: "success",
+      text: `🎉 Entrega confirmada! CNH #${cnhToDeliver.ordem} de "${cnhToDeliver.nome}" foi entregue a ${targetRespNome}.`,
+    });
+
+    // 3. PERSISTÊNCIA EM SEGUNDO PLANO (IndexedDB + Supabase)
     try {
-      const ent = await entregarCNH(
-        selectedCNHForEntrega.id,
+      await entregarCNH(
+        cnhToDeliver.id,
         targetRespId,
-        entregaObservacao,
+        entregaObs,
         user.id,
         user.nome_curto
       );
-      setMessage({
-        type: "success",
-        text: `🎉 Entrega confirmada! CNH #${ent.ordem} de "${ent.nome}" foi entregue a ${ent.responsavel_nome}.`
-      });
-      setIsEntregaModalOpen(false);
-      await fetchDados();
+      // Sincroniza dados em background sem travar a interface
+      fetchDados();
     } catch (err: any) {
-      alert(err.message || "Erro ao confirmar entrega.");
-    } finally {
-      setSubmittingEntrega(false);
+      console.error("Erro ao persistir entrega:", err);
+      setMessage({
+        type: "error",
+        text: `Erro ao salvar confirmação de entrega: ${err.message || "Tente novamente."}`,
+      });
+      // Reverte estado buscando dados atuais
+      fetchDados();
     }
   };
 

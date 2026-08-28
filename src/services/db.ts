@@ -2735,31 +2735,33 @@ export async function entregarCNH(
 
   geralList[index] = atualizado;
   saveStoredList("geral", geralList);
-  await saveLocalGeralCNH(atualizado);
 
-  await logHistorico(
-    atualizado.id,
-    atualizado.ordem,
-    atualizado.nome,
-    atual.situacao,
-    "Entregue",
-    userId,
-    userNome,
-    `Retirado por ${resp.nome}${observacaoEntrega ? ` - ${observacaoEntrega}` : ""}`,
-    resp.id,
-    resp.nome,
-    atualizado.cpf
-  );
-
-  await logAuditoria(
-    "geral",
-    `Ordem #${atualizado.ordem}`,
-    "Entrega",
-    userId,
-    userNome,
-    { situacao: atual.situacao },
-    { situacao: "Entregue", responsavel_nome: resp.nome, data_entrega: now }
-  );
+  // Executa gravações em paralelo (Dexie/Supabase, histórico e auditoria)
+  await Promise.all([
+    saveLocalGeralCNH(atualizado),
+    logHistorico(
+      atualizado.id,
+      atualizado.ordem,
+      atualizado.nome,
+      atual.situacao,
+      "Entregue",
+      userId,
+      userNome,
+      `Retirado por ${resp.nome}${observacaoEntrega ? ` - ${observacaoEntrega}` : ""}`,
+      resp.id,
+      resp.nome,
+      atualizado.cpf
+    ),
+    logAuditoria(
+      "geral",
+      `Ordem #${atualizado.ordem}`,
+      "Entrega",
+      userId,
+      userNome,
+      { situacao: atual.situacao },
+      { situacao: "Entregue", responsavel_nome: resp.nome, data_entrega: now }
+    )
+  ]);
 
   return atualizado;
 }
