@@ -92,19 +92,35 @@ export async function scanCnhDocumentOcr(
   mimeType: string,
   fileName: string
 ): Promise<OcrApiResponse> {
-  const res = await fetch("/api/ocr/cnh-list", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fileData,
-      mimeType,
-      fileName,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch("/api/ocr/cnh-list", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fileData,
+        mimeType,
+        fileName,
+      }),
+    });
+  } catch (networkErr: any) {
+    throw new Error(`Falha de conexão com o servidor ao enviar o arquivo: ${networkErr.message || "Verifique sua internet ou tente novamente."}`);
+  }
 
-  const data = await res.json();
+  const rawText = await res.text();
+  if (!rawText || rawText.trim().length === 0) {
+    throw new Error(`O servidor retornou uma resposta vazia (HTTP ${res.status}). O arquivo pode ser muito grande ou houve um encerramento inesperado.`);
+  }
+
+  let data: any;
+  try {
+    data = JSON.parse(rawText);
+  } catch (parseErr) {
+    throw new Error(`Resposta inválida do servidor: ${rawText.slice(0, 150)}`);
+  }
+
   if (!res.ok || !data.success) {
     throw new Error(data.error || "Falha ao processar o documento via OCR.");
   }

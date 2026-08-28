@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
@@ -105,7 +106,11 @@ Retorne a lista com TODOS os nomes identificados. Não omita nenhum nome present
         },
       });
 
-      const rawText = response.text ? response.text.trim() : "[]";
+      let rawText = response.text ? response.text.trim() : "[]";
+      if (rawText.startsWith("```")) {
+        rawText = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+      }
+
       let extractedItems: Array<{
         nome: string;
         cpf?: string;
@@ -119,7 +124,7 @@ Retorne a lista com TODOS os nomes identificados. Não omita nenhum nome present
         console.error("Erro ao analisar JSON retornado pelo Gemini:", rawText);
         return res.status(500).json({
           success: false,
-          error: "O modelo não retornou a lista no formato estruturado esperado. Tente novamente.",
+          error: "O modelo de IA não retornou os dados no formato esperado. Tente novamente com uma imagem ou PDF mais nítido.",
           raw: rawText,
         });
       }

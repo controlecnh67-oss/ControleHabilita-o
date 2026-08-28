@@ -156,24 +156,75 @@ export const OcrScannerModal: React.FC<OcrScannerModalProps> = ({
     setIsDragging(false);
   };
 
+  const compressImageIfNeeded = async (file: File): Promise<{ dataUrl: string; mimeType: string }> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 2400;
+          let { width, height } = img;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve({ dataUrl: e.target?.result as string, mimeType: file.type || "image/jpeg" });
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.90);
+          resolve({ dataUrl: compressedDataUrl, mimeType: "image/jpeg" });
+        };
+        img.onerror = () => {
+          resolve({ dataUrl: e.target?.result as string, mimeType: file.type || "image/jpeg" });
+        };
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleStartOcr = async () => {
     if (!selectedFile) return;
 
     setIsProcessing(true);
     setErrorMessage(null);
-    setProcessingStep("Lendo arquivo e preparando dados...");
+    setProcessingStep("Lendo e otimizando arquivo...");
 
     try {
-      // 1. Converter arquivo para base64
-      const fileData = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(selectedFile);
-      });
+      let fileData = "";
+      let mimeType = selectedFile.type || "application/pdf";
+
+      if (selectedFile.type.startsWith("image/") || selectedFile.name.match(/\.(jpe?g|png|webp|bmp)$/i)) {
+        const optimized = await compressImageIfNeeded(selectedFile);
+        fileData = optimized.dataUrl;
+        mimeType = optimized.mimeType;
+      } else {
+        // PDF ou outros formatos
+        fileData = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(selectedFile);
+        });
+        if (selectedFile.name.endsWith(".pdf")) {
+          mimeType = "application/pdf";
+        }
+      }
 
       setProcessingStep("Processando documento com IA...");
-      const mimeType = selectedFile.type || (selectedFile.name.endsWith(".pdf") ? "application/pdf" : "image/jpeg");
 
       const response = await scanCnhDocumentOcr(fileData, mimeType, selectedFile.name);
 

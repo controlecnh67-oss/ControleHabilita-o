@@ -18,7 +18,14 @@ export async function sendWhatsAppMessageAPI(phone: string, text: string): Promi
       body: JSON.stringify({ phone, text })
     });
 
-    const result = await response.json();
+    const rawText = await response.text();
+    let result: any = {};
+    try {
+      result = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      result = { error: rawText || `Erro HTTP ${response.status}` };
+    }
+
     if (response.ok && result.success) {
       return { success: true, endpoint: result.endpoint, data: result.data };
     } else {
