@@ -69,21 +69,28 @@ export const AcessosCidadaoPage: React.FC = () => {
     try {
       const data = await fetchAcessosCidadaoLogs();
 
-      // Organiza cronologicamente ascendente para garantir que cada acesso possua seu número sequencial único
-      const sortedAsc = [...data].sort(
-        (a, b) => new Date(a.data_hora).getTime() - new Date(b.data_hora).getTime()
-      );
-      const indexedMap = new Map<string, number>();
-      sortedAsc.forEach((log, idx) => {
-        indexedMap.set(log.id, log.numero || (idx + 1));
-      });
-
-      const indexed = data.map((log) => ({
+      // Preserva o número sequencial individual de cada log a partir do maior número
+      const normalizedLogs = data.map((log) => ({
         ...log,
-        numero: log.numero || indexedMap.get(log.id) || 1
+        numero: typeof log.numero === "number" && !isNaN(log.numero) && log.numero > 0 ? log.numero : 0
       }));
 
-      setLogs(indexed);
+      // Caso existam registros legados sem número sequencial, preenche mantendo a cronologia
+      const hasMissing = normalizedLogs.some(l => !l.numero || l.numero <= 0);
+      if (hasMissing) {
+        const sortedChronological = [...normalizedLogs].sort(
+          (a, b) => new Date(a.data_hora).getTime() - new Date(b.data_hora).getTime()
+        );
+        let seq = 1;
+        sortedChronological.forEach((l) => {
+          if (!l.numero || l.numero <= 0) {
+            l.numero = seq;
+          }
+          seq = Math.max(seq + 1, l.numero + 1);
+        });
+      }
+
+      setLogs(normalizedLogs);
     } catch (e) {
       console.warn("Aviso ao carregar logs de acesso:", e);
     } finally {

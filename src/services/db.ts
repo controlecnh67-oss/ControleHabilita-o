@@ -1941,23 +1941,43 @@ export function getPublicSearchCount(): number {
     const val = parseInt(stored, 10);
     if (!isNaN(val) && val >= 0) return val;
   }
-  const logs = getAcessosCidadaoLogs();
-  return logs.length;
+  return getMaxAcessoCidadaoNumero();
 }
 
 export async function fetchPublicSearchCount(): Promise<number> {
   if (isSupabaseConfigured()) {
     try {
-      // 1. Busca a contagem exata e em tempo real diretamente na tabela acessos_cidadao do Supabase
+      // 1. Busca o maior número sequencial registrado na tabela acessos_cidadao do Supabase
+      const { data: maxRow, error: maxErr } = await supabase
+        .from("acessos_cidadao")
+        .select("numero")
+        .order("numero", { ascending: false })
+        .limit(1);
+
+      if (!maxErr && Array.isArray(maxRow) && maxRow.length > 0 && typeof maxRow[0]?.numero === "number") {
+        const supMax = maxRow[0].numero;
+        const currentLocalMax = getMaxAcessoCidadaoNumero();
+        const absoluteMax = Math.max(supMax, currentLocalMax);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("detran_acessos_cidadao_max_numero", absoluteMax.toString());
+          localStorage.setItem("detran_public_search_count", absoluteMax.toString());
+        }
+        return absoluteMax;
+      }
+
+      // Fallback para contagem total de linhas
       const { count, error } = await supabase
         .from("acessos_cidadao")
         .select("*", { count: "exact", head: true });
 
       if (!error && typeof count === "number") {
+        const currentLocalMax = getMaxAcessoCidadaoNumero();
+        const absoluteMax = Math.max(count, currentLocalMax);
         if (typeof window !== "undefined") {
-          localStorage.setItem("detran_public_search_count", count.toString());
+          localStorage.setItem("detran_acessos_cidadao_max_numero", absoluteMax.toString());
+          localStorage.setItem("detran_public_search_count", absoluteMax.toString());
         }
-        return count;
+        return absoluteMax;
       }
     } catch (err) {
       console.warn("Aviso ao buscar contagem exata de acessos do Supabase:", err);
@@ -1965,8 +1985,7 @@ export async function fetchPublicSearchCount(): Promise<number> {
   }
 
   // Fallback para logs locais/sincronizados
-  const logs = await fetchAcessosCidadaoLogs();
-  const count = logs.length;
+  const count = getMaxAcessoCidadaoNumero();
   if (typeof window !== "undefined") {
     localStorage.setItem("detran_public_search_count", count.toString());
   }
@@ -1975,9 +1994,10 @@ export async function fetchPublicSearchCount(): Promise<number> {
 
 export function incrementPublicSearchCount(): number {
   if (typeof window === "undefined") return 0;
-  const current = getPublicSearchCount();
+  const current = getMaxAcessoCidadaoNumero();
   const next = current + 1;
   try {
+    localStorage.setItem("detran_acessos_cidadao_max_numero", next.toString());
     localStorage.setItem("detran_public_search_count", next.toString());
   } catch {}
   notifyDataSync("acessos_cidadao");
@@ -1987,6 +2007,39 @@ export function incrementPublicSearchCount(): number {
 // ============================================================================
 // LOGS DE ACESSO DO CIDADÃO PELO APLICATIVO E CONSULTA PÚBLICA
 // ============================================================================
+
+/**
+ * Retorna o maior número sequencial já atribuído a uma consulta de cidadão
+ */
+export function getMaxAcessoCidadaoNumero(): number {
+  let max = 0;
+  if (typeof window !== "undefined") {
+    const storedMax = localStorage.getItem("detran_acessos_cidadao_max_numero");
+    if (storedMax) {
+      const val = parseInt(storedMax, 10);
+      if (!isNaN(val) && val > max) max = val;
+    }
+    const countStored = localStorage.getItem("detran_public_search_count");
+    if (countStored) {
+      const val = parseInt(countStored, 10);
+      if (!isNaN(val) && val > max) max = val;
+    }
+  }
+
+  const logs = getAcessosCidadaoLogs();
+  for (const log of logs) {
+    if (typeof log.numero === "number" && !isNaN(log.numero) && log.numero > max) {
+      max = log.numero;
+    }
+  }
+
+  // Se nenhum log existir ou for novo, sincroniza com o tamanho do seed
+  if (max === 0 && logs.length > 0) {
+    max = logs.length;
+  }
+
+  return max;
+}
 
 export function getAcessosCidadaoLogs(): AcessoCidadaoLog[] {
   if (typeof window === "undefined") return [];
@@ -2002,6 +2055,9 @@ export function getAcessosCidadaoLogs(): AcessoCidadaoLog[] {
   const seeded = generateSeedAcessosCidadaoLogs();
   if (typeof window !== "undefined") {
     localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(seeded));
+    const maxSeed = seeded.reduce((m, s) => Math.max(m, s.numero || 0), seeded.length);
+    localStorage.setItem("detran_acessos_cidadao_max_numero", maxSeed.toString());
+    localStorage.setItem("detran_public_search_count", maxSeed.toString());
   }
   return seeded;
 }
@@ -2025,9 +2081,23 @@ export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
       const merged = Array.from(map.values()).sort(
         (a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime()
       );
+
+      // Encontra o maior número presente na base
+      let highestNum = 0;
+      merged.forEach((item) => {
+        if (typeof item.numero === "number" && !isNaN(item.numero) && item.numero > highestNum) {
+          highestNum = item.numero;
+        }
+      });
+
       if (typeof window !== "undefined") {
+        if (highestNum > 0) {
+          const currentStored = parseInt(localStorage.getItem("detran_acessos_cidadao_max_numero") || "0", 10);
+          const absoluteMax = Math.max(highestNum, currentStored);
+          localStorage.setItem("detran_acessos_cidadao_max_numero", absoluteMax.toString());
+          localStorage.setItem("detran_public_search_count", absoluteMax.toString());
+        }
         localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(merged.slice(0, 1000)));
-        localStorage.setItem("detran_public_search_count", Math.max(merged.length, data.length).toString());
       }
       return merged;
     }
@@ -2039,18 +2109,21 @@ export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
 
 export function registrarAcessoCidadaoLog(logData: Omit<AcessoCidadaoLog, "id" | "data_hora">): AcessoCidadaoLog {
   const currentLogs = getAcessosCidadaoLogs();
-  const maxNum = currentLogs.reduce((max, l) => Math.max(max, l.numero || 0), currentLogs.length);
+  const currentMax = getMaxAcessoCidadaoNumero();
+  const nextNumero = currentMax + 1;
+
   const newLog: AcessoCidadaoLog = {
     id: `log-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-    numero: maxNum + 1,
+    numero: nextNumero,
     data_hora: new Date().toISOString(),
     ...logData
   };
   const updated = [newLog, ...currentLogs];
   if (typeof window !== "undefined") {
+    localStorage.setItem("detran_acessos_cidadao_max_numero", nextNumero.toString());
+    localStorage.setItem("detran_public_search_count", nextNumero.toString());
     localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(updated.slice(0, 1000)));
   }
-  incrementPublicSearchCount();
 
   // Enviar para Supabase em segundo plano se configurado
   if (isSupabaseConfigured()) {
@@ -2253,9 +2326,6 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
   if (!cleanCpf || cleanCpf.length < 9) {
     throw new Error("Por favor, informe um CPF válido para realizar a consulta.");
   }
-
-  // Incrementar o contador de consultas efetuadas pelo app público
-  incrementPublicSearchCount();
 
   const pad11 = (val: string) => val.replace(/\D/g, "").padStart(11, "0");
   const searchPad = pad11(cleanCpf);
