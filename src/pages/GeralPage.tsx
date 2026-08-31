@@ -39,7 +39,9 @@ import {
   ExternalLink,
   ScanLine,
   CopyCheck,
-  Layers
+  Layers,
+  RotateCcw,
+  Zap
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -147,6 +149,8 @@ export const GeralPage: React.FC = () => {
   const [manualErrors, setManualErrors] = useState<Record<string, string>>({});
   const [manualSuccessMsg, setManualSuccessMsg] = useState<string | null>(null);
   const [submittingManual, setSubmittingManual] = useState(false);
+  const manualNomeInputRef = useRef<HTMLInputElement>(null);
+  const manualCpfInputRef = useRef<HTMLInputElement>(null);
 
   // Modal 2: Entrega de CNH
   const [isEntregaModalOpen, setIsEntregaModalOpen] = useState(false);
@@ -689,19 +693,37 @@ export const GeralPage: React.FC = () => {
     setManualSituacao("Recebida");
     setManualObservacao("");
     setIsManualModalOpen(true);
+    setTimeout(() => {
+      manualNomeInputRef.current?.focus();
+    }, 60);
+  };
+
+  const handleClearManualForm = () => {
+    setManualNome("");
+    setManualCpf("");
+    setManualObservacao("");
+    setManualErrors({});
+    setManualSuccessMsg(null);
+    setTimeout(() => {
+      manualNomeInputRef.current?.focus();
+    }, 40);
   };
 
   const handleSaveManual = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
     setManualErrors({});
-    setManualSuccessMsg(null);
+
+    const nomeTrimmed = manualNome.trim();
+    const formattedCpf = formatCPF(manualCpf);
+    const situacaoEscolhida = manualSituacao;
+    const obsEscolhida = manualObservacao.trim();
 
     const validation = CadastroManualCNHSchema.safeParse({
-      nome: manualNome,
-      cpf: formatCPF(manualCpf),
-      situacao: manualSituacao,
-      observacao: manualObservacao,
+      nome: nomeTrimmed,
+      cpf: formattedCpf,
+      situacao: situacaoEscolhida,
+      observacao: obsEscolhida,
     });
 
     if (!validation.success) {
@@ -713,23 +735,41 @@ export const GeralPage: React.FC = () => {
       return;
     }
 
+    // LIMPEZA IMEDIATA DO FORMULÁRIO para digitação ultra-rápida do próximo registro
+    if (situacaoEscolhida !== "Entregue") {
+      setManualNome("");
+      setManualCpf("");
+      setManualObservacao("");
+      setManualErrors({});
+      setManualSuccessMsg(`⚡ Cadastrando "${nomeTrimmed}"...`);
+      // Retorna o foco imediatamente para o campo de Nome
+      setTimeout(() => {
+        manualNomeInputRef.current?.focus();
+      }, 40);
+    }
+
     setSubmittingManual(true);
     try {
       const nova = await createGeralManual(
         {
-          nome: manualNome,
-          cpf: formatCPF(manualCpf),
-          situacao: manualSituacao,
-          observacao: manualObservacao,
+          nome: nomeTrimmed,
+          cpf: formattedCpf,
+          situacao: situacaoEscolhida,
+          observacao: obsEscolhida,
         },
         user.id,
         user.nome_curto
       );
 
-      await fetchDados();
+      // Atualização otimista imediata na lista de CNHs locais para refletir instantaneamente
+      setCnhs((prev) => {
+        const exists = prev.some((c) => c.id === nova.id);
+        if (exists) return prev;
+        return [nova, ...prev];
+      });
 
       // Se cadastrar como Entregue, fechar a modal manual e abrir a de entrega
-      if (manualSituacao === "Entregue") {
+      if (situacaoEscolhida === "Entregue") {
         setIsManualModalOpen(false);
         setMessage({
           type: "success",
@@ -743,16 +783,12 @@ export const GeralPage: React.FC = () => {
           type: "success",
           text: msg
         });
-
-        // Mantém a modal aberta para novos cadastros e limpa os campos
-        setManualNome("");
-        setManualCpf("");
-        setManualObservacao("");
-        setManualErrors({});
-        setIsManualModalOpen(true);
+        // Garante foco pronto no campo Nome para a próxima CNH
+        manualNomeInputRef.current?.focus();
       }
     } catch (err: any) {
       setManualErrors({ geral: err.message || "Erro no cadastro manual." });
+      setManualSuccessMsg(null);
     } finally {
       setSubmittingManual(false);
     }
@@ -2060,13 +2096,25 @@ export const GeralPage: React.FC = () => {
           )}
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Nome Completo do Titular da CNH <span className="text-rose-500">*</span>
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Nome Completo do Titular da CNH <span className="text-rose-500">*</span>
+              </label>
+              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
+                Pressione <strong>Enter</strong> para ir ao CPF
+              </span>
+            </div>
             <input
+              ref={manualNomeInputRef}
               type="text"
               value={manualNome}
               onChange={(e) => setManualNome(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  manualCpfInputRef.current?.focus();
+                }
+              }}
               placeholder="ex: Maria Fernanda Gonçalves"
               className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
             />
@@ -2075,10 +2123,16 @@ export const GeralPage: React.FC = () => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                CPF do Titular <span className="text-rose-500">*</span>
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  CPF do Titular <span className="text-rose-500">*</span>
+                </label>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
+                  <strong>Enter</strong> cadastra
+                </span>
+              </div>
               <input
+                ref={manualCpfInputRef}
                 type="text"
                 value={manualCpf}
                 onChange={(e) => setManualCpf(formatCPF(e.target.value))}
@@ -2119,21 +2173,34 @@ export const GeralPage: React.FC = () => {
             />
           </div>
 
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+          <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
-              onClick={() => setIsManualModalOpen(false)}
-              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl text-xs transition-colors"
+              onClick={handleClearManualForm}
+              title="Limpar todos os campos do formulário para digitar do zero"
+              className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
             >
-              Cancelar
+              <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+              <span>Limpar Formulário</span>
             </button>
-            <button
-              type="submit"
-              disabled={submittingManual}
-              className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-md shadow-blue-600/20 text-xs transition-all disabled:opacity-50 cursor-pointer"
-            >
-              {submittingManual ? "Cadastrando..." : "Confirmar Cadastro"}
-            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsManualModalOpen(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Fechar
+              </button>
+              <button
+                type="submit"
+                disabled={submittingManual}
+                className="flex items-center gap-1.5 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-md shadow-blue-600/20 text-xs transition-all disabled:opacity-50 cursor-pointer"
+              >
+                <Zap className="w-3.5 h-3.5 text-blue-200" />
+                <span>{submittingManual ? "Cadastrando..." : "Confirmar Cadastro"}</span>
+              </button>
+            </div>
           </div>
         </form>
       </Modal>

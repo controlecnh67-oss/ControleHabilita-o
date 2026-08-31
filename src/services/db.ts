@@ -2571,9 +2571,11 @@ export async function createGeralManual(
   };
 
   saveStoredList("geral", [nova, ...geralList]);
-  await saveLocalGeralCNH(nova);
-  await logHistorico(nova.id, nova.ordem, nova.nome, null, nova.situacao, userId, userNome, nova.observacao, undefined, undefined, nova.cpf);
-  await logAuditoria("geral", `Ordem #${nova.ordem}`, "Inclusão", userId, userNome, null, nova);
+  await Promise.all([
+    saveLocalGeralCNH(nova),
+    logHistorico(nova.id, nova.ordem, nova.nome, null, nova.situacao, userId, userNome, nova.observacao, undefined, undefined, nova.cpf),
+    logAuditoria("geral", `Ordem #${nova.ordem}`, "Inclusão", userId, userNome, null, nova)
+  ]);
   return nova;
 }
 
