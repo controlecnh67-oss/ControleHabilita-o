@@ -25,6 +25,7 @@ import {
   syncGeralWithSupabase
 } from "./dexieDb";
 import { uploadLogoToSupabaseStorage, loadOrgaoConfigFromSupabase } from "./orgaoService";
+import { trackEgress } from "./egressMonitorService";
 
 // Verificação de credenciais Supabase reais via variáveis de ambiente VITE_ ou utilitário
 export function isSupabaseConnected(): boolean {
@@ -33,6 +34,7 @@ export function isSupabaseConnected(): boolean {
 
 // Disparar evento global de sincronização para atualizar todas as abas e componentes
 export function notifyDataSync(type: string = "all") {
+  invalidateSupabaseCache(type === "all" ? undefined : type);
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("detran_sync_updated", { detail: { type, timestamp: Date.now() } }));
   }
@@ -350,6 +352,7 @@ const SEED_MEMORANDOS: Memorando[] = [
     remessa: "REM-001/ABRIL",
     status: "Remetido",
     created_at: new Date(Date.now() - 5 * 86400000).toISOString(),
+    remetido_em: new Date(Date.now() - 4 * 86400000).toISOString(),
     candidatos_count: 2
   },
   {
@@ -360,6 +363,7 @@ const SEED_MEMORANDOS: Memorando[] = [
     remessa: "REM-002/ABRIL",
     status: "Remetido",
     created_at: new Date(Date.now() - 3 * 86400000).toISOString(),
+    remetido_em: new Date(Date.now() - 2 * 86400000).toISOString(),
     candidatos_count: 2
   },
   {
@@ -1220,9 +1224,17 @@ export async function getMemorandos(): Promise<Memorando[]> {
           }
         }
         const local = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS).filter((m) => !deletedIds.has(m.id));
+        const localMap = new Map(local.map((m) => [m.id, m]));
+        const validRemoteMerged = validRemote.map((rem) => {
+          const loc = localMap.get(rem.id);
+          return {
+            ...rem,
+            remetido_em: rem.remetido_em || loc?.remetido_em
+          };
+        });
         const remoteIds = new Set(validRemote.map((d) => d.id));
         const localOnly = local.filter((m) => !remoteIds.has(m.id) && !deletedIds.has(m.id));
-        const merged = [...validRemote, ...localOnly].filter((m) => !deletedIds.has(m.id));
+        const merged = [...validRemoteMerged, ...localOnly].filter((m) => !deletedIds.has(m.id));
         saveStoredList("memorandos", merged);
       }
     } catch (err) {
@@ -1231,10 +1243,23 @@ export async function getMemorandos(): Promise<Memorando[]> {
   }
   const list = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS).filter((m) => !deletedIds.has(m.id));
   const cands = await getCandidatosAll();
-  return list.map((m) => ({
-    ...m,
-    candidatos_count: cands.filter((c) => c.memorando_id === m.id).length
-  })).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
+  return list.map((m) => {
+    let remetidoData = m.remetido_em;
+    if (m.status === "Remetido" && !remetidoData) {
+      const matchGeral = geralList.find(
+        (g) => g.memorando_id === m.id || 
+               (g.observacao && g.observacao.includes(m.numero)) ||
+               (m.remessa && g.remessa === m.remessa)
+      );
+      remetidoData = matchGeral?.data_movimento || matchGeral?.created_at || m.created_at;
+    }
+    return {
+      ...m,
+      remetido_em: remetidoData,
+      candidatos_count: cands.filter((c) => c.memorando_id === m.id).length
+    };
+  }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
 
 export async function getCandidatosByMemorando(memorando_id: string): Promise<Candidato[]> {
@@ -1266,7 +1291,7 @@ export async function getCandidatosByMemorando(memorando_id: string): Promise<Ca
 }
 
 export async function createMemorando(
-  data: { numero: string; remessa?: string },
+  data: { numero: string; remessa?: string; created_at?: string },
   userId: string,
   userNome: string
 ): Promise<Memorando> {
@@ -1286,7 +1311,7 @@ export async function createMemorando(
     usuario_nome: userNome,
     remessa: data.remessa ? data.remessa.trim() : "",
     status: "Em elaboração",
-    created_at: new Date().toISOString(),
+    created_at: data.created_at || new Date().toISOString(),
     candidatos_count: 0
   };
 
@@ -1371,6 +1396,8 @@ export async function updateMemorando(
         if (data.numero !== undefined) safeData.numero = data.numero;
         if (data.remessa !== undefined) safeData.remessa = data.remessa;
         if (data.status !== undefined) safeData.status = data.status;
+        if (data.created_at !== undefined) safeData.created_at = data.created_at;
+        if (data.remetido_em !== undefined) safeData.remetido_em = data.remetido_em;
         await supabase.from("memorandos").update(safeData).eq("id", id);
       }
     } catch (err) {
@@ -1381,16 +1408,35 @@ export async function updateMemorando(
   saveStoredList("memorandos", list);
   notifyDataSync("memorandos");
 
-  if (ant.status === "Remetido" && (data.numero || data.remessa !== undefined)) {
+  if (ant.status === "Remetido") {
     const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
     let updatedGeral = false;
+    const cnhsToUpdateSupabase: GeralCNH[] = [];
     geralList.forEach((cnh) => {
-      if (cnh.memorando_id === id) {
-        cnh.observacao = `Remetida via memorando ${atualizado.numero}${atualizado.remessa ? ` - Remessa ${atualizado.remessa}` : ""}`;
+      if (cnh.memorando_id === id || (cnh.observacao && cnh.observacao.includes(ant.numero))) {
+        if (data.numero || data.remessa !== undefined) {
+          cnh.observacao = `Remetida via memorando ${atualizado.numero}${atualizado.remessa ? ` - Remessa ${atualizado.remessa}` : ""}`;
+          cnh.memorando_numero = atualizado.numero;
+          cnh.remessa = atualizado.remessa || atualizado.numero;
+        }
+        if (data.remetido_em) {
+          cnh.data_movimento = data.remetido_em;
+        }
+        cnhsToUpdateSupabase.push(cnh);
         updatedGeral = true;
       }
     });
-    if (updatedGeral) saveStoredList("geral", geralList);
+    if (updatedGeral) {
+      saveStoredList("geral", geralList);
+      await saveLocalGeralCNHsBulk(cnhsToUpdateSupabase);
+      if (isSupabaseConfigured() && cnhsToUpdateSupabase.length > 0) {
+        try {
+          await supabase.from("geral_cnhs").upsert(cnhsToUpdateSupabase, { onConflict: "id" });
+        } catch (e) {
+          console.warn("Aviso ao atualizar cnhs do memorando no Supabase:", e);
+        }
+      }
+    }
   }
 
   await logAuditoria("memorandos", ant.numero, "Alteração", userId, userNome, ant, atualizado);
@@ -1667,7 +1713,8 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
   }
 
   // 1. Atualizar status do memorando imediatamente para 'Remetido' para evitar concorrência
-  memos[memoIndex] = { ...memo, status: "Remetido" };
+  const now = new Date().toISOString();
+  memos[memoIndex] = { ...memo, status: "Remetido", remetido_em: now };
   saveStoredList("memorandos", memos);
 
   // 2. Buscar Geral CNHs atuais e remover registros anteriores deste memorando se houver
@@ -1682,7 +1729,6 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
   const semAtuais = geralListAtual.filter((c) => c.memorando_id !== memorando_id);
   
   let maxOrdem = semAtuais.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0);
-  const now = new Date().toISOString();
 
   const novasCNHs: GeralCNH[] = [];
   let seq = 0;
@@ -1721,7 +1767,7 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
 
   if (isSupabaseConfigured()) {
     try {
-      await supabase.from("memorandos").update({ status: "Remetido" }).eq("id", memorando_id);
+      await supabase.from("memorandos").update({ status: "Remetido", remetido_em: now }).eq("id", memorando_id);
       if (idsAntigos.length > 0) {
         await supabase.from("geral_cnhs").delete().eq("memorando_id", memorando_id);
       }
@@ -1755,12 +1801,12 @@ export async function reabrirMemorando(memorando_id: string, userId: string, use
   }
 
   // 2. Alterar status do memorando para "Em elaboração"
-  memos[memoIndex] = { ...memo, status: "Em elaboração" };
+  memos[memoIndex] = { ...memo, status: "Em elaboração", remetido_em: undefined };
   saveStoredList("memorandos", memos);
 
   if (isSupabaseConfigured()) {
     try {
-      await supabase.from("memorandos").update({ status: "Em elaboração" }).eq("id", memorando_id);
+      await supabase.from("memorandos").update({ status: "Em elaboração", remetido_em: null }).eq("id", memorando_id);
       if (idsParaRemover.length > 0) {
         await supabase.from("geral_cnhs").delete().eq("memorando_id", memorando_id);
       }
@@ -3773,16 +3819,48 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
   return results;
 }
 
+// Cache em memória com TTL inteligente para tabelas relacionais do Supabase (Zero Egress desnecessário)
+interface SupabaseCacheEntry<T> {
+  data: T[];
+  cachedAt: number;
+}
+const supabaseTableCache = new Map<string, SupabaseCacheEntry<any>>();
+const CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutos de validade por padrão
+
+export function invalidateSupabaseCache(tableName?: string) {
+  if (tableName) {
+    for (const key of supabaseTableCache.keys()) {
+      if (key.startsWith(tableName)) {
+        supabaseTableCache.delete(key);
+      }
+    }
+  } else {
+    supabaseTableCache.clear();
+  }
+}
+
 // Helper para buscar todos os registros de uma tabela do Supabase com paginação (evita limite de 1000 registros do PostgREST)
 export async function fetchAllRowsFromSupabase<T = any>(
   tableName: string, 
   pageSize = 1000,
   orderColumn?: string,
-  ascending = true
+  ascending = true,
+  forceRefresh = false
 ): Promise<T[]> {
+  const cacheKey = `${tableName}:${orderColumn || ""}:${ascending}`;
+  const now = Date.now();
+  const cached = supabaseTableCache.get(cacheKey);
+
+  if (!forceRefresh && cached && (now - cached.cachedAt < CACHE_TTL_MS)) {
+    trackEgress(tableName, "SELECT", 0, true, 0, `Cache Hit: ${cached.data.length} registros obtidos da memória local`);
+    return cached.data;
+  }
+
+  const reqStart = Date.now();
   let allRows: T[] = [];
   let from = 0;
   let hasMore = true;
+  let totalBytes = 0;
 
   while (hasMore) {
     const to = from + pageSize - 1;
@@ -3798,6 +3876,9 @@ export async function fetchAllRowsFromSupabase<T = any>(
 
     if (data && data.length > 0) {
       allRows = allRows.concat(data as T[]);
+      const chunkBytes = JSON.stringify(data).length;
+      totalBytes += chunkBytes;
+
       if (data.length < pageSize) {
         hasMore = false;
       } else {
@@ -3807,6 +3888,14 @@ export async function fetchAllRowsFromSupabase<T = any>(
       hasMore = false;
     }
   }
+
+  const duration = Date.now() - reqStart;
+  trackEgress(tableName, "SELECT", totalBytes || 120, false, duration, `Download de ${allRows.length} linhas do Supabase`);
+
+  supabaseTableCache.set(cacheKey, {
+    data: allRows,
+    cachedAt: now
+  });
 
   return allRows;
 }
@@ -3819,13 +3908,19 @@ async function upsertInBatches(
   onConflict = "id",
   onProgress?: (synced: number, total: number) => void
 ): Promise<number> {
+  invalidateSupabaseCache(tableName);
   let count = 0;
   for (let i = 0; i < payload.length; i += batchSize) {
     const batch = payload.slice(i, i + batchSize);
+    const reqStart = Date.now();
     const { error } = await supabase.from(tableName).upsert(batch, { onConflict });
+    const duration = Date.now() - reqStart;
+
     if (error) {
       throw error;
     }
+    const batchBytes = JSON.stringify(batch).length;
+    trackEgress(tableName, "BATCH_UPSERT", batchBytes, false, duration, `Lote de ${batch.length} registros enviados para ${tableName}`);
     count += batch.length;
     if (onProgress) {
       onProgress(count, payload.length);

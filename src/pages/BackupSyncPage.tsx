@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS public.memorandos (
     remessa VARCHAR(100),
     status VARCHAR(50) NOT NULL DEFAULT 'Em elaboração' CHECK (status IN ('Em elaboração', 'Remetido', 'Recebido')),
     candidatos_count INTEGER DEFAULT 0,
+    remetido_em TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -167,6 +168,7 @@ CREATE TABLE IF NOT EXISTS public.memorandos (
 ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
 ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
 ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS candidatos_count INTEGER DEFAULT 0;
+ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS remetido_em TIMESTAMPTZ;
 
 -- 5. TABELA DE CANDIDATOS
 CREATE TABLE IF NOT EXISTS public.candidatos (
@@ -802,6 +804,39 @@ END $$;`;
           >
             <RefreshCw className={`w-4 h-4 ${isLoadingStats ? "animate-spin" : ""}`} />
             <span>Atualizar Totais</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Cartão de Monitoramento de Egress e Otimização */}
+      <div className="bg-gradient-to-r from-blue-900 to-indigo-950 text-white rounded-2xl p-6 shadow-md border border-blue-800/80 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+              Economia de Egress Ativa
+            </span>
+            <span className="text-xs text-blue-200">Supabase Free Tier (5 GB/mês)</span>
+          </div>
+          <h2 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+            <Activity className="w-5 h-5 text-blue-400" />
+            Painel de Monitoramento & Otimização de Tráfego
+          </h2>
+          <p className="text-xs text-blue-200/90 max-w-2xl leading-relaxed">
+            O sistema agora utiliza sincronização delta inteligente, cache TTL em memória e persistência IndexedDB com Dexie. Acompanhe o consumo de banda em tempo real e o volume de dados economizado.
+          </p>
+        </div>
+        <div className="shrink-0 flex items-center gap-2">
+          <button
+            onClick={() => {
+              if (typeof window !== "undefined") {
+                sessionStorage.setItem("detran_active_tab", "monitoramento");
+                window.location.reload();
+              }
+            }}
+            className="px-4 py-2.5 bg-blue-500 hover:bg-blue-400 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2 cursor-pointer"
+          >
+            <Activity className="w-4 h-4" />
+            <span>Abrir Painel de Telemetria</span>
           </button>
         </div>
       </div>

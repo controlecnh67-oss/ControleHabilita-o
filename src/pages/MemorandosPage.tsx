@@ -56,6 +56,18 @@ const getNextCandNumero = (list: Candidato[]): string => {
   return String(nextNum).padStart(2, "0");
 };
 
+const toInputDateTime = (dateStr?: string) => {
+  if (!dateStr) return "";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    const offset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - offset).toISOString().slice(0, 16);
+  } catch {
+    return "";
+  }
+};
+
 export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ onNavigateToGeral }) => {
   const { user, canEdit } = useAuth();
   const [memorandos, setMemorandos] = useState<Memorando[]>([]);
@@ -84,6 +96,8 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
   // Form State Memorando
   const [numero, setNumero] = useState("");
   const [remessa, setRemessa] = useState("");
+  const [dataCriacao, setDataCriacao] = useState("");
+  const [dataRemessa, setDataRemessa] = useState("");
   const [memoErrors, setMemoErrors] = useState<Record<string, string>>({});
   const [submittingMemo, setSubmittingMemo] = useState(false);
 
@@ -218,10 +232,14 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
       setEditingMemo(memo);
       setNumero(memo.numero);
       setRemessa(memo.remessa || "");
+      setDataCriacao(toInputDateTime(memo.created_at));
+      setDataRemessa(toInputDateTime(memo.remetido_em));
     } else {
       setEditingMemo(null);
       setNumero(`MEMO-2026/${Math.floor(100 + Math.random() * 900)}`);
       setRemessa(`REM-${Math.floor(10 + Math.random() * 90)}/DETRAN`);
+      setDataCriacao(toInputDateTime(new Date().toISOString()));
+      setDataRemessa("");
     }
     setIsMemoModalOpen(true);
   };
@@ -249,12 +267,27 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
     setSubmittingMemo(true);
     try {
       let targetId = selectedMemo?.id;
+      const payload: Partial<Memorando> = {
+        numero,
+        remessa,
+      };
+      if (dataCriacao) {
+        payload.created_at = new Date(dataCriacao).toISOString();
+      }
+      if (editingMemo?.status === "Remetido" && dataRemessa) {
+        payload.remetido_em = new Date(dataRemessa).toISOString();
+      }
+
       if (editingMemo) {
-        await updateMemorando(editingMemo.id, { numero, remessa }, user.id, user.nome_curto);
+        await updateMemorando(editingMemo.id, payload, user.id, user.nome_curto);
         setMessage({ type: "success", text: "Memorando atualizado com sucesso!" });
         targetId = editingMemo.id;
       } else {
-        const novo = await createMemorando({ numero, remessa }, user.id, user.nome_curto);
+        const novo = await createMemorando({
+          numero,
+          remessa,
+          created_at: dataCriacao ? new Date(dataCriacao).toISOString() : undefined,
+        }, user.id, user.nome_curto);
         setMessage({ type: "success", text: "Memorando criado com sucesso! Adicione candidatos a seguir." });
         targetId = novo.id;
         setSelectedMemo(novo);
@@ -598,40 +631,62 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
       doc.setFontSize(10);
       doc.setTextColor(15, 23, 42);
       
-      // Esquerda
+      const isRemetido = selectedMemo.status === "Remetido";
+      const dataRemessaStr = isRemetido
+        ? formatDateTime(selectedMemo.remetido_em || selectedMemo.created_at)
+        : "Em elaboração (Pendente)";
+
+      // Coluna Esquerda
       doc.setFont("helvetica", "bold");
-      doc.text("Memorando Nº:", 14, 39);
+      doc.text("Memorando Nº:", 14, 38);
       doc.setFont("helvetica", "normal");
-      doc.text(selectedMemo.numero, 45, 39);
+      doc.text(selectedMemo.numero, 48, 38);
 
       doc.setFont("helvetica", "bold");
-      doc.text("Lote / Remessa:", 14, 45);
+      doc.text("Lote / Remessa:", 14, 44);
       doc.setFont("helvetica", "normal");
-      doc.text(selectedMemo.remessa || "Não especificado", 45, 45);
-
-      // Direita
-      doc.setFont("helvetica", "bold");
-      doc.text("Data de Emissão:", 115, 39);
-      doc.setFont("helvetica", "normal");
-      doc.text(formatDateTime(selectedMemo.created_at), 148, 39);
+      doc.text(selectedMemo.remessa || "Não especificado", 48, 44);
 
       doc.setFont("helvetica", "bold");
-      doc.text("Responsável:", 115, 45);
+      doc.text("Data de Elaboração:", 14, 50);
       doc.setFont("helvetica", "normal");
-      doc.text(selectedMemo.usuario_nome || "Não informado", 148, 45);
+      doc.text(formatDateTime(selectedMemo.created_at), 52, 50);
+
+      // Coluna Direita
+      doc.setFont("helvetica", "bold");
+      doc.text("Data da Remessa:", 115, 38);
+      doc.setFont("helvetica", isRemetido ? "normal" : "italic");
+      doc.text(dataRemessaStr, 150, 38);
+
+      doc.setFont("helvetica", "bold");
+      doc.text("Responsável:", 115, 44);
+      doc.setFont("helvetica", "normal");
+      doc.text(selectedMemo.usuario_nome || "Não informado", 150, 44);
+
+      doc.setFont("helvetica", "bold");
+      doc.text("Situação:", 115, 50);
+      doc.setFont("helvetica", "bold");
+      if (isRemetido) {
+        doc.setTextColor(2, 132, 199); // blue
+        doc.text("REMETIDO", 150, 50);
+      } else {
+        doc.setTextColor(217, 119, 6); // amber
+        doc.text("EM ELABORAÇÃO", 150, 50);
+      }
+      doc.setTextColor(15, 23, 42);
 
       // Origem e Destino do Órgão
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
-      doc.text(cfg.origem_padrao, 14, 53);
-      doc.text(cfg.destino_padrao, 14, 59);
+      doc.text(cfg.origem_padrao, 14, 58);
+      doc.text(cfg.destino_padrao, 14, 64);
 
       // Parágrafo introdutório
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
       const introText = `Servimo-nos do presente para encaminhar a esta agência os processos dos candidatos abaixo relacionados para impressão das Carteiras Nacionais de Habilitação (CNHs).`;
       const splitIntro = doc.splitTextToSize(introText, 182);
-      doc.text(splitIntro, 14, 68);
+      doc.text(splitIntro, 14, 73);
 
       // Tabela de Candidatos
       const tableData = candidatos.map((c, idx) => [
@@ -640,7 +695,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
         formatCPF(c.cpf)
       ]);
 
-      const startYTable = 68 + (splitIntro.length * 5) + 3;
+      const startYTable = 73 + (splitIntro.length * 5) + 3;
 
       autoTable(doc, {
         startY: startYTable,
@@ -864,6 +919,12 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
                           <User className="w-3 h-3 text-slate-400 shrink-0" />
                           <span>Elaborado por: <strong className="text-slate-700 dark:text-slate-300">{m.usuario_nome || "Não informado"}</strong></span>
                         </p>
+                        {m.status === "Remetido" && (
+                          <p className="text-[11px] text-blue-600 dark:text-blue-400 mt-0.5 flex items-center gap-1 font-medium">
+                            <Send className="w-3 h-3 text-blue-500 shrink-0" />
+                            <span>Remetido em: <strong className="text-blue-700 dark:text-blue-300">{formatDateTime(m.remetido_em || m.created_at).slice(0, 10)}</strong></span>
+                          </p>
+                        )}
                       </div>
 
                       {canEdit && (
@@ -923,7 +984,12 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
                     <Badge situacao={selectedMemo.status} />
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    Lote de Remessa: <strong>{selectedMemo.remessa || "Não especificado"}</strong> | Cadastrado por: {selectedMemo.usuario_nome}
+                    Lote de Remessa: <strong>{selectedMemo.remessa || "Não especificado"}</strong> | Elaborado por: <strong>{selectedMemo.usuario_nome || "Não informado"}</strong> | Elaborado em: <strong>{formatDateTime(selectedMemo.created_at)}</strong>
+                    {selectedMemo.status === "Remetido" && (
+                      <span className="text-blue-600 dark:text-blue-400 font-medium ml-1">
+                        | Remetido em: <strong className="font-bold">{formatDateTime(selectedMemo.remetido_em || selectedMemo.created_at)}</strong>
+                      </span>
+                    )}
                   </p>
                 </div>
 
@@ -1159,6 +1225,34 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
             />
           </div>
 
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Data de Elaboração (Início)
+              </label>
+              <input
+                type="datetime-local"
+                value={dataCriacao}
+                onChange={(e) => setDataCriacao(e.target.value)}
+                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+              />
+            </div>
+
+            {editingMemo?.status === "Remetido" && (
+              <div>
+                <label className="block text-xs font-semibold text-blue-700 dark:text-blue-400 mb-1">
+                  Data da Remessa (Envio)
+                </label>
+                <input
+                  type="datetime-local"
+                  value={dataRemessa}
+                  onChange={(e) => setDataRemessa(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-blue-50/50 dark:bg-blue-950/30 border border-blue-300 dark:border-blue-700 rounded-xl text-xs font-semibold text-blue-900 dark:text-blue-100 focus:ring-2 focus:ring-blue-500 outline-hidden"
+                />
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
@@ -1313,14 +1407,23 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
               </div>
 
               {/* Informações do Memorando */}
-              <div className="flex justify-between items-baseline mb-4 font-sans text-sm">
-                <div>
+              <div className="grid grid-cols-2 gap-4 mb-4 font-sans text-sm">
+                <div className="space-y-1">
                   <p><strong>Memorando Nº:</strong> {selectedMemo.numero}</p>
                   <p><strong>Lote / Remessa:</strong> {selectedMemo.remessa || "Não especificado"}</p>
+                  <p><strong>Data de Elaboração:</strong> {formatDateTime(selectedMemo.created_at)}</p>
                 </div>
-                <div className="text-right">
-                  <p><strong>Data de Emissão:</strong> {formatDateTime(selectedMemo.created_at)}</p>
-                  <p><strong>Responsável:</strong> {selectedMemo.usuario_nome}</p>
+                <div className="text-right space-y-1">
+                  <p>
+                    <strong>Data da Remessa:</strong>{" "}
+                    {selectedMemo.status === "Remetido" ? (
+                      <span className="font-semibold text-blue-700">{formatDateTime(selectedMemo.remetido_em || selectedMemo.created_at)}</span>
+                    ) : (
+                      <span className="text-amber-600 font-semibold italic">Em elaboração (Pendente)</span>
+                    )}
+                  </p>
+                  <p><strong>Responsável:</strong> {selectedMemo.usuario_nome || "Não informado"}</p>
+                  <p><strong>Situação:</strong> <span className={`font-bold ${selectedMemo.status === "Remetido" ? "text-blue-600" : "text-amber-600"}`}>{selectedMemo.status}</span></p>
                 </div>
               </div>
 

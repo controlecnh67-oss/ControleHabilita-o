@@ -15,7 +15,8 @@ export type NavTab =
   | "auditoria" 
   | "usuarios"
   | "orgao"
-  | "backup";
+  | "backup"
+  | "monitoramento";
 
 export function isTabAllowedForProfile(
   tab: NavTab, 
@@ -72,6 +73,9 @@ export function isTabAllowedForProfile(
     }
     if (tab === "backup") {
       return permissoes.includes("backup:gerenciar");
+    }
+    if (tab === "monitoramento") {
+      return permissoes.includes("backup:gerenciar") || permissoes.includes("auditoria:visualizar");
     }
     return false;
   }
@@ -314,6 +318,7 @@ export interface Memorando {
   remessa?: string;
   status: StatusMemorando;
   created_at: string;
+  remetido_em?: string;
   candidatos_count?: number;
 }
 
@@ -423,6 +428,8 @@ export const MemorandoSchema = z.object({
   numero: z.string().min(1, "Número do memorando obrigatório (ex: MEMO-2026/045)"),
   remessa: z.string().optional(),
   status: z.enum(["Em elaboração", "Remetido"]).default("Em elaboração"),
+  created_at: z.string().optional(),
+  remetido_em: z.string().optional().nullable(),
 });
 
 export const CandidatoSchema = z.object({

@@ -13,6 +13,7 @@ import { MapeamentoPage } from "./pages/MapeamentoPage";
 import { UsuariosPage } from "./pages/UsuariosPage";
 import { ConfigOrgaoPage } from "./pages/ConfigOrgaoPage";
 import { BackupSyncPage } from "./pages/BackupSyncPage";
+import { DatabaseMonitoringPage } from "./pages/DatabaseMonitoringPage";
 import { ConsultaPublicaPage } from "./pages/ConsultaPublicaPage";
 import { AcessosCidadaoPage } from "./pages/AcessosCidadaoPage";
 import { RelatoriosPage } from "./pages/RelatoriosPage";
@@ -222,6 +223,7 @@ const MainLayout: React.FC = () => {
             {activeTab === "usuarios" && isTabAllowedForProfile("usuarios", user?.perfil, user?.permissoes) && <UsuariosPage />}
             {activeTab === "orgao" && isTabAllowedForProfile("orgao", user?.perfil, user?.permissoes) && <ConfigOrgaoPage />}
             {activeTab === "backup" && isTabAllowedForProfile("backup", user?.perfil, user?.permissoes) && <BackupSyncPage />}
+            {activeTab === "monitoramento" && isTabAllowedForProfile("monitoramento", user?.perfil, user?.permissoes) && <DatabaseMonitoringPage />}
           </div>
         </main>
 

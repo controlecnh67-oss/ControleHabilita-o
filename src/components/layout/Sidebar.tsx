@@ -15,7 +15,8 @@ import {
   ShieldCheck,
   Smartphone,
   QrCode,
-  BarChart3
+  BarChart3,
+  Activity
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { cn } from "../../lib/utils";
@@ -67,6 +68,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "usuarios" as NavTab, label: "Gerenciar Usuários", icon: UserCog },
     { id: "orgao" as NavTab, label: "Configuração do Órgão", icon: Building2 },
     { id: "backup" as NavTab, label: "Backup e Sincronização", icon: Database },
+    { id: "monitoramento" as NavTab, label: "Monitoramento Supabase", icon: Activity },
   ];
 
   const visibleNavItems = navItems.filter((item) =>

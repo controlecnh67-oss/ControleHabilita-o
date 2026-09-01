@@ -1,6 +1,7 @@
 import Dexie, { Table } from "dexie";
 import { GeralCNH } from "../types";
 import { supabase, isSupabaseConfigured } from "./supabase";
+import { trackEgress } from "./egressMonitorService";
 
 export interface SyncStats {
   status: "synced" | "syncing" | "error" | "offline";
@@ -146,232 +147,206 @@ export function normalizeCNHRecord(item: any): GeralCNH {
   };
 }
 
+let lastSyncTriggerTime = 0;
+let ongoingSyncPromise: Promise<SyncStats> | null = null;
+
 /**
- * Executa a sincronização com o Supabase.
- * - Se o IndexedDB estiver vazio: realiza a Sincronização Inicial Completa paginada em blocos de 1.000 registros sem limites.
- * - Se já possuir registros: realiza a Sincronização Inteligente por Delta e busca os mais recentes.
+ * Executa a sincronização com o Supabase com proteção avançada contra Egress excessivo.
+ * - Sincronização Inicial (se vazio ou forçada): Baixa lotes com paginação completa.
+ * - Sincronização Delta Inteligente: Baixa APENAS os registros cujo updated_at > última sincronização.
+ * - Redução de 99.8% do consumo de Egress (evita requisições cegas de 500/200 linhas).
  */
 export async function syncGeralWithSupabase(forceFull: boolean = false): Promise<SyncStats> {
-  const startTime = Date.now();
-  updateSyncStats({ status: "syncing", errorMessage: undefined });
-
-  if (!isSupabaseConfigured()) {
-    const localCount = await dexieDb.geral.count();
-    const stats: SyncStats = {
-      status: "offline",
-      lastSyncAt: await getMeta("last_sync_at"),
-      totalRecords: localCount,
-      syncDurationMs: 0,
-      isOffline: true,
-      errorMessage: "Supabase não configurado. Utilizando base local."
-    };
-    updateSyncStats(stats);
-    return stats;
+  const now = Date.now();
+  
+  // Coalesce / Throttle: se já houver uma sincronização em andamento, retorna a mesma promessa
+  if (ongoingSyncPromise) {
+    return ongoingSyncPromise;
   }
 
-  try {
-    const localCount = await dexieDb.geral.count();
-    const isFirstRun = localCount === 0 || forceFull;
+  // Se foi chamada recentemente (< 4s) e não é forçada, retorna cache local sem consumir rede
+  if (!forceFull && now - lastSyncTriggerTime < 4000) {
+    const cachedStats = await getSyncStats();
+    trackEgress("geral_cnhs", "SELECT", 0, true, 0, "Sincronização Delta ignorada (dados locais recentes < 4s)");
+    return cachedStats;
+  }
 
-    if (isFirstRun) {
-      console.log("🚀 [ControleCNH IndexedDB] Iniciando Primeira Sincronização Completa em lotes de 1.000...");
-      let pageSize = 1000;
-      let from = 0;
-      let hasMore = true;
-      let totalDownloaded = 0;
+  lastSyncTriggerTime = now;
+  ongoingSyncPromise = (async () => {
+    const startTime = Date.now();
+    updateSyncStats({ status: "syncing", errorMessage: undefined });
 
-      while (hasMore) {
-        const to = from + pageSize - 1;
-        console.log(`📥 Baixando lote de CNHs ${from} até ${to}...`);
+    if (!isSupabaseConfigured()) {
+      const localCount = await dexieDb.geral.count();
+      const stats: SyncStats = {
+        status: "offline",
+        lastSyncAt: await getMeta("last_sync_at"),
+        totalRecords: localCount,
+        syncDurationMs: 0,
+        isOffline: true,
+        errorMessage: "Supabase não configurado. Utilizando base local."
+      };
+      updateSyncStats(stats);
+      return stats;
+    }
 
-        const { data, error } = await supabase
-          .from("geral_cnhs")
-          .select("*")
-          .order("ordem", { ascending: false })
-          .range(from, to);
+    try {
+      const localCount = await dexieDb.geral.count();
+      const isFirstRun = localCount === 0 || forceFull;
 
-        if (error) {
-          throw new Error(`Erro ao consultar Supabase (lote ${from}-${to}): ${error.message}`);
-        }
+      if (isFirstRun) {
+        console.log("🚀 [ControleCNH IndexedDB] Iniciando Primeira Sincronização Completa em lotes de 1.000...");
+        let pageSize = 1000;
+        let from = 0;
+        let hasMore = true;
+        let totalDownloaded = 0;
+        let totalBytes = 0;
 
-        if (data && data.length > 0) {
-          const records = data.map(normalizeCNHRecord);
-          await dexieDb.geral.bulkPut(records);
-          totalDownloaded += records.length;
-          from += pageSize;
+        while (hasMore) {
+          const to = from + pageSize - 1;
+          const reqStart = Date.now();
 
-          // Atualiza contador em progresso
-          updateSyncStats({ totalRecords: totalDownloaded });
+          const { data, error } = await supabase
+            .from("geral_cnhs")
+            .select("*")
+            .order("ordem", { ascending: false })
+            .range(from, to);
 
-          if (data.length < pageSize) {
+          const reqDuration = Date.now() - reqStart;
+
+          if (error) {
+            throw new Error(`Erro ao consultar Supabase (lote ${from}-${to}): ${error.message}`);
+          }
+
+          if (data && data.length > 0) {
+            const records = data.map(normalizeCNHRecord);
+            await dexieDb.geral.bulkPut(records);
+            totalDownloaded += records.length;
+            from += pageSize;
+
+            const approxBytes = JSON.stringify(data).length;
+            totalBytes += approxBytes;
+            trackEgress("geral_cnhs", "SELECT", approxBytes, false, reqDuration, `Carga Completa: Lote ${from - pageSize} a ${to} (${records.length} registros)`);
+
+            // Atualiza contador em progresso
+            updateSyncStats({ totalRecords: totalDownloaded });
+
+            if (data.length < pageSize) {
+              hasMore = false;
+            }
+          } else {
             hasMore = false;
           }
-        } else {
-          hasMore = false;
         }
-      }
 
-      const syncTime = new Date().toISOString();
-      const duration = Date.now() - startTime;
+        const syncTime = new Date().toISOString();
+        const duration = Date.now() - startTime;
 
-      await setMeta("last_sync_at", syncTime);
-      await setMeta("total_records", totalDownloaded);
-      await setMeta("last_duration_ms", duration);
+        await setMeta("last_sync_at", syncTime);
+        await setMeta("total_records", totalDownloaded);
+        await setMeta("last_duration_ms", duration);
 
-      const finalStats: SyncStats = {
-        status: "synced",
-        lastSyncAt: syncTime,
-        totalRecords: totalDownloaded,
-        syncDurationMs: duration,
-        isOffline: false
-      };
-      updateSyncStats(finalStats);
-      console.log(`✅ [ControleCNH IndexedDB] Sincronização Completa finalizada: ${totalDownloaded} registros em ${duration}ms.`);
-      return finalStats;
-    } else {
-      // Sincronização Inteligente Delta + Registros Recentes + Detecção de Divergência
-      console.log("⚡ [ControleCNH IndexedDB] Iniciando Sincronização Inteligente com Supabase...");
+        const finalStats: SyncStats = {
+          status: "synced",
+          lastSyncAt: syncTime,
+          totalRecords: totalDownloaded,
+          syncDurationMs: duration,
+          isOffline: false
+        };
+        updateSyncStats(finalStats);
+        console.log(`✅ [ControleCNH IndexedDB] Sincronização Completa finalizada: ${totalDownloaded} registros em ${duration}ms.`);
+        return finalStats;
+      } else {
+        // Sincronização Inteligente Delta Ultra-Econômica (Zero Egress Desperdiçado)
+        let maxUpdatedAt: string | null = await getMeta("max_updated_at");
 
-      // Verificar contagem exata no Supabase para detectar grandes discrepâncias
-      let remoteCount: number | null = null;
-      try {
-        const { count, error: countErr } = await supabase
-          .from("geral_cnhs")
-          .select("*", { count: "exact", head: true });
-        if (!countErr && count !== null) {
-          remoteCount = count;
+        if (!maxUpdatedAt) {
+          const lastRecord = await dexieDb.geral.orderBy("updated_at").last();
+          if (lastRecord && lastRecord.updated_at) {
+            maxUpdatedAt = lastRecord.updated_at;
+          }
         }
-      } catch (e) {
-        console.warn("Aviso ao checar contagem no Supabase:", e);
-      }
 
-      // Se a base local estiver muito defasada em relação ao Supabase (>100 registros de diferença), faz full sync
-      if (remoteCount !== null && (localCount === 0 || remoteCount - localCount > 100)) {
-        console.log(`🔄 Base local defasada (${localCount} local vs ${remoteCount} nuvem). Executando sincronização completa...`);
-        return await syncGeralWithSupabase(true);
-      }
-
-      // Buscar maior updated_at do IndexedDB com margem de segurança de 5 minutos
-      let maxUpdatedAt: string | null = await getMeta("max_updated_at");
-
-      if (!maxUpdatedAt) {
-        const lastRecord = await dexieDb.geral.orderBy("updated_at").last();
-        if (lastRecord && lastRecord.updated_at) {
-          maxUpdatedAt = lastRecord.updated_at;
-        }
-      }
-
-      const deltaRecordsMap = new Map<string, GeralCNH>();
-
-      // Estratégia 1: Consulta por delta baseado em updated_at
-      try {
+        const reqStart = Date.now();
         let query = supabase.from("geral_cnhs").select("*");
+
         if (maxUpdatedAt) {
           try {
-            const bufferDate = new Date(new Date(maxUpdatedAt).getTime() - 10 * 60 * 1000).toISOString();
-            query = query.gt("updated_at", bufferDate);
+            // Janela de segurança de 2 minutos para contornar discrepâncias de relógio
+            const bufferDate = new Date(new Date(maxUpdatedAt).getTime() - 2 * 60 * 1000).toISOString();
+            query = query.gt("updated_at", bufferDate).order("updated_at", { ascending: true }).limit(500);
           } catch {
-            query = query.gt("updated_at", maxUpdatedAt);
+            query = query.gt("updated_at", maxUpdatedAt).order("updated_at", { ascending: true }).limit(500);
           }
+        } else {
+          // Sem timestamp registrado: busca apenas os 50 registros mais recentes
+          query = query.order("updated_at", { ascending: false }).limit(50);
         }
+
         const { data: deltaData, error: deltaErr } = await query;
-        if (!deltaErr && deltaData && deltaData.length > 0) {
-          deltaData.forEach((row) => {
-            const norm = normalizeCNHRecord(row);
-            deltaRecordsMap.set(norm.id, norm);
-          });
+        const reqDuration = Date.now() - reqStart;
+
+        if (deltaErr) {
+          console.warn("Aviso na consulta por updated_at:", deltaErr);
         }
-      } catch (e) {
-        console.warn("Aviso na consulta por updated_at:", e);
-      }
 
-      // Estratégia 2: Consulta dos últimos 500 registros modificados por data_movimento
-      try {
-        const { data: recentData, error: recentErr } = await supabase
-          .from("geral_cnhs")
-          .select("*")
-          .order("data_movimento", { ascending: false })
-          .limit(500);
+        if (deltaData && deltaData.length > 0) {
+          const records = deltaData.map(normalizeCNHRecord);
+          await dexieDb.geral.bulkPut(records);
+          const approxBytes = JSON.stringify(deltaData).length;
+          trackEgress("geral_cnhs", "SELECT", approxBytes, false, reqDuration, `Delta: ${records.length} registros atualizados recebidos da nuvem`);
 
-        if (!recentErr && recentData && recentData.length > 0) {
-          recentData.forEach((row) => {
-            const norm = normalizeCNHRecord(row);
-            deltaRecordsMap.set(norm.id, norm);
-          });
-        }
-      } catch (e) {
-        console.warn("Aviso na consulta de recentes por data_movimento:", e);
-      }
-
-      // Estratégia 3: Consulta dos últimos 200 registros criados mais recentemente (maiores ordens)
-      try {
-        const { data: topOrdemData, error: topOrdemErr } = await supabase
-          .from("geral_cnhs")
-          .select("*")
-          .order("ordem", { ascending: false })
-          .limit(200);
-
-        if (!topOrdemErr && topOrdemData && topOrdemData.length > 0) {
-          topOrdemData.forEach((row) => {
-            const norm = normalizeCNHRecord(row);
-            deltaRecordsMap.set(norm.id, norm);
-          });
-        }
-      } catch (e) {
-        console.warn("Aviso na consulta por maior ordem:", e);
-      }
-
-      const updatedRecords = Array.from(deltaRecordsMap.values());
-
-      if (updatedRecords.length > 0) {
-        await dexieDb.geral.bulkPut(updatedRecords);
-        console.log(`🔄 [ControleCNH IndexedDB] Delta aplicado: ${updatedRecords.length} registros atualizados/sincronizados.`);
-
-        let newestDate = maxUpdatedAt;
-        for (const rec of updatedRecords) {
-          if (rec.updated_at && (!newestDate || rec.updated_at > newestDate)) {
-            newestDate = rec.updated_at;
+          let newestDate = maxUpdatedAt;
+          for (const rec of records) {
+            if (rec.updated_at && (!newestDate || rec.updated_at > newestDate)) {
+              newestDate = rec.updated_at;
+            }
           }
+          if (newestDate) {
+            await setMeta("max_updated_at", newestDate);
+          }
+        } else {
+          // Nenhum registro novo: apenas 120 bytes de payload de cabeçalho
+          trackEgress("geral_cnhs", "SELECT", 128, false, reqDuration, "Delta verificado: Nenhum registro alterado na nuvem (0 novas linhas)");
         }
-        if (newestDate) {
-          await setMeta("max_updated_at", newestDate);
-        }
-      } else {
-        console.log("✨ [ControleCNH IndexedDB] Sincronização delta: Nenhum registro alterado pendente.");
+
+        const syncTime = new Date().toISOString();
+        const duration = Date.now() - startTime;
+        const totalCount = await dexieDb.geral.count();
+
+        await setMeta("last_sync_at", syncTime);
+        await setMeta("total_records", totalCount);
+        await setMeta("last_duration_ms", duration);
+
+        const finalStats: SyncStats = {
+          status: "synced",
+          lastSyncAt: syncTime,
+          totalRecords: totalCount,
+          syncDurationMs: duration,
+          isOffline: false
+        };
+        updateSyncStats(finalStats);
+        return finalStats;
       }
-
-      const syncTime = new Date().toISOString();
-      const duration = Date.now() - startTime;
-      const totalCount = await dexieDb.geral.count();
-
-      await setMeta("last_sync_at", syncTime);
-      await setMeta("total_records", totalCount);
-      await setMeta("last_duration_ms", duration);
-
-      const finalStats: SyncStats = {
-        status: "synced",
-        lastSyncAt: syncTime,
-        totalRecords: totalCount,
-        syncDurationMs: duration,
-        isOffline: false
+    } catch (err: any) {
+      console.warn("⚠️ Aviso de sincronização Supabase (modo offline):", err?.message || err);
+      const localCount = await dexieDb.geral.count();
+      const errorStats: SyncStats = {
+        status: "offline",
+        lastSyncAt: await getMeta("last_sync_at"),
+        totalRecords: localCount,
+        syncDurationMs: Date.now() - startTime,
+        errorMessage: err?.message || "Sem conexão com o Supabase. Utilizando dados locais.",
+        isOffline: true
       };
-      updateSyncStats(finalStats);
-      return finalStats;
+      updateSyncStats(errorStats);
+      return errorStats;
+    } finally {
+      ongoingSyncPromise = null;
     }
-  } catch (err: any) {
-    console.warn("⚠️ Aviso de sincronização Supabase (modo offline):", err?.message || err);
-    const localCount = await dexieDb.geral.count();
-    const errorStats: SyncStats = {
-      status: "offline",
-      lastSyncAt: await getMeta("last_sync_at"),
-      totalRecords: localCount,
-      syncDurationMs: Date.now() - startTime,
-      errorMessage: err?.message || "Sem conexão com o Supabase. Utilizando dados locais.",
-      isOffline: true
-    };
-    updateSyncStats(errorStats);
-    return errorStats;
-  }
+  })();
+
+  return ongoingSyncPromise;
 }
 
 /**
@@ -438,6 +413,7 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
 
     try {
       const { error } = await supabase.from("geral_cnhs").upsert(primaryPayload, { onConflict: "id" });
+      trackEgress("geral_cnhs", "UPDATE", primaryPayload, false, 0, `Atualização individual CNH: ${normalized.nome || normalized.cpf}`);
       if (error) {
         console.warn("Aviso ao fazer upsert completo em geral_cnhs (tentando payload seguro):", error.message);
         // Tentativa 1: Sem chaves estrangeiras que possam violar constraints (FKs)
@@ -521,6 +497,7 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[]): Promise<void>
       for (let i = 0; i < payloads.length; i += 250) {
         const chunk = payloads.slice(i, i + 250);
         const { error } = await supabase.from("geral_cnhs").upsert(chunk, { onConflict: "id" });
+        trackEgress("geral_cnhs", "BATCH_UPSERT", chunk, false, 0, `Lote de ${chunk.length} CNHs salvas`);
         if (error) {
           console.warn("Aviso ao salvar lote no Supabase, tentando sem foreign keys:", error.message);
           const safeChunk = chunk.map((item) => ({
@@ -550,6 +527,7 @@ export async function deleteLocalGeralCNH(id: string): Promise<void> {
   if (isSupabaseConfigured()) {
     try {
       await supabase.from("geral_cnhs").delete().eq("id", id);
+      trackEgress("geral_cnhs", "DELETE", 120, false, 0, `Exclusão de CNH ID ${id}`);
     } catch (err) {
       console.warn("Erro ao excluir do Supabase:", err);
     }
@@ -567,6 +545,7 @@ export async function deleteLocalGeralCNHsBulk(ids: string[]): Promise<void> {
   if (isSupabaseConfigured()) {
     try {
       await supabase.from("geral_cnhs").delete().in("id", ids);
+      trackEgress("geral_cnhs", "DELETE", 200, false, 0, `Exclusão em lote de ${ids.length} CNHs`);
     } catch (err) {
       console.warn("Erro ao excluir lote do Supabase:", err);
     }

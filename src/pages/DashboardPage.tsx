@@ -98,12 +98,12 @@ export const DashboardPage: React.FC = () => {
       }
     };
 
-    // Polling suave a cada 25 segundos
+    // Heartbeat suave a cada 60 segundos (Realtime cuida das atualizações instantâneas)
     const intervalId = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
         scheduleFetch(0);
       }
-    }, 25000);
+    }, 60000);
 
     window.addEventListener("detran_sync_updated", handleSync);
     window.addEventListener("storage", handleSync);
