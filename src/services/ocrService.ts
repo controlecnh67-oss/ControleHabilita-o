@@ -4,11 +4,12 @@ import { findLocalizacaoPorNome } from "./db";
 export interface ExtractedCnhItem {
   nome: string;
   cpf?: string;
+  pa?: string; // Número identificador único de CNH (9 dígitos)
   remessa?: string;
   observacao?: string;
 }
 
-export type OcrMatchType = "exact_cpf" | "exact_name" | "similar_name" | "none";
+export type OcrMatchType = "exact_pa" | "exact_cpf" | "exact_name" | "similar_name" | "none";
 export type OcrCategory = "ready_to_receive" | "pending" | "already_received" | "already_delivered" | "not_found";
 
 export interface OcrMatchResult {
@@ -50,6 +51,14 @@ export function normalizeString(str: string): string {
 export function cleanCpfDigits(cpf?: string): string {
   if (!cpf) return "";
   return cpf.replace(/\D/g, "");
+}
+
+/**
+ * Extrai apenas dígitos do PA (até 9 dígitos)
+ */
+export function cleanPaDigits(pa?: string): string {
+  if (!pa) return "";
+  return String(pa).replace(/\D/g, "").slice(0, 9);
 }
 
 /**
@@ -129,7 +138,8 @@ export async function scanCnhDocumentOcr(
 }
 
 /**
- * Cruza itens extraídos do OCR com a base geral de CNHs
+ * Cruza itens extraídos da planilha Excel ou OCR com a base geral de CNHs
+ * A correspondência se dá pelo PA (Identificador Único CNH), Nome e CPF.
  */
 export async function matchExtractedWithGeralCNHs(
   extractedList: ExtractedCnhItem[],
@@ -138,11 +148,19 @@ export async function matchExtractedWithGeralCNHs(
   const results: OcrMatchResult[] = [];
   const usedCnhIds = new Set<string>();
 
-  // Pré-indexar geral por CPF limpo e Nome normalizado
+  // Pré-indexar geral por PA, CPF limpo e Nome normalizado
+  const paMap = new Map<string, GeralCNH[]>();
   const cpfMap = new Map<string, GeralCNH[]>();
   const nameMap = new Map<string, GeralCNH[]>();
 
   for (const cnh of geralList) {
+    const paClean = cleanPaDigits(cnh.pa);
+    if (paClean.length >= 6) {
+      const arr = paMap.get(paClean) || [];
+      arr.push(cnh);
+      paMap.set(paClean, arr);
+    }
+
     const cpfClean = cleanCpfDigits(cnh.cpf);
     if (cpfClean.length >= 11) {
       const arr = cpfMap.get(cpfClean) || [];
@@ -160,6 +178,7 @@ export async function matchExtractedWithGeralCNHs(
 
   for (let idx = 0; idx < extractedList.length; idx++) {
     const item = extractedList[idx];
+    const itemPaClean = cleanPaDigits(item.pa);
     const itemCpfClean = cleanCpfDigits(item.cpf);
     const itemNormName = normalizeString(item.nome);
 
@@ -167,8 +186,29 @@ export async function matchExtractedWithGeralCNHs(
     let matchType: OcrMatchType = "none";
     let matchScore = 0;
 
-    // 1. TENTATIVA 1: Correspondência Exata por CPF (11 dígitos)
-    if (itemCpfClean.length >= 11 && cpfMap.has(itemCpfClean)) {
+    // 1. TENTATIVA 1: Correspondência Exata por PA (Processo/Identificador Único CNH de 9 dígitos)
+    if (itemPaClean.length >= 6 && paMap.has(itemPaClean)) {
+      const matches = paMap.get(itemPaClean)!;
+      // Se tiver nome também, tentar priorizar quem bate PA e Nome
+      if (itemNormName) {
+        const exactNameAndPa = matches.find(m => normalizeString(m.nome) === itemNormName);
+        if (exactNameAndPa) {
+          matchedCnh = exactNameAndPa;
+          matchType = "exact_pa";
+          matchScore = 100;
+        }
+      }
+      if (!matchedCnh) {
+        const remetidaMatch = matches.find(m => !usedCnhIds.has(m.id) && m.situacao === "Remetida");
+        const unusedMatch = matches.find(m => !usedCnhIds.has(m.id));
+        matchedCnh = remetidaMatch || unusedMatch || matches[0];
+        matchType = "exact_pa";
+        matchScore = 100;
+      }
+    }
+
+    // 2. TENTATIVA 2: Correspondência Exata por CPF (11 dígitos)
+    if (!matchedCnh && itemCpfClean.length >= 11 && cpfMap.has(itemCpfClean)) {
       const matches = cpfMap.get(itemCpfClean)!;
       // Preferir um que ainda não foi associado e que esteja 'Remetida'
       const remetidaMatch = matches.find(m => !usedCnhIds.has(m.id) && m.situacao === "Remetida");
@@ -178,7 +218,7 @@ export async function matchExtractedWithGeralCNHs(
       matchScore = 100;
     }
 
-    // 2. TENTATIVA 2: Correspondência Exata por Nome Completo
+    // 3. TENTATIVA 3: Correspondência Exata por Nome Completo
     if (!matchedCnh && itemNormName && nameMap.has(itemNormName)) {
       const matches = nameMap.get(itemNormName)!;
       const remetidaMatch = matches.find(m => !usedCnhIds.has(m.id) && m.situacao === "Remetida");
@@ -188,7 +228,7 @@ export async function matchExtractedWithGeralCNHs(
       matchScore = 98;
     }
 
-    // 3. TENTATIVA 3: Similaridade de Nome (>80%)
+    // 4. TENTATIVA 4: Similaridade de Nome (>80%)
     if (!matchedCnh && itemNormName.length > 5) {
       let bestCandidate: GeralCNH | null = null;
       let highestScore = 0;

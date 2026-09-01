@@ -175,6 +175,7 @@ CREATE TABLE IF NOT EXISTS public.candidatos (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     memorando_id UUID REFERENCES public.memorandos(id) ON DELETE CASCADE,
     numero VARCHAR(50),
+    pa VARCHAR(20),
     nome VARCHAR(255) NOT NULL,
     cpf VARCHAR(14) NOT NULL,
     telefone VARCHAR(50),
@@ -185,6 +186,7 @@ CREATE TABLE IF NOT EXISTS public.candidatos (
 ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
 ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS remessa VARCHAR(100);
 ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS telefone VARCHAR(50);
+ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS pa VARCHAR(20);
 
 -- 6. TABELA OFICIAL DE CNHS (GERAL_CNHS)
 CREATE SEQUENCE IF NOT EXISTS public.geral_cnhs_ordem_seq START 1;
@@ -194,6 +196,7 @@ CREATE TABLE IF NOT EXISTS public.geral_cnhs (
     ordem INTEGER NOT NULL DEFAULT nextval('public.geral_cnhs_ordem_seq'),
     memorando_id UUID REFERENCES public.memorandos(id) ON DELETE SET NULL,
     candidato_id UUID REFERENCES public.candidatos(id) ON DELETE SET NULL,
+    pa VARCHAR(20),
     nome VARCHAR(255) NOT NULL,
     cpf VARCHAR(14) NOT NULL,
     telefone VARCHAR(50),
@@ -216,6 +219,7 @@ CREATE TABLE IF NOT EXISTS public.geral_cnhs (
 
 ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
 ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS pa VARCHAR(20);
 ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS notificado_whatsapp BOOLEAN DEFAULT FALSE;
 ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS notificado_at TIMESTAMPTZ;
 ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS remessa VARCHAR(100);
@@ -302,6 +306,8 @@ CREATE TABLE IF NOT EXISTS public.imagens_sync (
 
 -- 12. ÍNDICES DE PERFORMANCE
 CREATE INDEX IF NOT EXISTS idx_geral_cnhs_cpf ON public.geral_cnhs(cpf);
+CREATE INDEX IF NOT EXISTS idx_geral_cnhs_pa ON public.geral_cnhs(pa);
+CREATE INDEX IF NOT EXISTS idx_candidatos_pa ON public.candidatos(pa);
 CREATE INDEX IF NOT EXISTS idx_geral_cnhs_nome ON public.geral_cnhs(nome);
 CREATE INDEX IF NOT EXISTS idx_geral_cnhs_situacao ON public.geral_cnhs(situacao);
 CREATE INDEX IF NOT EXISTS idx_geral_cnhs_ordem ON public.geral_cnhs(ordem DESC);

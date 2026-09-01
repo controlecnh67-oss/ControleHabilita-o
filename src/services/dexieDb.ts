@@ -25,7 +25,7 @@ export class ControleCNHDatabase extends Dexie {
   constructor() {
     super("ControleCNH");
     this.version(1).stores({
-      geral: "id, ordem, nome, cpf, gaveta, reparticao, situacao, responsavel_nome, data_movimento, usuario_nome, updated_at, created_at",
+      geral: "id, ordem, pa, nome, cpf, gaveta, reparticao, situacao, responsavel_nome, data_movimento, usuario_nome, updated_at, created_at",
       syncMeta: "key"
     });
   }
@@ -126,6 +126,7 @@ export function normalizeCNHRecord(item: any): GeralCNH {
     ordem: Number(item.ordem) || 0,
     memorando_id: item.memorando_id || undefined,
     candidato_id: item.candidato_id || undefined,
+    pa: item.pa !== undefined && item.pa !== null ? String(item.pa).trim() : undefined,
     nome: item.nome || "",
     cpf: item.cpf || "",
     telefone: item.telefone !== undefined && item.telefone !== null ? String(item.telefone) : "",

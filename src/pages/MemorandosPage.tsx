@@ -103,6 +103,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
 
   // Form State Candidato
   const [candNumero, setCandNumero] = useState("");
+  const [candPa, setCandPa] = useState("");
   const [candNome, setCandNome] = useState("");
   const [candCpf, setCandCpf] = useState("");
   const [candTelefone, setCandTelefone] = useState("");
@@ -330,6 +331,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
     setCandSuccess(null);
     setEditingCand(null);
     setCandNumero(getNextCandNumero(candidatos));
+    setCandPa("");
     setCandNome("");
     setCandCpf("");
     setCandTelefone("");
@@ -345,6 +347,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
     setCandSuccess(null);
     setEditingCand(cand);
     setCandNumero(cand.numero || "");
+    setCandPa(cand.pa || "");
     setCandNome(cand.nome || "");
     setCandCpf(cand.cpf || "");
     setCandTelefone(cand.telefone || "");
@@ -360,11 +363,17 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
     }
     setCandErrors({});
 
+    const cleanPa = candPa.replace(/\D/g, "").slice(0, 9);
+    const formattedCpf = formatCPF(candCpf);
+    const cleanCpf = formattedCpf.replace(/\D/g, "");
+    const cleanNome = candNome.trim().toLowerCase();
+
     const validation = CandidatoSchema.safeParse({
       numero: candNumero,
+      pa: cleanPa,
       nome: candNome,
-      cpf: formatCPF(candCpf),
-      telefone: formatPhone(candTelefone),
+      cpf: formattedCpf,
+      telefone: candTelefone ? formatPhone(candTelefone) : undefined,
     });
 
     if (!validation.success) {
@@ -377,13 +386,19 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
     }
 
     // Checar duplicidade de candidato na lista deste memorando
-    const formattedCpf = formatCPF(candCpf);
-    const cleanCpf = formattedCpf.replace(/\D/g, "");
-    const cleanNome = candNome.trim().toLowerCase();
-
     const otherCands = editingCand
       ? candidatos.filter((c) => c.id !== editingCand.id)
       : candidatos;
+
+    if (cleanPa && cleanPa.length === 9) {
+      const dupPa = otherCands.find((c) => (c.pa || "").replace(/\D/g, "") === cleanPa);
+      if (dupPa) {
+        setCandErrors({
+          pa: `O candidato com PA ${dupPa.pa} ("${dupPa.nome}") já consta na lista deste memorando.`,
+        });
+        return;
+      }
+    }
 
     if (cleanCpf.length >= 11) {
       const dupCpf = otherCands.find((c) => (c.cpf || "").replace(/\D/g, "") === cleanCpf);
@@ -412,9 +427,10 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
           editingCand.id,
           {
             numero: candNumero,
+            pa: cleanPa,
             nome: candNome,
-            cpf: formatCPF(candCpf),
-            telefone: formatPhone(candTelefone),
+            cpf: formattedCpf,
+            telefone: candTelefone ? formatPhone(candTelefone) : undefined,
           },
           user.id,
           user.nome_curto
@@ -430,9 +446,10 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
           selectedMemo.id,
           {
             numero: candNumero,
+            pa: cleanPa,
             nome: candNome,
-            cpf: formatCPF(candCpf),
-            telefone: formatPhone(candTelefone),
+            cpf: formattedCpf,
+            telefone: candTelefone ? formatPhone(candTelefone) : undefined,
             remessa: selectedMemo.remessa,
           },
           user.id,
@@ -447,6 +464,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
         setCandSuccess(`✅ Candidato "${candNome}" cadastrado com sucesso! Pode adicionar o próximo.`);
         setTimeout(() => setCandSuccess(null), 4000);
         setCandNumero(getNextCandNumero(updatedCands));
+        setCandPa("");
         setCandNome("");
         setCandCpf("");
         setCandTelefone("");
@@ -692,6 +710,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
       const tableData = candidatos.map((c, idx) => [
         c.numero || String(idx + 1),
         c.nome.toUpperCase(),
+        c.pa || "-",
         formatCPF(c.cpf)
       ]);
 
@@ -699,7 +718,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
 
       autoTable(doc, {
         startY: startYTable,
-        head: [["Nº", "Nome do Titular", "CPF"]],
+        head: [["Nº", "Nome do Titular", "PA", "CPF"]],
         body: tableData,
         theme: "grid",
         styles: {
@@ -718,9 +737,10 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
           halign: "center",
         },
         columnStyles: {
-          0: { halign: "center", cellWidth: 16, fontStyle: "bold" },
+          0: { halign: "center", cellWidth: 14, fontStyle: "bold" },
           1: { cellWidth: "auto" },
-          2: { halign: "center", cellWidth: 46, font: "courier" },
+          2: { halign: "center", cellWidth: 28, font: "courier", fontStyle: "bold" },
+          3: { halign: "center", cellWidth: 40, font: "courier" },
         },
         didDrawPage: () => {
           const pageStr = `Página ${(doc.internal as any).getNumberOfPages()}`;
@@ -1102,7 +1122,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-800 text-[10px] uppercase font-bold text-slate-500 tracking-wider">
-                          <th className="py-2.5 px-4 w-16 text-center">Nº</th>
+                          <th className="py-2.5 px-4 w-14 text-center">Nº</th>
                           <th className="py-2.5 px-4">
                             <div className="flex items-center gap-2">
                               <span>Nome do Candidato</span>
@@ -1119,8 +1139,8 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
                               )}
                             </div>
                           </th>
-                          <th className="py-2.5 px-4">CPF</th>
-                          <th className="py-2.5 px-4">Telefone</th>
+                          <th className="py-2.5 px-4 w-28 text-center font-mono">PA</th>
+                          <th className="py-2.5 px-4 w-36 text-center">CPF</th>
                           {canEdit && (
                             <th className="py-2.5 px-4 w-20 text-right">Ações</th>
                           )}
@@ -1135,11 +1155,17 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
                             <td className="py-2.5 px-4 font-semibold text-slate-900 dark:text-white">
                               {cand.nome}
                             </td>
-                            <td className="py-2.5 px-4 font-mono text-slate-600 dark:text-slate-300">
-                              {cand.cpf}
+                            <td className="py-2.5 px-4 text-center">
+                              {cand.pa ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 font-mono font-bold text-xs border border-emerald-200 dark:border-emerald-800">
+                                  {cand.pa}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 italic text-[11px]">-</span>
+                              )}
                             </td>
-                            <td className="py-2.5 px-4 text-slate-600 dark:text-slate-300">
-                              {cand.telefone || "-"}
+                            <td className="py-2.5 px-4 font-mono text-center text-slate-600 dark:text-slate-300">
+                              {cand.cpf}
                             </td>
                             {canEdit && (
                               <td className="py-2.5 px-4 text-right">
@@ -1307,18 +1333,37 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
             </div>
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                CPF do Candidato <span className="text-rose-500">*</span>
+                PA (9 dígitos CNH) <span className="text-rose-500">*</span>
               </label>
               <input
                 type="text"
-                value={candCpf}
-                onChange={(e) => setCandCpf(formatCPF(e.target.value))}
-                placeholder="000.000.000-00"
-                maxLength={14}
-                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+                value={candPa}
+                onChange={(e) => setCandPa(e.target.value.replace(/\D/g, "").slice(0, 9))}
+                placeholder="ex: 123456789"
+                maxLength={9}
+                className="w-full px-3.5 py-2 bg-emerald-50/40 dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 rounded-xl text-xs font-mono font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-hidden"
               />
-              {candErrors.cpf && <p className="text-[11px] text-rose-500 mt-1">{candErrors.cpf}</p>}
+              {candErrors.pa ? (
+                <p className="text-[11px] text-rose-500 mt-1">{candErrors.pa}</p>
+              ) : (
+                <p className="text-[10px] text-slate-400 mt-0.5">Identificador único (exatamente 9 dígitos numéricos)</p>
+              )}
             </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              CPF do Candidato <span className="text-rose-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={candCpf}
+              onChange={(e) => setCandCpf(formatCPF(e.target.value))}
+              placeholder="000.000.000-00"
+              maxLength={14}
+              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+            />
+            {candErrors.cpf && <p className="text-[11px] text-rose-500 mt-1">{candErrors.cpf}</p>}
           </div>
 
           <div>
@@ -1333,21 +1378,6 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
               className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
             />
             {candErrors.nome && <p className="text-[11px] text-rose-500 mt-1">{candErrors.nome}</p>}
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Telefone Celular / Contato <span className="text-rose-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={candTelefone}
-              onChange={(e) => setCandTelefone(formatPhone(e.target.value))}
-              placeholder="(67) 99999-9999"
-              maxLength={15}
-              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
-            />
-            {candErrors.telefone && <p className="text-[11px] text-rose-500 mt-1">{candErrors.telefone}</p>}
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
@@ -1444,6 +1474,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
                   <tr className="bg-slate-100 border-b border-slate-400 font-bold">
                     <th className="px-2 py-1 border-r border-slate-400 w-12 text-center">Nº</th>
                     <th className="px-2 py-1 border-r border-slate-400">Nome do Titular</th>
+                    <th className="px-2 py-1 border-r border-slate-400 w-28 text-center font-mono">PA</th>
                     <th className="px-2 py-1 w-36 text-center">CPF</th>
                   </tr>
                 </thead>
@@ -1452,6 +1483,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
                     <tr key={c.id} className="border-b border-slate-300">
                       <td className="px-2 py-1 border-r border-slate-300 text-center font-bold">{c.numero || idx + 1}</td>
                       <td className="px-2 py-1 border-r border-slate-300 uppercase">{c.nome}</td>
+                      <td className="px-2 py-1 border-r border-slate-300 text-center font-mono font-bold">{c.pa || "-"}</td>
                       <td className="px-2 py-1 font-mono text-center">{c.cpf}</td>
                     </tr>
                   ))}

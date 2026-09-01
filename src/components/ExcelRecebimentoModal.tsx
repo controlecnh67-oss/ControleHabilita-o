@@ -51,6 +51,7 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
 
   // Mapeamento de colunas
   const [colNome, setColNome] = useState<string>("");
+  const [colPa, setColPa] = useState<string>("");
   const [colCpf, setColCpf] = useState<string>("");
   const [colRemessa, setColRemessa] = useState<string>("");
   const [colObs, setColObs] = useState<string>("");
@@ -105,16 +106,20 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
       if (searchTerm.trim() !== "") {
         const query = searchTerm.toLowerCase();
         const nomeOcr = (item.extracted.nome || "").toLowerCase();
+        const paOcr = (item.extracted.pa || "").toLowerCase();
         const cpfOcr = (item.extracted.cpf || "").toLowerCase();
         const nomeGeral = (item.cnhMatched?.nome || "").toLowerCase();
+        const paGeral = (item.cnhMatched?.pa || "").toLowerCase();
         const cpfGeral = (item.cnhMatched?.cpf || "").toLowerCase();
         const remessa = (item.extracted.remessa || "").toLowerCase();
         const ordem = item.cnhMatched?.ordem ? `#${item.cnhMatched.ordem}` : "";
 
         return (
           nomeOcr.includes(query) ||
+          paOcr.includes(query) ||
           cpfOcr.includes(query) ||
           nomeGeral.includes(query) ||
+          paGeral.includes(query) ||
           cpfGeral.includes(query) ||
           remessa.includes(query) ||
           ordem.includes(query)
@@ -130,6 +135,7 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
   // Detecção automática de cabeçalhos
   const autoDetectColumns = (headers: string[]) => {
     let detectedNome = "";
+    let detectedPa = "";
     let detectedCpf = "";
     let detectedRemessa = "";
     let detectedObs = "";
@@ -138,6 +144,9 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
       const clean = h.trim().toUpperCase();
       if (!detectedNome && (clean.includes("NOME") || clean.includes("CONDUTOR") || clean.includes("TITULAR") || clean.includes("CLIENTE") || clean.includes("NOME DO CONDUTOR"))) {
         detectedNome = h;
+      }
+      if (!detectedPa && (clean === "PA" || clean === "Nº PA" || clean === "NUM PA" || clean === "NUM_PA" || clean === "N_PA" || clean.includes("IDENTIFICADOR") || clean.includes("PROCESSO") || clean.startsWith("PA ") || clean.endsWith(" PA") || clean === "CNH" || clean.includes("PA"))) {
+        detectedPa = h;
       }
       if (!detectedCpf && (clean.includes("CPF") || clean.includes("DOCUMENTO") || clean.includes("DOC") || clean.includes("CIC"))) {
         detectedCpf = h;
@@ -153,11 +162,12 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
     if (!detectedNome && headers.length > 0) {
       detectedNome = headers[0];
     }
-    if (!detectedCpf && headers.length > 1 && headers[1] !== detectedNome) {
+    if (!detectedCpf && headers.length > 1 && headers[1] !== detectedNome && headers[1] !== detectedPa) {
       detectedCpf = headers[1];
     }
 
     setColNome(detectedNome);
+    setColPa(detectedPa);
     setColCpf(detectedCpf);
     setColRemessa(detectedRemessa);
     setColObs(detectedObs);
@@ -246,8 +256,8 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
   };
 
   const handleExecuteMatching = async () => {
-    if (!workbookData || !selectedSheet || !colNome) {
-      setErrorMessage("Por favor, selecione ao menos a coluna com os Nomes dos condutores.");
+    if (!workbookData || !selectedSheet || (!colNome && !colPa)) {
+      setErrorMessage("Por favor, selecione a coluna do NOME ou do PA dos condutores.");
       return;
     }
 
@@ -261,14 +271,16 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
       const extractedItems: ExtractedCnhItem[] = [];
 
       json.forEach((row) => {
-        const rawNome = String(row[colNome] || "").trim();
+        const rawNome = colNome ? String(row[colNome] || "").trim() : "";
+        const rawPa = colPa ? String(row[colPa] || "").trim() : "";
         const rawCpf = colCpf ? String(row[colCpf] || "").trim() : "";
         const rawRemessa = colRemessa ? String(row[colRemessa] || "").trim() : "";
         const rawObs = colObs ? String(row[colObs] || "").trim() : "";
 
-        if (rawNome && rawNome.length > 1) {
+        if ((rawNome && rawNome.length > 1) || (rawPa && rawPa.length >= 6)) {
           extractedItems.push({
-            nome: rawNome.toUpperCase(),
+            nome: rawNome ? rawNome.toUpperCase() : "CONDUTOR",
+            pa: rawPa,
             cpf: rawCpf,
             remessa: rawRemessa,
             observacao: rawObs,
@@ -277,12 +289,12 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
       });
 
       if (extractedItems.length === 0) {
-        setErrorMessage("Nenhum nome válido foi encontrado na coluna selecionada.");
+        setErrorMessage("Nenhum registro válido (Nome ou PA) foi encontrado na coluna selecionada.");
         setIsProcessing(false);
         return;
       }
 
-      // Cruzamento inteligente com a base geral de CNHs
+      // Cruzamento inteligente com a base geral de CNHs (por PA, Nome e CPF)
       const matched = await matchExtractedWithGeralCNHs(extractedItems, geralList);
       setResults(matched);
     } catch (err: any) {
@@ -300,6 +312,11 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
     setSelectedSheet("");
     setRawHeaders([]);
     setPreviewRows([]);
+    setColNome("");
+    setColPa("");
+    setColCpf("");
+    setColRemessa("");
+    setColObs("");
     setResults(null);
     setErrorMessage(null);
     setFilterCategory("all");
@@ -514,10 +531,10 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
                   </div>
 
                   {/* Seletores de Colunas */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
                     <div>
                       <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        Coluna do NOME <span className="text-rose-500">*</span>
+                        Coluna do NOME
                       </label>
                       <select
                         value={colNome}
@@ -525,6 +542,24 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
                         className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs p-2 text-slate-900 dark:text-white font-medium"
                       >
                         <option value="">Selecione...</option>
+                        {rawHeaders.map((h) => (
+                          <option key={h} value={h}>
+                            {h}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-emerald-700 dark:text-emerald-400 mb-1">
+                        Coluna do PA (9 dígitos) <span className="text-emerald-500 font-extrabold">★</span>
+                      </label>
+                      <select
+                        value={colPa}
+                        onChange={(e) => setColPa(e.target.value)}
+                        className="w-full bg-emerald-50/50 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-700 rounded-lg text-xs p-2 text-slate-900 dark:text-white font-medium"
+                      >
+                        <option value="">Nenhuma / Opcional</option>
                         {rawHeaders.map((h) => (
                           <option key={h} value={h}>
                             {h}
@@ -858,7 +893,12 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
                                 <div className="font-bold text-slate-900 dark:text-white">
                                   {item.extracted.nome}
                                 </div>
-                                <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                                <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2 mt-0.5">
+                                  {item.extracted.pa && (
+                                    <span className="px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 rounded font-mono font-bold text-[10px] border border-emerald-200 dark:border-emerald-800">
+                                      PA: {item.extracted.pa}
+                                    </span>
+                                  )}
                                   {item.extracted.cpf && (
                                     <span>CPF: <strong>{item.extracted.cpf}</strong></span>
                                   )}
@@ -882,8 +922,13 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
                                         {item.cnhMatched!.nome}
                                       </span>
                                     </div>
-                                    <div className="text-[11px] text-slate-500 mt-0.5">
-                                      CPF: {item.cnhMatched!.cpf || "-"}
+                                    <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2 mt-0.5">
+                                      {item.cnhMatched!.pa && (
+                                        <span className="font-mono text-emerald-700 dark:text-emerald-400 font-semibold text-[10px]">
+                                          PA: {item.cnhMatched!.pa}
+                                        </span>
+                                      )}
+                                      <span>CPF: {item.cnhMatched!.cpf || "-"}</span>
                                     </div>
                                   </div>
                                 ) : (
@@ -943,8 +988,13 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
 
                               {/* Tipo de Match */}
                               <td className="p-3 text-center">
-                                {item.matchType === "exact_cpf" && (
+                                {item.matchType === "exact_pa" && (
                                   <span className="px-2 py-0.5 bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 text-[10px] font-extrabold rounded-full inline-flex items-center gap-1">
+                                    <Check className="w-3 h-3" /> PA Exato (100%)
+                                  </span>
+                                )}
+                                {item.matchType === "exact_cpf" && (
+                                  <span className="px-2 py-0.5 bg-teal-100 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300 text-[10px] font-extrabold rounded-full inline-flex items-center gap-1">
                                     <Check className="w-3 h-3" /> CPF Exato
                                   </span>
                                 )}

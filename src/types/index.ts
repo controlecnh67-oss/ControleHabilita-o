@@ -328,6 +328,7 @@ export interface Candidato {
   numero?: string;
   nome: string;
   cpf: string;
+  pa?: string; // Número identificador único de CNH (9 dígitos numéricos)
   telefone?: string;
   remessa?: string;
   created_at: string;
@@ -340,6 +341,7 @@ export interface GeralCNH {
   ordem: number;
   memorando_id?: string;
   candidato_id?: string;
+  pa?: string; // Número identificador único de CNH (9 dígitos numéricos)
   nome: string;
   cpf: string;
   telefone?: string;
@@ -436,13 +438,15 @@ export const CandidatoSchema = z.object({
   numero: z.string().optional(),
   nome: z.string().min(3, "Nome do candidato obrigatório"),
   cpf: z.string().min(14, "CPF incompleto").max(14, "CPF inválido"),
-  telefone: z.string().min(10, "Telefone Celular / Contato é obrigatório"),
+  pa: z.string().min(9, "O PA deve ter exatamente 9 dígitos").max(9, "O PA deve ter exatamente 9 dígitos").regex(/^\d{9}$/, "O PA deve conter exatamente 9 dígitos numéricos"),
+  telefone: z.string().optional(),
   remessa: z.string().optional(),
 });
 
 export const CadastroManualCNHSchema = z.object({
   nome: z.string().min(3, "Nome completo do titular da CNH"),
   cpf: z.string().min(14, "CPF incompleto").max(14, "CPF inválido"),
+  pa: z.string().optional(),
   situacao: z.enum(["Remetida", "Recebida", "Pendente", "Entregue"]).default("Recebida"),
   observacao: z.string().optional(),
 });

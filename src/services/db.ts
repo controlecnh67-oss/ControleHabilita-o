@@ -379,9 +379,9 @@ const SEED_MEMORANDOS: Memorando[] = [
 ];
 
 const SEED_CANDIDATOS: Candidato[] = [
-  { id: "cand-01", memorando_id: "memo-03", numero: "01", nome: "Luciana Borges Ferreira", cpf: "555.666.777-88", telefone: "(67) 98111-2233", remessa: "REM-003/ABRIL", created_at: new Date().toISOString() },
-  { id: "cand-02", memorando_id: "memo-03", numero: "02", nome: "Marcos Vinicius Santos", cpf: "666.777.888-99", telefone: "(67) 98222-3344", remessa: "REM-003/ABRIL", created_at: new Date().toISOString() },
-  { id: "cand-03", memorando_id: "memo-03", numero: "03", nome: "Helena Maria de Souza", cpf: "777.888.999-00", telefone: "(67) 98333-4455", remessa: "REM-003/ABRIL", created_at: new Date().toISOString() }
+  { id: "cand-01", memorando_id: "memo-03", numero: "01", nome: "Luciana Borges Ferreira", cpf: "555.666.777-88", pa: "100200301", telefone: "(67) 98111-2233", remessa: "REM-003/ABRIL", created_at: new Date().toISOString() },
+  { id: "cand-02", memorando_id: "memo-03", numero: "02", nome: "Marcos Vinicius Santos", cpf: "666.777.888-99", pa: "100200302", telefone: "(67) 98222-3344", remessa: "REM-003/ABRIL", created_at: new Date().toISOString() },
+  { id: "cand-03", memorando_id: "memo-03", numero: "03", nome: "Helena Maria de Souza", cpf: "777.888.999-00", pa: "100200303", telefone: "(67) 98333-4455", remessa: "REM-003/ABRIL", created_at: new Date().toISOString() }
 ];
 
 const SEED_GERAL: GeralCNH[] = cnhSeedData as GeralCNH[];
@@ -1557,6 +1557,7 @@ export async function addCandidato(
         numero: novo.numero || null,
         nome: novo.nome,
         cpf: novo.cpf,
+        pa: novo.pa || null,
         telefone: novo.telefone || null,
         remessa: novo.remessa || null,
         created_at: novo.created_at
@@ -1572,6 +1573,7 @@ export async function addCandidato(
           cpf: novo.cpf
         };
         if (novo.numero) minPayload.numero = novo.numero;
+        if (novo.pa) minPayload.pa = novo.pa;
         if (novo.telefone) minPayload.telefone = novo.telefone;
         if (novo.remessa) minPayload.remessa = novo.remessa;
 
@@ -1744,6 +1746,7 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
       ordem: maxOrdem,
       memorando_id: memo.id,
       candidato_id: cand.id,
+      pa: cand.pa || "",
       nome: cand.nome || "Candidato sem nome",
       cpf: cand.cpf || "",
       telefone: cand.telefone || "",
@@ -2647,6 +2650,7 @@ export async function createGeralManual(
   data: {
     nome: string;
     cpf: string;
+    pa?: string;
     situacao: SituacaoGeral;
     observacao?: string;
   },
@@ -2674,6 +2678,7 @@ export async function createGeralManual(
   const nova: GeralCNH = {
     id: uniqueId,
     ordem: maxOrdem,
+    pa: data.pa ? data.pa.trim() : undefined,
     nome: data.nome.trim(),
     cpf: data.cpf.trim(),
     gaveta,
