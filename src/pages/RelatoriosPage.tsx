@@ -23,7 +23,16 @@ import {
   Award,
   Download,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  UserCheck,
+  Hash,
+  ShieldCheck,
+  SlidersHorizontal,
+  Table as TableIcon
 } from "lucide-react";
 import { 
   ResponsiveContainer, 
@@ -69,7 +78,10 @@ import { formatCPF, formatDateTime, normalizeSearch } from "../lib/utils";
 import { useAuth } from "../context/AuthContext";
 import { subscribeToSupabaseRealtime } from "../services/supabase";
 
+type SubTabTipo = "cnh_geral" | "painel_estatistico";
 type PeriodoTipo = "hoje" | "7d" | "30d" | "mes_atual" | "ano_atual" | "custom";
+type CnhPeriodoTipo = "tudo" | "hoje" | "7d" | "15d" | "30d" | "mes_atual" | "mes_anterior" | "ano_atual" | "custom";
+type CnhCampoDataTipo = "data_movimento" | "created_at" | "updated_at";
 
 export const RelatoriosPage: React.FC = () => {
   const { user } = useAuth();
@@ -83,13 +95,33 @@ export const RelatoriosPage: React.FC = () => {
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [candidatos, setCandidatos] = useState<Candidato[]>([]);
 
-  // Filtros
+  // Sub-aba ativa
+  const [activeSubTab, setActiveSubTab] = useState<SubTabTipo>("cnh_geral");
+
+  // Filtros - Painel Estatístico
   const [periodo, setPeriodo] = useState<PeriodoTipo>("30d");
   const [dataInicio, setDataInicio] = useState<string>("");
   const [dataFim, setDataFim] = useState<string>("");
   const [reparticaoFiltro, setReparticaoFiltro] = useState<string>("todas");
   const [situacaoFiltro, setSituacaoFiltro] = useState<string>("todas");
   const [searchTerm, setSearchTerm] = useState<string>("");
+
+  // Filtros - Tabela CNH Geral
+  const [cnhPeriodo, setCnhPeriodo] = useState<CnhPeriodoTipo>("tudo");
+  const [cnhCampoData, setCnhCampoData] = useState<CnhCampoDataTipo>("data_movimento");
+  const [cnhDataInicio, setCnhDataInicio] = useState<string>("");
+  const [cnhDataFim, setCnhDataFim] = useState<string>("");
+  const [cnhStatus, setCnhStatus] = useState<string>("todos");
+  const [cnhUsuario, setCnhUsuario] = useState<string>("todos");
+  const [cnhGaveta, setCnhGaveta] = useState<string>("todas");
+  const [cnhTipoRetirada, setCnhTipoRetirada] = useState<string>("todos");
+  const [cnhSearchTerm, setCnhSearchTerm] = useState<string>("");
+
+  // Paginação e Ordenação da Tabela CNH Geral
+  const [cnhPage, setCnhPage] = useState<number>(1);
+  const [cnhPageSize, setCnhPageSize] = useState<number>(25);
+  const [cnhSortField, setCnhSortField] = useState<keyof GeralCNH | "pa">("ordem");
+  const [cnhSortAsc, setCnhSortAsc] = useState<boolean>(true);
 
   const isFetchingRef = useRef(false);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -619,6 +651,433 @@ export const RelatoriosPage: React.FC = () => {
       .sort((a, b) => b.totalAcoes - a.totalAcoes);
   }, [usuarios, cnhsFiltradasPeriodo, histFiltradoPeriodo, memorandosPeriodo]);
 
+  // ---- CÁLCULOS E FILTROS DA ABA CNH GERAL ----
+  const gavetasDisponiveis = useMemo(() => {
+    const setG = new Set<string>();
+    cnhs.forEach((c) => {
+      if (c.gaveta && c.gaveta.trim()) {
+        setG.add(c.gaveta.trim().toUpperCase());
+      }
+    });
+    return Array.from(setG).sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true }));
+  }, [cnhs]);
+
+  const cnhDateRange = useMemo(() => {
+    const now = new Date();
+    let start = new Date();
+    let end = new Date();
+
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+
+    if (cnhPeriodo === "tudo") {
+      start = new Date(2000, 0, 1);
+      end = new Date(2099, 11, 31, 23, 59, 59, 999);
+    } else if (cnhPeriodo === "hoje") {
+      // Hoje já é default
+    } else if (cnhPeriodo === "7d") {
+      start.setDate(now.getDate() - 6);
+    } else if (cnhPeriodo === "15d") {
+      start.setDate(now.getDate() - 14);
+    } else if (cnhPeriodo === "30d") {
+      start.setDate(now.getDate() - 29);
+    } else if (cnhPeriodo === "mes_atual") {
+      start = new Date(now.getFullYear(), now.getMonth(), 1);
+      end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    } else if (cnhPeriodo === "mes_anterior") {
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    } else if (cnhPeriodo === "ano_atual") {
+      start = new Date(now.getFullYear(), 0, 1);
+      end = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+    } else if (cnhPeriodo === "custom") {
+      if (cnhDataInicio) {
+        const dStr = cnhDataInicio.includes("T") ? cnhDataInicio : `${cnhDataInicio}T00:00:00`;
+        start = new Date(dStr);
+      } else {
+        start = new Date(2000, 0, 1);
+      }
+      if (cnhDataFim) {
+        const dStr = cnhDataFim.includes("T") ? cnhDataFim : `${cnhDataFim}T23:59:59`;
+        end = new Date(dStr);
+      } else {
+        end = new Date(2099, 11, 31, 23, 59, 59, 999);
+      }
+    }
+
+    return { start, end };
+  }, [cnhPeriodo, cnhDataInicio, cnhDataFim]);
+
+  const cnhsRelatorioFiltradas = useMemo(() => {
+    return cnhs.filter((c) => {
+      // 1. Filtro de Data
+      if (cnhPeriodo !== "tudo") {
+        let dateValStr = c.data_movimento;
+        if (cnhCampoData === "created_at") dateValStr = c.created_at;
+        else if (cnhCampoData === "updated_at") dateValStr = c.updated_at || c.data_movimento || c.created_at;
+
+        if (dateValStr) {
+          const d = new Date(dateValStr);
+          if (isNaN(d.getTime()) || d < cnhDateRange.start || d > cnhDateRange.end) {
+            return false;
+          }
+        } else {
+          return false;
+        }
+      }
+
+      // 2. Filtro de Status / Situação
+      if (cnhStatus !== "todos") {
+        if (c.situacao !== cnhStatus) return false;
+      }
+
+      // 3. Filtro de Usuário / Servidor
+      if (cnhUsuario !== "todos") {
+        const u = usuarios.find(usr => usr.id === cnhUsuario || usr.login === cnhUsuario);
+        const matchUser = c.usuario_id === cnhUsuario || 
+          (u && (
+            (c.usuario_nome && c.usuario_nome.toLowerCase() === u.nome.toLowerCase()) || 
+            (c.usuario_nome && c.usuario_nome.toLowerCase() === u.nome_curto.toLowerCase()) || 
+            (c.usuario_nome && c.usuario_nome.toLowerCase() === u.login.toLowerCase())
+          )) ||
+          c.usuario_nome === cnhUsuario;
+        if (!matchUser) return false;
+      }
+
+      // 4. Filtro de Gaveta
+      if (cnhGaveta !== "todas") {
+        if ((c.gaveta || "").trim().toUpperCase() !== cnhGaveta.trim().toUpperCase()) {
+          return false;
+        }
+      }
+
+      // 5. Filtro de Tipo de Retirada
+      if (cnhTipoRetirada !== "todos") {
+        const hasResp = !!(c.responsavel_nome && c.responsavel_nome.trim() !== "" && c.responsavel_nome.toLowerCase() !== "titular");
+        if (cnhTipoRetirada === "titular" && hasResp) return false;
+        if (cnhTipoRetirada === "procurador" && !hasResp) return false;
+      }
+
+      // 6. Busca Textual Geral
+      if (cnhSearchTerm.trim()) {
+        const term = normalizeSearch(cnhSearchTerm.trim());
+        const nomeNorm = normalizeSearch(c.nome || "");
+        const cpfRaw = (c.cpf || "").replace(/\D/g, "");
+        const cpfFormatted = formatCPF(c.cpf);
+        const paNorm = normalizeSearch(c.pa || "");
+        const ordemStr = String(c.ordem || "");
+        const memoStr = normalizeSearch(c.memorando_numero || "");
+        const respNorm = normalizeSearch(c.responsavel_nome || "");
+        const gavetaNorm = normalizeSearch(c.gaveta || "");
+        const userNorm = normalizeSearch(c.usuario_nome || "");
+
+        const matches = 
+          nomeNorm.includes(term) ||
+          cpfRaw.includes(term) ||
+          cpfFormatted.includes(term) ||
+          paNorm.includes(term) ||
+          ordemStr === term ||
+          memoStr.includes(term) ||
+          respNorm.includes(term) ||
+          gavetaNorm.includes(term) ||
+          userNorm.includes(term);
+
+        if (!matches) return false;
+      }
+
+      return true;
+    });
+  }, [cnhs, cnhPeriodo, cnhCampoData, cnhDateRange, cnhStatus, cnhUsuario, cnhGaveta, cnhTipoRetirada, cnhSearchTerm, usuarios]);
+
+  const resumoNumericoTabela = useMemo(() => {
+    const total = cnhsRelatorioFiltradas.length;
+    let recebidas = 0;
+    let entregues = 0;
+    let remetidas = 0;
+    let pendentes = 0;
+    let comPA = 0;
+    let retiradasCFC = 0;
+
+    cnhsRelatorioFiltradas.forEach((c) => {
+      if (c.situacao === "Recebida") recebidas++;
+      else if (c.situacao === "Entregue") {
+        entregues++;
+        if (c.responsavel_nome && c.responsavel_nome.trim() !== "" && c.responsavel_nome.toLowerCase() !== "titular") {
+          retiradasCFC++;
+        }
+      } else if (c.situacao === "Remetida") remetidas++;
+      else if (c.situacao === "Pendente") pendentes++;
+
+      if (c.pa && c.pa.trim().length > 0) comPA++;
+    });
+
+    const taxaEntrega = total > 0 ? Math.round((entregues / total) * 100) : 0;
+    const taxaRecebidas = total > 0 ? Math.round((recebidas / total) * 100) : 0;
+
+    return {
+      total,
+      recebidas,
+      entregues,
+      remetidas,
+      pendentes,
+      comPA,
+      retiradasCFC,
+      taxaEntrega,
+      taxaRecebidas
+    };
+  }, [cnhsRelatorioFiltradas]);
+
+  const cnhsOrdenadasTabela = useMemo(() => {
+    const list = [...cnhsRelatorioFiltradas];
+    list.sort((a, b) => {
+      let valA: any = a[cnhSortField as keyof GeralCNH];
+      let valB: any = b[cnhSortField as keyof GeralCNH];
+
+      if (cnhSortField === "pa") {
+        valA = a.pa || "";
+        valB = b.pa || "";
+      }
+
+      if (typeof valA === "string") {
+        const cmp = (valA || "").localeCompare(valB || "", "pt-BR", { numeric: true, sensitivity: "base" });
+        return cnhSortAsc ? cmp : -cmp;
+      }
+      if (typeof valA === "number") {
+        return cnhSortAsc ? (valA - (valB || 0)) : ((valB || 0) - valA);
+      }
+      return 0;
+    });
+    return list;
+  }, [cnhsRelatorioFiltradas, cnhSortField, cnhSortAsc]);
+
+  const totalPaginasCnh = useMemo(() => {
+    if (cnhPageSize <= 0) return 1;
+    return Math.max(1, Math.ceil(cnhsOrdenadasTabela.length / cnhPageSize));
+  }, [cnhsOrdenadasTabela.length, cnhPageSize]);
+
+  const cnhsPaginadasTabela = useMemo(() => {
+    if (cnhPageSize <= 0) return cnhsOrdenadasTabela;
+    const startIdx = (cnhPage - 1) * cnhPageSize;
+    return cnhsOrdenadasTabela.slice(startIdx, startIdx + cnhPageSize);
+  }, [cnhsOrdenadasTabela, cnhPage, cnhPageSize]);
+
+  const toggleSort = (field: keyof GeralCNH | "pa") => {
+    if (cnhSortField === field) {
+      setCnhSortAsc(!cnhSortAsc);
+    } else {
+      setCnhSortField(field);
+      setCnhSortAsc(true);
+    }
+  };
+
+  const handleLimparFiltrosCnh = () => {
+    setCnhPeriodo("tudo");
+    setCnhCampoData("data_movimento");
+    setCnhDataInicio("");
+    setCnhDataFim("");
+    setCnhStatus("todos");
+    setCnhUsuario("todos");
+    setCnhGaveta("todas");
+    setCnhTipoRetirada("todos");
+    setCnhSearchTerm("");
+    setCnhPage(1);
+  };
+
+  // ---- IMPRESSÃO DE PDF PADRONIZADO DA TABELA CNH GERAL ----
+  const handlePrintTabelaCnhPDF = () => {
+    const cfg = getOrgaoConfig();
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+
+    // Cabeçalho Institucional Limpo e Claro
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(15, 23, 42); // slate-900
+    doc.text("AGÊNCIA DE ITAITUBA", pageWidth / 2, 12, { align: "center" });
+
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(71, 85, 105); // slate-600
+    doc.text((cfg.subtitulo_relatorio || "COORDENADORIA DE HABILITAÇÃO & PROTOCOLO GERAL DE CNHs").toUpperCase(), pageWidth / 2, 17, { align: "center" });
+
+    // Linha divisória
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.4);
+    doc.line(12, 21, pageWidth - 12, 21);
+
+    // Título Principal
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(11.5);
+    doc.setFont("helvetica", "bold");
+    doc.text("RELATÓRIO GERAL DE CONTROLE E PROTOCOLO DE CNHs", 12, 27);
+
+    // Parâmetros do Relatório
+    doc.setFontSize(7.5);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(100, 116, 139);
+
+    let periodoText = "Todo o Histórico";
+    if (cnhPeriodo === "hoje") periodoText = "Hoje (Dia Atual)";
+    else if (cnhPeriodo === "7d") periodoText = "Últimos 7 dias";
+    else if (cnhPeriodo === "15d") periodoText = "Últimos 15 dias";
+    else if (cnhPeriodo === "30d") periodoText = "Últimos 30 dias";
+    else if (cnhPeriodo === "mes_atual") periodoText = "Mês Atual";
+    else if (cnhPeriodo === "mes_anterior") periodoText = "Mês Anterior";
+    else if (cnhPeriodo === "ano_atual") periodoText = "Ano Atual";
+    else if (cnhPeriodo === "custom") {
+      periodoText = `Personalizado: ${cnhDataInicio ? new Date(cnhDataInicio + "T00:00:00").toLocaleDateString("pt-BR") : "Início"} a ${cnhDataFim ? new Date(cnhDataFim + "T23:59:59").toLocaleDateString("pt-BR") : "Fim"}`;
+    }
+
+    const campoDataLabel = cnhCampoData === "data_movimento" ? "Data de Movimento" : cnhCampoData === "created_at" ? "Data de Cadastro" : "Data de Atualização";
+    const statusLabel = cnhStatus === "todos" ? "Todos os Status" : cnhStatus;
+    
+    let usuarioLabel = "Todos os Servidores";
+    if (cnhUsuario !== "todos") {
+      const u = usuarios.find(usr => usr.id === cnhUsuario || usr.login === cnhUsuario);
+      usuarioLabel = u ? `${u.nome} (${u.login})` : cnhUsuario;
+    }
+
+    const gavetaLabel = cnhGaveta === "todas" ? "Todas as Gavetas" : `Gaveta: ${cnhGaveta}`;
+    const buscaLabel = cnhSearchTerm.trim() ? ` | Busca: "${cnhSearchTerm.trim()}"` : "";
+
+    doc.text(`Filtros: ${periodoText} (Base: ${campoDataLabel}) | Situação: ${statusLabel} | Servidor: ${usuarioLabel} | ${gavetaLabel}${buscaLabel}`, 12, 32);
+    doc.text(`Emissão: ${new Date().toLocaleString("pt-BR")} | Emitido por: ${user?.nome_curto || user?.nome || "Servidor Responsável"} | Total Listado: ${resumoNumericoTabela.total}`, 12, 36);
+
+    // Bloco de Resumo Numérico
+    autoTable(doc, {
+      startY: 39,
+      head: [["TOTAL LISTADO", "RECEBIDAS (GAVETA)", "ENTREGUES (CIDADÃO)", "REMETIDAS (TRÂNSITO)", "PENDENTES", "COM PA (9 DÍG.)", "RETIRADAS CFC/TERC.", "TAXA ENTREGA"]],
+      body: [[
+        `${resumoNumericoTabela.total}`,
+        `${resumoNumericoTabela.recebidas} (${resumoNumericoTabela.taxaRecebidas}%)`,
+        `${resumoNumericoTabela.entregues} (${resumoNumericoTabela.taxaEntrega}%)`,
+        `${resumoNumericoTabela.remetidas}`,
+        `${resumoNumericoTabela.pendentes}`,
+        `${resumoNumericoTabela.comPA}`,
+        `${resumoNumericoTabela.retiradasCFC}`,
+        `${resumoNumericoTabela.taxaEntrega}%`
+      ]],
+      theme: "grid",
+      headStyles: {
+        fillColor: [30, 41, 59],
+        textColor: 255,
+        fontStyle: "bold",
+        fontSize: 7,
+        halign: "center"
+      },
+      bodyStyles: {
+        fontSize: 7.5,
+        fontStyle: "bold",
+        textColor: [15, 23, 42],
+        halign: "center"
+      },
+      margin: { left: 12, right: 12 }
+    });
+
+    const startTableY = (doc as any).lastAutoTable.finalY + 4;
+
+    // Tabela Detalhada de CNHs
+    const tableBody = cnhsOrdenadasTabela.map((c) => [
+      String(c.ordem || "-"),
+      c.pa || "-",
+      c.nome || "-",
+      formatCPF(c.cpf),
+      c.situacao || "-",
+      c.gaveta || "-",
+      c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "-",
+      c.responsavel_nome || (c.situacao === "Entregue" ? "Titular" : "-"),
+      c.usuario_nome || "-"
+    ]);
+
+    autoTable(doc, {
+      startY: startTableY,
+      head: [["Nº", "PA", "NOME DO TITULAR", "CPF", "SITUAÇÃO", "GAVETA", "DATA MOV.", "RETIRANTE / RESPONSÁVEL", "SERVIDOR"]],
+      body: tableBody,
+      theme: "striped",
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: 255,
+        fontStyle: "bold",
+        fontSize: 7.5,
+        halign: "left"
+      },
+      columnStyles: {
+        0: { halign: "center", cellWidth: 12 },
+        1: { halign: "center", font: "courier", cellWidth: 22 },
+        2: { halign: "left", cellWidth: 65 },
+        3: { halign: "center", font: "courier", cellWidth: 28 },
+        4: { halign: "center", fontStyle: "bold", cellWidth: 24 },
+        5: { halign: "center", fontStyle: "bold", cellWidth: 18 },
+        6: { halign: "center", cellWidth: 22 },
+        7: { halign: "left", cellWidth: 46 },
+        8: { halign: "left", cellWidth: 36 }
+      },
+      bodyStyles: {
+        fontSize: 7.5,
+        textColor: [30, 41, 59],
+        cellPadding: 2
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252]
+      },
+      margin: { left: 12, right: 12, bottom: 14 },
+      didDrawPage: (data) => {
+        const totalPages = (doc as any).internal.getNumberOfPages();
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(148, 163, 184);
+        doc.text(
+          `Página ${data.pageNumber} de ${totalPages} - Sistema DETRAN CNH - AGÊNCIA DE ITAITUBA | Emitido em ${new Date().toLocaleString("pt-BR")}`,
+          pageWidth / 2,
+          pageHeight - 6,
+          { align: "center" }
+        );
+      }
+    });
+
+    doc.save(`Relatorio_Geral_CNHs_DETRAN_${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  // ---- EXPORTAÇÃO EXCEL DA TABELA CNH GERAL ----
+  const handleExportTabelaCnhExcel = () => {
+    const wb = XLSX.utils.book_new();
+
+    // 1. Resumo Numérico
+    const resumoData = [
+      { Indicador: "Total de CNHs Filtradas", Quantidade: resumoNumericoTabela.total },
+      { Indicador: "CNHs Recebidas (Em Gaveta)", Quantidade: resumoNumericoTabela.recebidas },
+      { Indicador: "CNHs Entregues ao Cidadão", Quantidade: resumoNumericoTabela.entregues },
+      { Indicador: "CNHs Remetidas (Em Trânsito)", Quantidade: resumoNumericoTabela.remetidas },
+      { Indicador: "CNHs Pendentes de Alocação", Quantidade: resumoNumericoTabela.pendentes },
+      { Indicador: "CNHs com PA Cadastrado", Quantidade: resumoNumericoTabela.comPA },
+      { Indicador: "Entregas via CFC / Despachante", Quantidade: resumoNumericoTabela.retiradasCFC },
+      { Indicador: "Taxa de Entrega (%)", Quantidade: `${resumoNumericoTabela.taxaEntrega}%` }
+    ];
+    const wsResumo = XLSX.utils.json_to_sheet(resumoData);
+    XLSX.utils.book_append_sheet(wb, wsResumo, "Resumo Numérico");
+
+    // 2. Tabela de CNHs Filtradas
+    const cnhsExport = cnhsOrdenadasTabela.map((c) => ({
+      Numero_Ordem: c.ordem,
+      PA: c.pa || "",
+      Nome_Titular: c.nome,
+      CPF: formatCPF(c.cpf),
+      Situacao: c.situacao,
+      Gaveta: c.gaveta,
+      Reparticao: c.reparticao,
+      Responsavel_Retirante: c.responsavel_nome || (c.situacao === "Entregue" ? "Titular" : ""),
+      Memorando: c.memorando_numero || "",
+      Data_Movimento: c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "",
+      Servidor_Responsavel: c.usuario_nome || "",
+      Observacao: c.observacao || ""
+    }));
+    const wsCnhs = XLSX.utils.json_to_sheet(cnhsExport);
+    XLSX.utils.book_append_sheet(wb, wsCnhs, "CNHs Geral");
+
+    XLSX.writeFile(wb, `Tabela_CNH_Geral_DETRAN_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
   // ---- IMPRESSÃO DE PDF GERENCIAL SETORIAL ----
   const handlePrintPDF = () => {
     const cfg = getOrgaoConfig();
@@ -898,7 +1357,7 @@ export const RelatoriosPage: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fadeIn pb-12">
-      {/* CABAÇALHO DA PÁGINA */}
+      {/* CABEÇALHO DA PÁGINA */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm">
         <div className="space-y-1">
           <div className="flex items-center gap-2.5">
@@ -907,32 +1366,54 @@ export const RelatoriosPage: React.FC = () => {
             </div>
             <div>
               <h1 className="text-lg font-bold text-slate-900 dark:text-white">
-                Relatórios Setoriais & Estatísticas DETRAN
+                Relatórios Setoriais & Tabela CNH Geral
               </h1>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Painel analítico de movimentação de CNHs, expedição de memorandos, atendimentos diários e exportação em PDF.
+                Consulta avançada com múltiplos filtros, resumos numéricos dinâmicos, relatórios estatísticos e exportação em PDF/Excel.
               </p>
             </div>
           </div>
         </div>
 
-        {/* BOTÕES DE AÇÃO PRINCIPAIS */}
+        {/* BOTÕES DE AÇÃO PRINCIPAIS CONTEXTUAIS */}
         <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            onClick={handlePrintPDF}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-          >
-            <Printer className="w-4 h-4" />
-            Imprimir Relatório (PDF)
-          </button>
+          {activeSubTab === "cnh_geral" ? (
+            <>
+              <button
+                onClick={handlePrintTabelaCnhPDF}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                Baixar Tabela PDF
+              </button>
 
-          <button
-            onClick={handleExportExcel}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            Exportar Excel (.xlsx)
-          </button>
+              <button
+                onClick={handleExportTabelaCnhExcel}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                Exportar Excel (.xlsx)
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={handlePrintPDF}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                Imprimir Painel (PDF)
+              </button>
+
+              <button
+                onClick={handleExportExcel}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                Exportar Excel (.xlsx)
+              </button>
+            </>
+          )}
 
           <button
             onClick={loadData}
@@ -945,6 +1426,623 @@ export const RelatoriosPage: React.FC = () => {
         </div>
       </div>
 
+      {/* SELETOR DE SUB-ABAS DE RELATÓRIO */}
+      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+        <button
+          onClick={() => setActiveSubTab("cnh_geral")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeSubTab === "cnh_geral"
+              ? "bg-blue-600 text-white shadow-md shadow-blue-500/20"
+              : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800"
+          }`}
+        >
+          <FolderArchive className="w-4 h-4" />
+          <span>Relatório de CNH Geral</span>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+            activeSubTab === "cnh_geral"
+              ? "bg-blue-700 text-white"
+              : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+          }`}>
+            {resumoNumericoTabela.total}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab("painel_estatistico")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeSubTab === "painel_estatistico"
+              ? "bg-blue-600 text-white shadow-md shadow-blue-500/20"
+              : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800"
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          <span>Painel Analítico & Gráficos</span>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+            activeSubTab === "painel_estatistico"
+              ? "bg-blue-700 text-white"
+              : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+          }`}>
+            {estatisticasPeriodo.totalPeriodo}
+          </span>
+        </button>
+      </div>
+
+      {/* CONTEÚDO DA SUB-ABA 1: RELATÓRIO DE CNH GERAL */}
+      {activeSubTab === "cnh_geral" && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* PAINEL DE MÚLTIPLOS FILTROS */}
+          <div className="bg-white dark:bg-slate-900 p-5 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                <SlidersHorizontal className="w-4 h-4 text-blue-600" />
+                Múltiplos Filtros da Tabela CNH Geral
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  Total Encontrado: <strong className="text-blue-600 dark:text-blue-400">{cnhsRelatorioFiltradas.length}</strong> CNHs
+                </span>
+                <button
+                  onClick={handleLimparFiltrosCnh}
+                  className="flex items-center gap-1.5 text-xs text-rose-600 hover:text-rose-700 dark:text-rose-400 hover:underline cursor-pointer font-medium"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  Limpar Filtros
+                </button>
+              </div>
+            </div>
+
+            {/* GRID DE FILTROS */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* 1. Período */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                  Filtrar por Período
+                </label>
+                <select
+                  value={cnhPeriodo}
+                  onChange={(e) => {
+                    setCnhPeriodo(e.target.value as CnhPeriodoTipo);
+                    setCnhPage(1);
+                  }}
+                  className="w-full text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="tudo">Todo o Histórico (Sem filtro de data)</option>
+                  <option value="hoje">Hoje (Dia Atual)</option>
+                  <option value="7d">Últimos 7 dias</option>
+                  <option value="15d">Últimos 15 dias</option>
+                  <option value="30d">Últimos 30 dias</option>
+                  <option value="mes_atual">Mês Atual</option>
+                  <option value="mes_anterior">Mês Anterior</option>
+                  <option value="ano_atual">Ano Atual</option>
+                  <option value="custom">Personalizado (Datas Início/Fim)...</option>
+                </select>
+              </div>
+
+              {/* 2. Campo de Data de Referência */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                  Campo de Data Base
+                </label>
+                <select
+                  value={cnhCampoData}
+                  onChange={(e) => {
+                    setCnhCampoData(e.target.value as CnhCampoDataTipo);
+                    setCnhPage(1);
+                  }}
+                  className="w-full text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="data_movimento">Data do Movimento / Entrega</option>
+                  <option value="created_at">Data de Cadastro / Entrada</option>
+                  <option value="updated_at">Data de Atualização Recente</option>
+                </select>
+              </div>
+
+              {/* 3. Situação / Status */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                  Filtrar por Status / Situação
+                </label>
+                <select
+                  value={cnhStatus}
+                  onChange={(e) => {
+                    setCnhStatus(e.target.value);
+                    setCnhPage(1);
+                  }}
+                  className="w-full text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                >
+                  <option value="todos">Todos os Status</option>
+                  <option value="Recebida">Recebida (Em Gaveta)</option>
+                  <option value="Entregue">Entregue ao Cidadão / Responsável</option>
+                  <option value="Remetida">Remetida (Em Trânsito)</option>
+                  <option value="Pendente">Pendente de Alocação</option>
+                </select>
+              </div>
+
+              {/* 4. Usuário / Servidor Responsável */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                  Filtrar por Usuário / Servidor
+                </label>
+                <select
+                  value={cnhUsuario}
+                  onChange={(e) => {
+                    setCnhUsuario(e.target.value);
+                    setCnhPage(1);
+                  }}
+                  className="w-full text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="todos">Todos os Servidores / Usuários</option>
+                  {usuarios.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.nome} ({u.login}) - {u.perfil}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 5. Gaveta Física */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                  Gaveta / Arquivo Físico
+                </label>
+                <select
+                  value={cnhGaveta}
+                  onChange={(e) => {
+                    setCnhGaveta(e.target.value);
+                    setCnhPage(1);
+                  }}
+                  className="w-full text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="todas">Todas as Gavetas</option>
+                  {gavetasDisponiveis.map((gav) => (
+                    <option key={gav} value={gav}>
+                      Gaveta {gav}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 6. Tipo de Retirada */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                  Tipo de Retirante
+                </label>
+                <select
+                  value={cnhTipoRetirada}
+                  onChange={(e) => {
+                    setCnhTipoRetirada(e.target.value);
+                    setCnhPage(1);
+                  }}
+                  className="w-full text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="todos">Todos os Tipos de Retirada</option>
+                  <option value="titular">Apenas Retiradas pelo Titular</option>
+                  <option value="procurador">Por Terceiro / Despachante / CFC</option>
+                </select>
+              </div>
+
+              {/* 7. Busca Textual Geral */}
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                  Pesquisa Geral (Nome, CPF, PA, Nº Ordem, Memorando, Responsável)
+                </label>
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    value={cnhSearchTerm}
+                    onChange={(e) => {
+                      setCnhSearchTerm(e.target.value);
+                      setCnhPage(1);
+                    }}
+                    placeholder="Digite nome do titular, CPF, PA (9 dígitos), memorando..."
+                    className="w-full pl-9 pr-8 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl py-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {cnhSearchTerm && (
+                    <button
+                      onClick={() => setCnhSearchTerm("")}
+                      className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* FILTROS DE DATA CUSTOMIZADA (Se selecionado custom) */}
+            {cnhPeriodo === "custom" && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3.5 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/50 rounded-xl animate-fadeIn">
+                <div>
+                  <label className="block text-xs font-medium text-blue-950 dark:text-blue-200 mb-1">
+                    Data Início do Período
+                  </label>
+                  <input
+                    type="date"
+                    value={cnhDataInicio}
+                    onChange={(e) => {
+                      setCnhDataInicio(e.target.value);
+                      setCnhPage(1);
+                    }}
+                    className="w-full text-xs bg-white dark:bg-slate-800 border border-blue-200 dark:border-blue-800 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-blue-950 dark:text-blue-200 mb-1">
+                    Data Fim do Período
+                  </label>
+                  <input
+                    type="date"
+                    value={cnhDataFim}
+                    onChange={(e) => {
+                      setCnhDataFim(e.target.value);
+                      setCnhPage(1);
+                    }}
+                    className="w-full text-xs bg-white dark:bg-slate-800 border border-blue-200 dark:border-blue-800 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* QUADRO DE RESUMOS NUMÉRICOS DINÂMICOS */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
+            {/* 1. Total Filtrado */}
+            <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm">
+              <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider">Total CNHs</span>
+                <FolderArchive className="w-4 h-4 text-blue-600" />
+              </div>
+              <div className="text-2xl font-extrabold text-slate-900 dark:text-white">
+                {resumoNumericoTabela.total}
+              </div>
+              <span className="text-[10px] text-slate-400 font-medium">
+                Conforme filtros ativos
+              </span>
+            </div>
+
+            {/* 2. Recebidas (Em Gaveta) */}
+            <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm">
+              <div className="flex items-center justify-between text-blue-600 dark:text-blue-400 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider">Recebidas</span>
+                <Inbox className="w-4 h-4" />
+              </div>
+              <div className="text-2xl font-extrabold text-blue-600 dark:text-blue-400">
+                {resumoNumericoTabela.recebidas}
+              </div>
+              <span className="text-[10px] text-slate-500 font-medium">
+                {resumoNumericoTabela.taxaRecebidas}% do total filtrado
+              </span>
+            </div>
+
+            {/* 3. Entregues */}
+            <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm">
+              <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider">Entregues</span>
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+              <div className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400">
+                {resumoNumericoTabela.entregues}
+              </div>
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                Taxa de entrega: {resumoNumericoTabela.taxaEntrega}%
+              </span>
+            </div>
+
+            {/* 4. Remetidas */}
+            <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm">
+              <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider">Remetidas</span>
+                <Send className="w-4 h-4" />
+              </div>
+              <div className="text-2xl font-extrabold text-amber-600 dark:text-amber-400">
+                {resumoNumericoTabela.remetidas}
+              </div>
+              <span className="text-[10px] text-slate-400 font-medium">
+                Em trânsito / remessa
+              </span>
+            </div>
+
+            {/* 5. Pendentes */}
+            <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm">
+              <div className="flex items-center justify-between text-rose-600 dark:text-rose-400 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider">Pendentes</span>
+                <AlertCircle className="w-4 h-4" />
+              </div>
+              <div className="text-2xl font-extrabold text-rose-600 dark:text-rose-400">
+                {resumoNumericoTabela.pendentes}
+              </div>
+              <span className="text-[10px] text-slate-400 font-medium">
+                Aguardando alocação
+              </span>
+            </div>
+
+            {/* 6. Com PA Cadastrado */}
+            <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm">
+              <div className="flex items-center justify-between text-purple-600 dark:text-purple-400 mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider">Com PA (9 díg.)</span>
+                <Hash className="w-4 h-4" />
+              </div>
+              <div className="text-2xl font-extrabold text-purple-600 dark:text-purple-400">
+                {resumoNumericoTabela.comPA}
+              </div>
+              <span className="text-[10px] text-purple-600 dark:text-purple-400 font-semibold">
+                {resumoNumericoTabela.retiradasCFC} via CFC/Procurador
+              </span>
+            </div>
+          </div>
+
+          {/* TABELA DE CNHs COM PAGINAÇÃO E ORDENAÇÃO */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
+            {/* Barra Superior da Tabela */}
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-800/30">
+              <div className="flex items-center gap-2">
+                <TableIcon className="w-4 h-4 text-blue-600" />
+                <h2 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                  Listagem Detalhada de CNHs Filtradas
+                </h2>
+                <span className="px-2.5 py-0.5 bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 text-[10px] font-bold rounded-full">
+                  {cnhsRelatorioFiltradas.length} registros
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {/* Seletor de Linhas por Página */}
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                  <span>Exibir:</span>
+                  <select
+                    value={cnhPageSize}
+                    onChange={(e) => {
+                      setCnhPageSize(Number(e.target.value));
+                      setCnhPage(1);
+                    }}
+                    className="text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-slate-700 dark:text-slate-200 focus:outline-none"
+                  >
+                    <option value={15}>15 por pág.</option>
+                    <option value={25}>25 por pág.</option>
+                    <option value={50}>50 por pág.</option>
+                    <option value={100}>100 por pág.</option>
+                    <option value={0}>Todas as linhas</option>
+                  </select>
+                </div>
+
+                {/* Botões de Ação Rápidos */}
+                <button
+                  onClick={handlePrintTabelaCnhPDF}
+                  title="Baixar Relatório em PDF Padronizado"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  PDF
+                </button>
+
+                <button
+                  onClick={handleExportTabelaCnhExcel}
+                  title="Exportar para Planilha Excel (.xlsx)"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  Excel
+                </button>
+              </div>
+            </div>
+
+            {/* TABELA */}
+            {cnhsRelatorioFiltradas.length === 0 ? (
+              <div className="p-12 text-center space-y-3">
+                <FolderArchive className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto" />
+                <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                  Nenhuma CNH encontrada com os filtros selecionados.
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Tente alterar o período, selecionar outro status ou limpar a busca.
+                </p>
+                <button
+                  onClick={handleLimparFiltrosCnh}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-400 rounded-xl text-xs font-semibold hover:bg-blue-100 transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Redefinir Filtros
+                </button>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs text-slate-600 dark:text-slate-300">
+                  <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 font-bold uppercase tracking-wider border-b border-slate-200 dark:border-slate-800 select-none">
+                    <tr>
+                      <th
+                        onClick={() => toggleSort("ordem")}
+                        className="px-4 py-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>Nº</span>
+                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => toggleSort("pa")}
+                        className="px-4 py-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>PA (9 Dígitos)</span>
+                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => toggleSort("nome")}
+                        className="px-4 py-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>Nome do Titular</span>
+                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => toggleSort("cpf")}
+                        className="px-4 py-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>CPF</span>
+                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => toggleSort("situacao")}
+                        className="px-4 py-3 text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
+                      >
+                        <div className="flex items-center justify-center gap-1">
+                          <span>Situação</span>
+                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => toggleSort("gaveta")}
+                        className="px-4 py-3 text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
+                      >
+                        <div className="flex items-center justify-center gap-1">
+                          <span>Gaveta</span>
+                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => toggleSort("data_movimento")}
+                        className="px-4 py-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>Data Movimento</span>
+                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                        </div>
+                      </th>
+                      <th className="px-4 py-3">Retirante / Responsável</th>
+                      <th className="px-4 py-3">Servidor</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {cnhsPaginadasTabela.map((c) => (
+                      <tr
+                        key={c.id}
+                        className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors"
+                      >
+                        {/* Nº Ordem */}
+                        <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">
+                          #{c.ordem}
+                        </td>
+
+                        {/* PA */}
+                        <td className="px-4 py-3 font-mono font-bold text-purple-700 dark:text-purple-400 tracking-wider">
+                          {c.pa || "-"}
+                        </td>
+
+                        {/* Nome do Titular */}
+                        <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100">
+                          {c.nome}
+                        </td>
+
+                        {/* CPF */}
+                        <td className="px-4 py-3 font-mono text-slate-600 dark:text-slate-300">
+                          {formatCPF(c.cpf)}
+                        </td>
+
+                        {/* Situação */}
+                        <td className="px-4 py-3 text-center">
+                          <span
+                            className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                              c.situacao === "Recebida"
+                                ? "bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800"
+                                : c.situacao === "Entregue"
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800"
+                                : c.situacao === "Remetida"
+                                ? "bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800"
+                                : "bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800"
+                            }`}
+                          >
+                            {c.situacao}
+                          </span>
+                        </td>
+
+                        {/* Gaveta */}
+                        <td className="px-4 py-3 text-center font-bold text-slate-800 dark:text-slate-200">
+                          {c.gaveta ? (
+                            <span className="inline-flex items-center px-2 py-0.5 bg-slate-100 dark:bg-slate-800 rounded-md text-xs">
+                              {c.gaveta}
+                            </span>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+
+                        {/* Data Movimento */}
+                        <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
+                          {c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "-"}
+                        </td>
+
+                        {/* Retirante / Responsável */}
+                        <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
+                          {c.responsavel_nome ? (
+                            <span className="font-semibold text-amber-700 dark:text-amber-400">
+                              {c.responsavel_nome}
+                            </span>
+                          ) : c.situacao === "Entregue" ? (
+                            <span className="text-slate-500 italic">Titular</span>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+
+                        {/* Servidor */}
+                        <td className="px-4 py-3 text-slate-500 text-[11px] whitespace-nowrap">
+                          {c.usuario_nome || "Servidor"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Paginação Inferior */}
+            {cnhsRelatorioFiltradas.length > 0 && cnhPageSize > 0 && (
+              <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-800/30 text-xs text-slate-500 dark:text-slate-400">
+                <div>
+                  Mostrando <strong className="text-slate-800 dark:text-slate-200">{(cnhPage - 1) * cnhPageSize + 1}</strong> até{" "}
+                  <strong className="text-slate-800 dark:text-slate-200">
+                    {Math.min(cnhPage * cnhPageSize, cnhsRelatorioFiltradas.length)}
+                  </strong>{" "}
+                  de <strong className="text-slate-800 dark:text-slate-200">{cnhsRelatorioFiltradas.length}</strong> CNHs
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    disabled={cnhPage <= 1}
+                    onClick={() => setCnhPage((p) => Math.max(1, p - 1))}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    Anterior
+                  </button>
+
+                  <span className="px-3 py-1 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Página {cnhPage} de {totalPaginasCnh}
+                  </span>
+
+                  <button
+                    disabled={cnhPage >= totalPaginasCnh}
+                    onClick={() => setCnhPage((p) => Math.min(totalPaginasCnh, p + 1))}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  >
+                    Próxima
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* CONTEÚDO DA SUB-ABA 2: PAINEL ANALÍTICO & GRÁFICOS */}
+      {activeSubTab === "painel_estatistico" && (
+        <div className="space-y-6 animate-fadeIn">
       {/* BARRA DE FILTROS E SELEÇÃO DE PERÍODO */}
       <div className="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -1591,6 +2689,8 @@ export const RelatoriosPage: React.FC = () => {
           </div>
         </div>
       </div>
+        </div>
+      )}
 
     </div>
   );
