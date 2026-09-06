@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { 
   ShieldCheck, 
   Search, 
@@ -53,6 +53,20 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isStandalone, setIsStandalone] = useState(false);
   const [searchCount, setSearchCount] = useState<number>(() => getPublicSearchCount());
+  const [cooldownSecs, setCooldownSecs] = useState(0);
+
+  // Travas em nível de referência para bloquear requisições simultâneas em fração de milissegundos
+  const isSearchingRef = useRef(false);
+  const hasInitialSearchedRef = useRef(false);
+  const cooldownTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      if (cooldownTimerRef.current) {
+        clearInterval(cooldownTimerRef.current);
+      }
+    };
+  }, []);
 
   // Atualizar contagem sincronizada com o banco Supabase
   const refreshSearchCount = useCallback(async () => {
@@ -152,6 +166,11 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
   };
 
   const handleBuscar = async (cpfParaBuscar?: string) => {
+    // Trava síncrona imediata contra cliques múltiplos no celular ou botões disparados em rajada
+    if (isSearchingRef.current || loading || cooldownSecs > 0) {
+      return;
+    }
+
     const targetCpf = cpfParaBuscar || cpfInput;
     const cleanCpf = targetCpf.replace(/\D/g, "");
 
@@ -160,6 +179,7 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
       return;
     }
 
+    isSearchingRef.current = true;
     setLoading(true);
     setError(null);
 
@@ -176,11 +196,26 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
       setResultado(res);
       // Atualizar contagem imediatamente
       refreshSearchCount();
+
+      // Ativar cooldown visual de 3 segundos para prevenir disparos repetidos sucessivos
+      setCooldownSecs(3);
+      if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current);
+      cooldownTimerRef.current = setInterval(() => {
+        setCooldownSecs((prev) => {
+          if (prev <= 1) {
+            clearInterval(cooldownTimerRef.current);
+            cooldownTimerRef.current = null;
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
     } catch (err: any) {
       setError(err.message || "Erro ao consultar banco de dados.");
       setResultado(null);
     } finally {
       setLoading(false);
+      isSearchingRef.current = false;
     }
   };
 
@@ -195,7 +230,8 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
       }
 
       const urlCpf = params.get("cpf") || initialCpf;
-      if (urlCpf) {
+      if (urlCpf && !hasInitialSearchedRef.current) {
+        hasInitialSearchedRef.current = true;
         const clean = urlCpf.replace(/\D/g, "").slice(0, 11);
         if (clean.length >= 9) {
           let formatted = clean;
@@ -341,13 +377,18 @@ export const ConsultaPublicaPage: React.FC<ConsultaPublicaPageProps> = ({
 
             <button
               type="submit"
-              disabled={loading || !cpfInput.trim()}
+              disabled={loading || cooldownSecs > 0 || !cpfInput.trim()}
               className="w-full py-3.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold rounded-2xl shadow-lg shadow-blue-600/30 transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-50 cursor-pointer"
             >
               {loading ? (
                 <>
                   <RefreshCw className="w-5 h-5 animate-spin" />
                   <span>Consultando Banco de Dados...</span>
+                </>
+              ) : cooldownSecs > 0 ? (
+                <>
+                  <Clock className="w-5 h-5 text-cyan-300 animate-pulse" />
+                  <span>Aguarde {cooldownSecs}s para nova consulta</span>
                 </>
               ) : (
                 <>

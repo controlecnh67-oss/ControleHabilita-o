@@ -24,9 +24,15 @@ import {
   ArrowDown,
   PieChart as PieIcon,
   BarChart2,
-  Activity
+  Activity,
+  Sparkles
 } from "lucide-react";
-import { getAcessosCidadaoLogs, fetchAcessosCidadaoLogs, getPublicSearchCount } from "../services/db";
+import { 
+  getAcessosCidadaoLogs, 
+  fetchAcessosCidadaoLogs, 
+  getPublicSearchCount,
+  consolidarAcessosCidadaoDuplicados 
+} from "../services/db";
 import { subscribeToSupabaseRealtime } from "../services/supabase";
 import { AcessoCidadaoLog } from "../types";
 import { formatCPF, formatDateTime } from "../lib/utils";
@@ -62,6 +68,53 @@ export const AcessosCidadaoPage: React.FC = () => {
   // Paginação
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(15);
+
+  // Detecção e Consolidação de Registros Repetidos
+  const [consolidating, setConsolidating] = useState(false);
+  const [consolidationSuccess, setConsolidationSuccess] = useState<string | null>(null);
+
+  // Detecção de registros repetidos (mesmo CPF em intervalo inferior a 3 minutos)
+  const duplicatesCount = useMemo(() => {
+    if (!logs || logs.length === 0) return 0;
+    const sorted = [...logs].sort((a, b) => new Date(a.data_hora).getTime() - new Date(b.data_hora).getTime());
+    const seen = new Map<string, number>();
+    let count = 0;
+    const THREE_MINS = 3 * 60 * 1000;
+
+    for (const log of sorted) {
+      const cleanCpf = (log.cpf || "").replace(/\D/g, "");
+      if (!cleanCpf || cleanCpf.length < 9) continue;
+      const t = new Date(log.data_hora).getTime();
+      const lastT = seen.get(cleanCpf);
+      if (lastT !== undefined && Math.abs(t - lastT) < THREE_MINS) {
+        count++;
+      } else {
+        seen.set(cleanCpf, t);
+      }
+    }
+    return count;
+  }, [logs]);
+
+  const handleConsolidarDuplicados = async () => {
+    if (duplicatesCount === 0) return;
+    const confirm = window.confirm(
+      `Foram detectados ${duplicatesCount} registro(s) repetido(s) gerados por múltiplos cliques simultâneos no mesmo horário (ex: mesmo CPF em intervalo inferior a 3 minutos).\n\nDeseja consolidar esses registros mantendo apenas 1 acesso principal por consulta?`
+    );
+    if (!confirm) return;
+
+    setConsolidating(true);
+    try {
+      const res = await consolidarAcessosCidadaoDuplicados();
+      setConsolidationSuccess(`Consolidação concluída com sucesso! ${res.removidos} registro(s) duplicado(s) removido(s).`);
+      setTimeout(() => setConsolidationSuccess(null), 6000);
+      await loadLogs();
+    } catch (err: any) {
+      console.error("Erro ao consolidar:", err);
+      alert("Erro ao consolidar registros: " + (err.message || "Erro desconhecido"));
+    } finally {
+      setConsolidating(false);
+    }
+  };
 
   // Carregar Logs
   const loadLogs = async () => {
@@ -653,6 +706,19 @@ export const AcessosCidadaoPage: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            {duplicatesCount > 0 && (
+              <button
+                type="button"
+                onClick={handleConsolidarDuplicados}
+                disabled={consolidating}
+                className="flex items-center gap-2 px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold rounded-xl text-xs shadow-lg shadow-amber-950/40 transition-all cursor-pointer"
+                title="Consolidar registros duplicados gerados por múltiplos cliques simultâneos"
+              >
+                <Sparkles className={`w-4 h-4 ${consolidating ? "animate-spin" : ""}`} />
+                <span>{consolidating ? "Consolidando..." : `Limpar ${duplicatesCount} Duplicados`}</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={loadLogs}
@@ -694,6 +760,42 @@ export const AcessosCidadaoPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Alerta de Sucesso na Consolidação */}
+      {consolidationSuccess && (
+        <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-700/60 rounded-xl p-3.5 flex items-center gap-2.5 text-xs text-emerald-800 dark:text-emerald-200 shadow-xs animate-fadeIn">
+          <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+          <span className="font-semibold">{consolidationSuccess}</span>
+        </div>
+      )}
+
+      {/* Banner Informativo com Ação para Limpar Duplicados */}
+      {duplicatesCount > 0 && (
+        <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs text-amber-900 dark:text-amber-200 shadow-xs">
+          <div className="flex items-start sm:items-center gap-3">
+            <span className="p-2 bg-amber-200/80 dark:bg-amber-800/80 rounded-xl text-amber-900 dark:text-amber-100 shrink-0 mt-0.5 sm:mt-0">
+              <Clock className="w-5 h-5" />
+            </span>
+            <div className="space-y-0.5">
+              <p className="font-extrabold text-sm text-amber-950 dark:text-amber-100">
+                Detectados {duplicatesCount} registro(s) repetido(s) no mesmo horário (múltiplos cliques no celular)
+              </p>
+              <p className="text-amber-800 dark:text-amber-300 text-xs">
+                O cidadão tocou repetidas vezes no botão do aplicativo na mesma consulta. A proteção anti-duplicação e cooldown já estão ativos.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleConsolidarDuplicados}
+            disabled={consolidating}
+            className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition-all shrink-0 shadow-md cursor-pointer flex items-center justify-center gap-2 self-start sm:self-auto"
+          >
+            {consolidating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            <span>Consolidar e Limpar Duplicatas</span>
+          </button>
+        </div>
+      )}
 
       {/* BARRA DE FILTRO POR PERÍODO (Estilo Seletor da Imagem) */}
       <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">

@@ -2156,8 +2156,48 @@ export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
   return local;
 }
 
+// Memória em tempo de execução para prevenir inserções simultâneas assíncronas do mesmo CPF
+const recentLogTimestampsPerCpf = new Map<string, number>();
+
 export function registrarAcessoCidadaoLog(logData: Omit<AcessoCidadaoLog, "id" | "data_hora">): AcessoCidadaoLog {
+  const cleanCpfDigits = (logData.cpf || "").replace(/\D/g, "");
+  const now = Date.now();
+  const DEDUPLICATION_WINDOW_MS = 3 * 60 * 1000; // 3 minutos de janela anti-flood / anti-duplicação
+
+  // 1. Verificação em memória para requisições concorrentes ou em sequência imediata
+  if (cleanCpfDigits.length >= 9) {
+    const lastTimestamp = recentLogTimestampsPerCpf.get(cleanCpfDigits);
+    if (lastTimestamp && (now - lastTimestamp) < DEDUPLICATION_WINDOW_MS) {
+      const existingLogs = getAcessosCidadaoLogs();
+      const match = existingLogs.find(l => (l.cpf || "").replace(/\D/g, "") === cleanCpfDigits);
+      if (match) {
+        return match;
+      }
+    }
+  }
+
   const currentLogs = getAcessosCidadaoLogs();
+
+  // 2. Verificação no histórico persistido: evita registros duplicados para o mesmo CPF dentro de 3 minutos
+  if (cleanCpfDigits.length >= 9) {
+    const existingRecent = currentLogs.find((l) => {
+      const lCpf = (l.cpf || "").replace(/\D/g, "");
+      if (lCpf !== cleanCpfDigits) return false;
+      const logTime = new Date(l.data_hora).getTime();
+      return Math.abs(now - logTime) < DEDUPLICATION_WINDOW_MS;
+    });
+
+    if (existingRecent) {
+      recentLogTimestampsPerCpf.set(cleanCpfDigits, now);
+      return existingRecent;
+    }
+  }
+
+  // Registra timestamp em memória para travar requisições concorrentes
+  if (cleanCpfDigits.length >= 9) {
+    recentLogTimestampsPerCpf.set(cleanCpfDigits, now);
+  }
+
   const currentMax = getMaxAcessoCidadaoNumero();
   const nextNumero = currentMax + 1;
 
@@ -2199,6 +2239,75 @@ export function registrarAcessoCidadaoLog(logData: Omit<AcessoCidadaoLog, "id" |
 
   notifyDataSync("acessos_cidadao");
   return newLog;
+}
+
+/**
+ * Identifica e remove registros duplicados de acesso do cidadão ocorridos
+ * para o mesmo CPF em intervalo inferior a 3 minutos (ex: múltiplos cliques no celular).
+ */
+export async function consolidarAcessosCidadaoDuplicados(): Promise<{ removidos: number; restantes: number }> {
+  const allLogs = getAcessosCidadaoLogs();
+  if (!allLogs || allLogs.length === 0) {
+    return { removidos: 0, restantes: 0 };
+  }
+
+  // Ordena cronologicamente crescente para manter o registro original
+  const sorted = [...allLogs].sort((a, b) => new Date(a.data_hora).getTime() - new Date(b.data_hora).getTime());
+
+  const mantidos: AcessoCidadaoLog[] = [];
+  const idsParaRemover: string[] = [];
+  const THREE_MINUTES = 3 * 60 * 1000;
+
+  for (const log of sorted) {
+    const cleanCpf = (log.cpf || "").replace(/\D/g, "");
+    const logTime = new Date(log.data_hora).getTime();
+
+    if (!cleanCpf || cleanCpf.length < 9) {
+      mantidos.push(log);
+      continue;
+    }
+
+    // Busca se já temos um registro mantido para o mesmo CPF dentro da janela de 3 minutos
+    const duplicateOf = mantidos.find((m) => {
+      const mCpf = (m.cpf || "").replace(/\D/g, "");
+      if (mCpf !== cleanCpf) return false;
+      const mTime = new Date(m.data_hora).getTime();
+      return Math.abs(logTime - mTime) < THREE_MINUTES;
+    });
+
+    if (duplicateOf) {
+      idsParaRemover.push(log.id);
+    } else {
+      mantidos.push(log);
+    }
+  }
+
+  if (idsParaRemover.length > 0) {
+    // Reordena os mantidos em ordem cronológica decrescente (mais recente primeiro)
+    mantidos.sort((a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime());
+
+    if (typeof window !== "undefined") {
+      localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(mantidos.slice(0, 1000)));
+      const maxNum = mantidos.reduce((max, l) => Math.max(max, l.numero || 0), mantidos.length);
+      localStorage.setItem("detran_acessos_cidadao_max_numero", maxNum.toString());
+      localStorage.setItem("detran_public_search_count", maxNum.toString());
+    }
+
+    if (isSupabaseConfigured()) {
+      try {
+        for (let i = 0; i < idsParaRemover.length; i += 50) {
+          const batch = idsParaRemover.slice(i, i + 50);
+          await supabase.from("acessos_cidadao").delete().in("id", batch);
+        }
+      } catch (err) {
+        console.warn("Aviso ao deletar duplicatas do Supabase:", err);
+      }
+    }
+
+    notifyDataSync("acessos_cidadao");
+  }
+
+  return { removidos: idsParaRemover.length, restantes: mantidos.length };
 }
 
 function generateSeedAcessosCidadaoLogs(): AcessoCidadaoLog[] {
@@ -2370,20 +2479,29 @@ function matchCpfDigits(recordCpf: string | undefined | null, targetClean: strin
   );
 }
 
+const inFlightConsultas = new Map<string, Promise<ResultadoConsultaPublica>>();
+
 export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<ResultadoConsultaPublica> {
   const cleanCpf = cpfInput.replace(/\D/g, "");
   if (!cleanCpf || cleanCpf.length < 9) {
     throw new Error("Por favor, informe um CPF válido para realizar a consulta.");
   }
 
-  const pad11 = (val: string) => val.replace(/\D/g, "").padStart(11, "0");
-  const searchPad = pad11(cleanCpf);
-  const unpaddedCpf = cleanCpf.replace(/^0+/, "");
-  const formattedCpf = cleanCpf.length === 11 
-    ? `${cleanCpf.slice(0, 3)}.${cleanCpf.slice(3, 6)}.${cleanCpf.slice(6, 9)}-${cleanCpf.slice(9)}`
-    : (searchPad.length === 11 ? `${searchPad.slice(0, 3)}.${searchPad.slice(3, 6)}.${searchPad.slice(6, 9)}-${searchPad.slice(9)}` : cleanCpf);
+  // Previne execuções concorrentes simultâneas disparadas em rajada pelo mesmo dispositivo
+  const existingInFlight = inFlightConsultas.get(cleanCpf);
+  if (existingInFlight) {
+    return existingInFlight;
+  }
 
-  const cnhsMap = new Map<string, GeralCNH>();
+  const queryPromise = (async (): Promise<ResultadoConsultaPublica> => {
+    const pad11 = (val: string) => val.replace(/\D/g, "").padStart(11, "0");
+    const searchPad = pad11(cleanCpf);
+    const unpaddedCpf = cleanCpf.replace(/^0+/, "");
+    const formattedCpf = cleanCpf.length === 11 
+      ? `${cleanCpf.slice(0, 3)}.${cleanCpf.slice(3, 6)}.${cleanCpf.slice(6, 9)}-${cleanCpf.slice(9)}`
+      : (searchPad.length === 11 ? `${searchPad.slice(0, 3)}.${searchPad.slice(3, 6)}.${searchPad.slice(6, 9)}-${searchPad.slice(9)}` : cleanCpf);
+
+    const cnhsMap = new Map<string, GeralCNH>();
 
   // 1. BUSCA DIRETA E INSTANTÂNEA NO BANCO DE DADOS SUPABASE
   if (isSupabaseConfigured()) {
@@ -2635,14 +2753,22 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
     cidade_origem: "Belém"
   });
 
-  return {
-    cpfConsultado: cleanCpf,
-    cnhEncontrada: cnhMaisRecente,
-    historico: ordenadas,
-    statusDisponibilidade: "EM_PROCESSAMENTO",
-    mensagem: "⏳ Sua CNH consta em processamento/trânsito e ainda não deu entrada no balcão de atendimento.",
-    possuiDuplicatas: ordenadas.length > 1
-  };
+    return {
+      cpfConsultado: cleanCpf,
+      cnhEncontrada: cnhMaisRecente,
+      historico: ordenadas,
+      statusDisponibilidade: "EM_PROCESSAMENTO",
+      mensagem: "⏳ Sua CNH consta em processamento/trânsito e ainda não deu entrada no balcão de atendimento.",
+      possuiDuplicatas: ordenadas.length > 1
+    };
+  })();
+
+  inFlightConsultas.set(cleanCpf, queryPromise);
+  try {
+    return await queryPromise;
+  } finally {
+    inFlightConsultas.delete(cleanCpf);
+  }
 }
 
 // Cadastro Manual de CNH no Protocolo (Botão ➕ Cadastro Manual)
