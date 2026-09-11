@@ -1373,9 +1373,9 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
             <input
               type="text"
               value={candNome}
-              onChange={(e) => setCandNome(e.target.value)}
-              placeholder="ex: João da Silva Souza"
-              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+              onChange={(e) => setCandNome(e.target.value.toUpperCase())}
+              placeholder="EX: JOÃO DA SILVA SOUZA"
+              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden uppercase"
             />
             {candErrors.nome && <p className="text-[11px] text-rose-500 mt-1">{candErrors.nome}</p>}
           </div>

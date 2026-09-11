@@ -1,0 +1,276 @@
+import React, { useState, useEffect, useRef } from "react";
+import { RotateCcw, Zap } from "lucide-react";
+import { Modal } from "./ui/Modal";
+import { GeralCNH, SituacaoGeral, CadastroManualCNHSchema } from "../types";
+import { formatCPF } from "../lib/utils";
+import { createGeralManual } from "../services/db";
+
+interface CadastroManualModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: (nova: GeralCNH, situacao: SituacaoGeral) => void;
+  user: { id: string; nome_curto: string } | null;
+}
+
+export const CadastroManualModal: React.FC<CadastroManualModalProps> = React.memo(({
+  isOpen,
+  onClose,
+  onSuccess,
+  user,
+}) => {
+  const [nome, setNome] = useState("");
+  const [cpf, setCpf] = useState("");
+  const [situacao, setSituacao] = useState<SituacaoGeral>("Recebida");
+  const [observacao, setObservacao] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const nomeInputRef = useRef<HTMLInputElement>(null);
+  const cpfInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-foco ao abrir a modal
+  useEffect(() => {
+    if (isOpen) {
+      setSuccessMsg(null);
+      setErrors({});
+      setNome("");
+      setCpf("");
+      setSituacao("Recebida");
+      setObservacao("");
+      const timer = setTimeout(() => {
+        nomeInputRef.current?.focus();
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen]);
+
+  const handleClearForm = () => {
+    setNome("");
+    setCpf("");
+    setObservacao("");
+    setErrors({});
+    setSuccessMsg(null);
+    setTimeout(() => {
+      nomeInputRef.current?.focus();
+    }, 40);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setErrors({});
+
+    const nomeTrimmed = nome.trim().toUpperCase();
+    const formattedCpf = formatCPF(cpf);
+    const situacaoEscolhida = situacao;
+    const obsEscolhida = observacao.trim();
+
+    const validation = CadastroManualCNHSchema.safeParse({
+      nome: nomeTrimmed,
+      cpf: formattedCpf,
+      situacao: situacaoEscolhida,
+      observacao: obsEscolhida,
+    });
+
+    if (!validation.success) {
+      const errs: Record<string, string> = {};
+      validation.error.issues.forEach((iss) => {
+        if (iss.path[0]) errs[iss.path[0].toString()] = iss.message;
+      });
+      setErrors(errs);
+      return;
+    }
+
+    // LIMPEZA IMEDIATA DO FORMULÁRIO para digitação ultra-rápida do próximo registro se não for entregue
+    if (situacaoEscolhida !== "Entregue") {
+      setNome("");
+      setCpf("");
+      setObservacao("");
+      setErrors({});
+      setSuccessMsg(`⚡ Cadastrando "${nomeTrimmed}"...`);
+      setTimeout(() => {
+        nomeInputRef.current?.focus();
+      }, 40);
+    }
+
+    setSubmitting(true);
+    try {
+      const nova = await createGeralManual(
+        {
+          nome: nomeTrimmed,
+          cpf: formattedCpf,
+          situacao: situacaoEscolhida,
+          observacao: obsEscolhida,
+        },
+        user.id,
+        user.nome_curto
+      );
+
+      if (situacaoEscolhida === "Entregue") {
+        onSuccess(nova, "Entregue");
+        onClose();
+      } else {
+        const msg = `✅ CNH #${nova.ordem} ("${nova.nome}") cadastrada com sucesso! Alocada em: ${nova.gaveta || "Em Trânsito"} ${nova.reparticao}`;
+        setSuccessMsg(msg);
+        onSuccess(nova, situacaoEscolhida);
+      }
+    } catch (err: any) {
+      setErrors({ geral: err.message || "Erro ao cadastrar CNH manualmente" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="➕ Cadastro Manual de CNH no Protocolo"
+      maxWidth="md"
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="p-3 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900 rounded-xl text-xs text-blue-800 dark:text-blue-300 space-y-1">
+          <p className="font-bold">⚡ Regras do Cadastro Manual DETRAN:</p>
+          <p>1. A <strong>Ordem</strong> sequencial é gerada automaticamente pelo sistema.</p>
+          <p>2. Se cadastrar como <strong>Recebida</strong>, a Gaveta e Repartição são calculadas automaticamente conforme a inicial do nome.</p>
+          <p>3. Se cadastrar como <strong>Entregue</strong>, a modal de entrega será aberta em seguida para informar o responsável pela retirada.</p>
+        </div>
+
+        {successMsg && (
+          <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-800 dark:text-emerald-200 font-bold flex items-center justify-between gap-2 shadow-2xs">
+            <span>{successMsg}</span>
+            <span className="text-[10px] bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-100 px-2 py-0.5 rounded-md uppercase font-extrabold shrink-0">
+              Pronto p/ próximo
+            </span>
+          </div>
+        )}
+
+        {errors.geral && (
+          <div className="p-3 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 rounded-xl text-xs text-rose-600 dark:text-rose-400 font-medium">
+            {errors.geral}
+          </div>
+        )}
+
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Nome Completo do Titular da CNH <span className="text-rose-500">*</span>
+            </label>
+            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
+              Pressione <strong>Enter</strong> para ir ao CPF
+            </span>
+          </div>
+          <input
+            ref={nomeInputRef}
+            type="text"
+            value={nome}
+            onChange={(e) => {
+              setNome(e.target.value.toUpperCase());
+              if (errors.nome) setErrors((prev) => ({ ...prev, nome: "" }));
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                cpfInputRef.current?.focus();
+              }
+            }}
+            placeholder="EX: MARIA FERNANDA GONÇALVES"
+            className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden uppercase"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {errors.nome && <p className="text-[11px] text-rose-500 mt-1">{errors.nome}</p>}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                CPF do Titular <span className="text-rose-500">*</span>
+              </label>
+              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
+                <strong>Enter</strong> cadastra
+              </span>
+            </div>
+            <input
+              ref={cpfInputRef}
+              type="text"
+              value={cpf}
+              onChange={(e) => {
+                setCpf(formatCPF(e.target.value));
+                if (errors.cpf) setErrors((prev) => ({ ...prev, cpf: "" }));
+              }}
+              placeholder="000.000.000-00"
+              maxLength={14}
+              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+              autoComplete="off"
+            />
+            {errors.cpf && <p className="text-[11px] text-rose-500 mt-1">{errors.cpf}</p>}
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Situação Inicial
+            </label>
+            <select
+              value={situacao}
+              onChange={(e) => setSituacao(e.target.value as SituacaoGeral)}
+              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+            >
+              <option value="Recebida">🔵 Recebida na Agência (Aloca Gaveta auto)</option>
+              <option value="Remetida">🟡 Remetida (Em trânsito)</option>
+              <option value="Pendente">🔴 Pendente (Com exigência)</option>
+              <option value="Entregue">🟢 Entregue diretamente ao cidadão</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+            Observações (Motivo do cadastro manual, carimbo, etc.)
+          </label>
+          <textarea
+            value={observacao}
+            onChange={(e) => setObservacao(e.target.value)}
+            placeholder="ex: CNH devolvida pelos Correios / Entrega avulsa do CFC..."
+            rows={3}
+            className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={handleClearForm}
+            title="Limpar todos os campos do formulário para digitar do zero"
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+            <span>Limpar Formulário</span>
+          </button>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
+            >
+              Fechar
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="flex items-center gap-1.5 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-md shadow-blue-600/20 text-xs transition-all disabled:opacity-50 cursor-pointer"
+            >
+              <Zap className="w-3.5 h-3.5 text-yellow-300" />
+              <span>{submitting ? "Cadastrando..." : "Confirmar Cadastro"}</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+});
+
+CadastroManualModal.displayName = "CadastroManualModal";

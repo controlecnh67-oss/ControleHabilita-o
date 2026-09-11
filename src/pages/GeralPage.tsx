@@ -70,6 +70,8 @@ import { Badge } from "../components/ui/Badge";
 import { OcrScannerModal } from "../components/OcrScannerModal";
 import { ExcelRecebimentoModal } from "../components/ExcelRecebimentoModal";
 import { DuplicatasModal } from "../components/DuplicatasModal";
+import { CadastroManualModal } from "../components/CadastroManualModal";
+import { EditarCNHModal } from "../components/EditarCNHModal";
 import { formatCPF, formatPhone, formatDateTime, normalizeSearch, matchDigitsSafe } from "../lib/utils";
 
 // Helper para exibir Gaveta e Repartição de forma compacta (apenas número/código) na tabela
@@ -213,15 +215,6 @@ export const GeralPage: React.FC = () => {
 
   // Modal 1: Cadastro Manual
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
-  const [manualNome, setManualNome] = useState("");
-  const [manualCpf, setManualCpf] = useState("");
-  const [manualSituacao, setManualSituacao] = useState<SituacaoGeral>("Recebida");
-  const [manualObservacao, setManualObservacao] = useState("");
-  const [manualErrors, setManualErrors] = useState<Record<string, string>>({});
-  const [manualSuccessMsg, setManualSuccessMsg] = useState<string | null>(null);
-  const [submittingManual, setSubmittingManual] = useState(false);
-  const manualNomeInputRef = useRef<HTMLInputElement>(null);
-  const manualCpfInputRef = useRef<HTMLInputElement>(null);
 
   // Modal 2: Entrega de CNH
   const [isEntregaModalOpen, setIsEntregaModalOpen] = useState(false);
@@ -244,14 +237,6 @@ export const GeralPage: React.FC = () => {
   // Modal 4: Editar/Alterar CNH (ou marcar Pendente)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingCNH, setEditingCNH] = useState<GeralCNH | null>(null);
-  const [editNome, setEditNome] = useState("");
-  const [editCpf, setEditCpf] = useState("");
-  const [editSituacao, setEditSituacao] = useState<SituacaoGeral>("Remetida");
-  const [editGaveta, setEditGaveta] = useState("");
-  const [editReparticao, setEditReparticao] = useState("");
-  const [editObs, setEditObs] = useState("");
-  const [editErrors, setEditErrors] = useState<Record<string, string>>({});
-  const [submittingEdit, setSubmittingEdit] = useState(false);
 
   // Modal 6: Visualização Detalhada da CNH
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
@@ -762,112 +747,7 @@ export const GeralPage: React.FC = () => {
 
   // Botão ➕ Cadastro Manual
   const handleOpenManualModal = () => {
-    setManualSuccessMsg(null);
-    setManualErrors({});
-    setManualNome("");
-    setManualCpf("");
-    setManualSituacao("Recebida");
-    setManualObservacao("");
     setIsManualModalOpen(true);
-    setTimeout(() => {
-      manualNomeInputRef.current?.focus();
-    }, 60);
-  };
-
-  const handleClearManualForm = () => {
-    setManualNome("");
-    setManualCpf("");
-    setManualObservacao("");
-    setManualErrors({});
-    setManualSuccessMsg(null);
-    setTimeout(() => {
-      manualNomeInputRef.current?.focus();
-    }, 40);
-  };
-
-  const handleSaveManual = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user) return;
-    setManualErrors({});
-
-    const nomeTrimmed = manualNome.trim();
-    const formattedCpf = formatCPF(manualCpf);
-    const situacaoEscolhida = manualSituacao;
-    const obsEscolhida = manualObservacao.trim();
-
-    const validation = CadastroManualCNHSchema.safeParse({
-      nome: nomeTrimmed,
-      cpf: formattedCpf,
-      situacao: situacaoEscolhida,
-      observacao: obsEscolhida,
-    });
-
-    if (!validation.success) {
-      const errs: Record<string, string> = {};
-      validation.error.issues.forEach((iss) => {
-        if (iss.path[0]) errs[iss.path[0].toString()] = iss.message;
-      });
-      setManualErrors(errs);
-      return;
-    }
-
-    // LIMPEZA IMEDIATA DO FORMULÁRIO para digitação ultra-rápida do próximo registro
-    if (situacaoEscolhida !== "Entregue") {
-      setManualNome("");
-      setManualCpf("");
-      setManualObservacao("");
-      setManualErrors({});
-      setManualSuccessMsg(`⚡ Cadastrando "${nomeTrimmed}"...`);
-      // Retorna o foco imediatamente para o campo de Nome
-      setTimeout(() => {
-        manualNomeInputRef.current?.focus();
-      }, 40);
-    }
-
-    setSubmittingManual(true);
-    try {
-      const nova = await createGeralManual(
-        {
-          nome: nomeTrimmed,
-          cpf: formattedCpf,
-          situacao: situacaoEscolhida,
-          observacao: obsEscolhida,
-        },
-        user.id,
-        user.nome_curto
-      );
-
-      // Atualização otimista imediata na lista de CNHs locais para refletir instantaneamente
-      setCnhs((prev) => {
-        const exists = prev.some((c) => c.id === nova.id);
-        if (exists) return prev;
-        return [nova, ...prev];
-      });
-
-      // Se cadastrar como Entregue, fechar a modal manual e abrir a de entrega
-      if (situacaoEscolhida === "Entregue") {
-        setIsManualModalOpen(false);
-        setMessage({
-          type: "success",
-          text: `CNH #${nova.ordem} de "${nova.nome}" cadastrada. Complete agora as informações da entrega.`
-        });
-        handleOpenEntregaModal(nova);
-      } else {
-        const msg = `✅ CNH #${nova.ordem} ("${nova.nome}") cadastrada com sucesso! Alocada em: ${nova.gaveta || "Em Trânsito"} ${nova.reparticao}`;
-        setManualSuccessMsg(msg);
-        setMessage({
-          type: "success",
-          text: msg
-        });
-        // Garante foco pronto no campo Nome para a próxima CNH
-        manualNomeInputRef.current?.focus();
-      }
-    } catch (err: any) {
-      setManualErrors({ geral: err.message || "Erro no cadastro manual." });
-      setManualSuccessMsg(null);
-    } finally {
-      setSubmittingManual(false);
-    }
   };
 
   // Botão 📤 Entregar
@@ -1033,58 +913,19 @@ export const GeralPage: React.FC = () => {
   // Edição Geral / Alterar para Pendente
   const handleOpenEditModal = (item: GeralCNH) => {
     setEditingCNH(item);
-    setEditNome(item.nome || "");
-    setEditCpf(item.cpf ? formatCPF(item.cpf) : "");
-    setEditSituacao(item.situacao);
-    setEditGaveta(item.gaveta || "");
-    setEditReparticao(item.reparticao || "");
-    setEditObs(item.observacao || "");
-    setEditErrors({});
     setIsEditModalOpen(true);
   };
 
-  const handleSaveEdit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || !editingCNH) return;
-
-    setEditErrors({});
-    const nomeTrimmed = editNome.trim().toUpperCase();
-    if (!nomeTrimmed || nomeTrimmed.length < 3) {
-      setEditErrors((prev) => ({ ...prev, nome: "Nome do titular é obrigatório (mínimo 3 caracteres)." }));
-      return;
-    }
-
-    const cleanCpfDigits = editCpf.replace(/\D/g, "");
-    if (cleanCpfDigits && cleanCpfDigits.length !== 11) {
-      setEditErrors((prev) => ({ ...prev, cpf: "O CPF deve conter exatamente 11 dígitos." }));
-      return;
-    }
-
-    const formattedCpf = cleanCpfDigits ? formatCPF(cleanCpfDigits) : "";
-
-    setSubmittingEdit(true);
-    try {
-      await updateGeralCNH(
-        editingCNH.id,
-        {
-          nome: nomeTrimmed,
-          cpf: formattedCpf,
-          situacao: editSituacao,
-          gaveta: editGaveta,
-          reparticao: editReparticao,
-          observacao: editObs,
-        },
-        user.id,
-        user.nome_curto
-      );
-      setMessage({ type: "success", text: `CNH #${editingCNH.ordem} atualizada com sucesso!` });
-      setIsEditModalOpen(false);
-      await fetchDados();
-    } catch (err: any) {
-      alert(err.message || "Erro ao editar CNH");
-    } finally {
-      setSubmittingEdit(false);
-    }
+  const handleSaveEdit = async (id: string, data: Partial<GeralCNH>) => {
+    if (!user) return;
+    await updateGeralCNH(
+      id,
+      data,
+      user.id,
+      user.nome_curto
+    );
+    setMessage({ type: "success", text: `CNH atualizada com sucesso!` });
+    await fetchDados();
   };
 
   // Exportação para Excel (.xlsx)
@@ -2211,145 +2052,35 @@ export const GeralPage: React.FC = () => {
         )}
       </div>
 
-      {/* MODAL 1: ➕ CADASTRO MANUAL */}
-      <Modal
+      {/* MODAL 1: ➕ CADASTRO MANUAL (Isolado e Otimizado para Digitação Rápida em Caixa Alta) */}
+      <CadastroManualModal
         isOpen={isManualModalOpen}
         onClose={() => setIsManualModalOpen(false)}
-        title="➕ Cadastro Manual de CNH no Protocolo"
-        maxWidth="md"
-      >
-        <form onSubmit={handleSaveManual} className="space-y-4">
-          <div className="p-3 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900 rounded-xl text-xs text-blue-800 dark:text-blue-300 space-y-1">
-            <p className="font-bold">⚡ Regras do Cadastro Manual DETRAN:</p>
-            <p>1. A <strong>Ordem</strong> sequencial é gerada automaticamente pelo sistema.</p>
-            <p>2. Se cadastrar como <strong>Recebida</strong>, a Gaveta e Repartição são calculadas automaticamente conforme a inicial do nome.</p>
-            <p>3. Se cadastrar como <strong>Entregue</strong>, a modal de entrega será aberta em seguida para informar o responsável pela retirada.</p>
-          </div>
+        user={user}
+        onSuccess={(nova, situacao) => {
+          // Atualização otimista imediata na lista de CNHs locais para refletir instantaneamente
+          setCnhs((prev) => {
+            const exists = prev.some((c) => c.id === nova.id);
+            if (exists) return prev;
+            return [nova, ...prev];
+          });
 
-          {manualSuccessMsg && (
-            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs text-emerald-800 dark:text-emerald-200 font-bold flex items-center justify-between gap-2 shadow-2xs">
-              <span>{manualSuccessMsg}</span>
-              <span className="text-[10px] bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-100 px-2 py-0.5 rounded-md uppercase font-extrabold shrink-0">
-                Pronto p/ próximo
-              </span>
-            </div>
-          )}
-
-          {manualErrors.geral && (
-            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-600 font-medium">
-              {manualErrors.geral}
-            </div>
-          )}
-
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Nome Completo do Titular da CNH <span className="text-rose-500">*</span>
-              </label>
-              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
-                Pressione <strong>Enter</strong> para ir ao CPF
-              </span>
-            </div>
-            <input
-              ref={manualNomeInputRef}
-              type="text"
-              value={manualNome}
-              onChange={(e) => setManualNome(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  manualCpfInputRef.current?.focus();
-                }
-              }}
-              placeholder="ex: Maria Fernanda Gonçalves"
-              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
-            />
-            {manualErrors.nome && <p className="text-[11px] text-rose-500 mt-1">{manualErrors.nome}</p>}
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  CPF do Titular <span className="text-rose-500">*</span>
-                </label>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
-                  <strong>Enter</strong> cadastra
-                </span>
-              </div>
-              <input
-                ref={manualCpfInputRef}
-                type="text"
-                value={manualCpf}
-                onChange={(e) => setManualCpf(formatCPF(e.target.value))}
-                placeholder="000.000.000-00"
-                maxLength={14}
-                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
-              />
-              {manualErrors.cpf && <p className="text-[11px] text-rose-500 mt-1">{manualErrors.cpf}</p>}
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Situação Inicial
-              </label>
-              <select
-                value={manualSituacao}
-                onChange={(e) => setManualSituacao(e.target.value as SituacaoGeral)}
-                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
-              >
-                <option value="Recebida">🔵 Recebida na Agência (Aloca Gaveta auto)</option>
-                <option value="Remetida">🟡 Remetida (Em trânsito)</option>
-                <option value="Pendente">🔴 Pendente (Com exigência)</option>
-                <option value="Entregue">🟢 Entregue diretamente ao cidadão</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Observações (Motivo do cadastro manual, carimbo, etc.)
-            </label>
-            <textarea
-              value={manualObservacao}
-              onChange={(e) => setManualObservacao(e.target.value)}
-              placeholder="ex: CNH devolvida pelos Correios / Entrega avulsa do CFC..."
-              rows={3}
-              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
-            />
-          </div>
-
-          <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={handleClearManualForm}
-              title="Limpar todos os campos do formulário para digitar do zero"
-              className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-              <span>Limpar Formulário</span>
-            </button>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsManualModalOpen(false)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
-              >
-                Fechar
-              </button>
-              <button
-                type="submit"
-                disabled={submittingManual}
-                className="flex items-center gap-1.5 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-md shadow-blue-600/20 text-xs transition-all disabled:opacity-50 cursor-pointer"
-              >
-                <Zap className="w-3.5 h-3.5 text-blue-200" />
-                <span>{submittingManual ? "Cadastrando..." : "Confirmar Cadastro"}</span>
-              </button>
-            </div>
-          </div>
-        </form>
-      </Modal>
+          if (situacao === "Entregue") {
+            setMessage({
+              type: "success",
+              text: `CNH #${nova.ordem} de "${nova.nome}" cadastrada. Complete agora as informações da entrega.`
+            });
+            handleOpenEntregaModal(nova);
+          } else {
+            const msg = `✅ CNH #${nova.ordem} ("${nova.nome}") cadastrada com sucesso! Alocada em: ${nova.gaveta || "Em Trânsito"} ${nova.reparticao}`;
+            setMessage({
+              type: "success",
+              text: msg
+            });
+            fetchDados();
+          }
+        }}
+      />
 
       {/* MODAL 2: 📤 ENTREGAR CNH */}
       <Modal
@@ -2546,9 +2277,9 @@ export const GeralPage: React.FC = () => {
             <input
               type="text"
               value={newRespNome}
-              onChange={(e) => setNewRespNome(e.target.value)}
+              onChange={(e) => setNewRespNome(e.target.value.toUpperCase())}
               placeholder="ex: Carlos Alberto - CFC Brasil"
-              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden uppercase"
             />
             {newRespErrors.nome && <p className="text-[11px] text-rose-500 mt-1">{newRespErrors.nome}</p>}
           </div>
@@ -2614,146 +2345,13 @@ export const GeralPage: React.FC = () => {
         </form>
       </Modal>
 
-      {/* MODAL 4: EDITAR CNH / ALTERAR SITUAÇÃO */}
-      <Modal
+      {/* MODAL 4: ✏️ EDITAR CNH / ALTERAR SITUAÇÃO (Isolado e Otimizado com Digitação em Caixa Alta) */}
+      <EditarCNHModal
         isOpen={isEditModalOpen}
+        cnh={editingCNH}
         onClose={() => setIsEditModalOpen(false)}
-        title="Editar CNH / Alterar Situação"
-        maxWidth="sm"
-      >
-        {editingCNH && (
-          <form onSubmit={handleSaveEdit} className="space-y-4">
-            {/* Informações da Ordem e Origem */}
-            <div className="flex items-center justify-between p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/60">
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-bold text-xs rounded-md">
-                  Ordem #{editingCNH.ordem}
-                </span>
-                {editingCNH.remessa && (
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                    Remessa: {editingCNH.remessa}
-                  </span>
-                )}
-              </div>
-              {editingCNH.memorando_numero && (
-                <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Memo: {editingCNH.memorando_numero}
-                </span>
-              )}
-            </div>
-
-            {/* Campo: Nome do Titular */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Nome do Titular <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={editNome}
-                onChange={(e) => {
-                  setEditNome(e.target.value);
-                  if (editErrors.nome) setEditErrors((prev) => ({ ...prev, nome: "" }));
-                }}
-                placeholder="ex: KAUA OLIVEIRA DA SILVA"
-                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden uppercase"
-              />
-              {editErrors.nome && <p className="text-[11px] text-rose-500 mt-1">{editErrors.nome}</p>}
-            </div>
-
-            {/* Campo: CPF */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                CPF do Titular
-              </label>
-              <input
-                type="text"
-                value={editCpf}
-                onChange={(e) => {
-                  setEditCpf(formatCPF(e.target.value));
-                  if (editErrors.cpf) setEditErrors((prev) => ({ ...prev, cpf: "" }));
-                }}
-                placeholder="000.000.000-00"
-                maxLength={14}
-                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
-              />
-              {editErrors.cpf && <p className="text-[11px] text-rose-500 mt-1">{editErrors.cpf}</p>}
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Situação
-              </label>
-              <select
-                value={editSituacao}
-                onChange={(e) => setEditSituacao(e.target.value as SituacaoGeral)}
-                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
-              >
-                <option value="Remetida">🟡 Remetida (Em trânsito)</option>
-                <option value="Recebida">🔵 Recebida na Agência</option>
-                <option value="Pendente">🔴 Pendente (Com exigência / Bloqueada)</option>
-                <option value="Entregue">🟢 Entregue</option>
-              </select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Gaveta
-                </label>
-                <input
-                  type="text"
-                  value={editGaveta}
-                  onChange={(e) => setEditGaveta(e.target.value)}
-                  placeholder="ex: Gaveta 1"
-                  className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Repartição
-                </label>
-                <input
-                  type="text"
-                  value={editReparticao}
-                  onChange={(e) => setEditReparticao(e.target.value)}
-                  placeholder="ex: Repartição 3"
-                  className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Observações
-              </label>
-              <textarea
-                value={editObs}
-                onChange={(e) => setEditObs(e.target.value)}
-                rows={3}
-                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setIsEditModalOpen(false)}
-                disabled={submittingEdit}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl text-xs cursor-pointer disabled:opacity-50"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                disabled={submittingEdit}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-md text-xs cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
-              >
-                {submittingEdit ? "Salvando..." : "Salvar Alterações"}
-              </button>
-            </div>
-          </form>
-        )}
-      </Modal>
+        onSave={handleSaveEdit}
+      />
 
       {/* Modal 5: Visualização e Confirmação para Impressão PDF */}
       <Modal
