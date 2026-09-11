@@ -244,10 +244,14 @@ export const GeralPage: React.FC = () => {
   // Modal 4: Editar/Alterar CNH (ou marcar Pendente)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingCNH, setEditingCNH] = useState<GeralCNH | null>(null);
+  const [editNome, setEditNome] = useState("");
+  const [editCpf, setEditCpf] = useState("");
   const [editSituacao, setEditSituacao] = useState<SituacaoGeral>("Remetida");
   const [editGaveta, setEditGaveta] = useState("");
   const [editReparticao, setEditReparticao] = useState("");
   const [editObs, setEditObs] = useState("");
+  const [editErrors, setEditErrors] = useState<Record<string, string>>({});
+  const [submittingEdit, setSubmittingEdit] = useState(false);
 
   // Modal 6: Visualização Detalhada da CNH
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
@@ -1029,20 +1033,42 @@ export const GeralPage: React.FC = () => {
   // Edição Geral / Alterar para Pendente
   const handleOpenEditModal = (item: GeralCNH) => {
     setEditingCNH(item);
+    setEditNome(item.nome || "");
+    setEditCpf(item.cpf ? formatCPF(item.cpf) : "");
     setEditSituacao(item.situacao);
-    setEditGaveta(item.gaveta);
-    setEditReparticao(item.reparticao);
+    setEditGaveta(item.gaveta || "");
+    setEditReparticao(item.reparticao || "");
     setEditObs(item.observacao || "");
+    setEditErrors({});
     setIsEditModalOpen(true);
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !editingCNH) return;
+
+    setEditErrors({});
+    const nomeTrimmed = editNome.trim().toUpperCase();
+    if (!nomeTrimmed || nomeTrimmed.length < 3) {
+      setEditErrors((prev) => ({ ...prev, nome: "Nome do titular é obrigatório (mínimo 3 caracteres)." }));
+      return;
+    }
+
+    const cleanCpfDigits = editCpf.replace(/\D/g, "");
+    if (cleanCpfDigits && cleanCpfDigits.length !== 11) {
+      setEditErrors((prev) => ({ ...prev, cpf: "O CPF deve conter exatamente 11 dígitos." }));
+      return;
+    }
+
+    const formattedCpf = cleanCpfDigits ? formatCPF(cleanCpfDigits) : "";
+
+    setSubmittingEdit(true);
     try {
       await updateGeralCNH(
         editingCNH.id,
         {
+          nome: nomeTrimmed,
+          cpf: formattedCpf,
           situacao: editSituacao,
           gaveta: editGaveta,
           reparticao: editReparticao,
@@ -1056,6 +1082,8 @@ export const GeralPage: React.FC = () => {
       await fetchDados();
     } catch (err: any) {
       alert(err.message || "Erro ao editar CNH");
+    } finally {
+      setSubmittingEdit(false);
     }
   };
 
@@ -2595,9 +2623,60 @@ export const GeralPage: React.FC = () => {
       >
         {editingCNH && (
           <form onSubmit={handleSaveEdit} className="space-y-4">
+            {/* Informações da Ordem e Origem */}
+            <div className="flex items-center justify-between p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/60">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-bold text-xs rounded-md">
+                  Ordem #{editingCNH.ordem}
+                </span>
+                {editingCNH.remessa && (
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                    Remessa: {editingCNH.remessa}
+                  </span>
+                )}
+              </div>
+              {editingCNH.memorando_numero && (
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Memo: {editingCNH.memorando_numero}
+                </span>
+              )}
+            </div>
+
+            {/* Campo: Nome do Titular */}
             <div>
-              <p className="text-xs font-bold text-slate-900 dark:text-white">Ordem #{editingCNH.ordem} - {editingCNH.nome}</p>
-              <p className="text-xs font-mono text-slate-500">CPF: {editingCNH.cpf ? formatCPF(editingCNH.cpf) : "-"}</p>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Nome do Titular <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={editNome}
+                onChange={(e) => {
+                  setEditNome(e.target.value);
+                  if (editErrors.nome) setEditErrors((prev) => ({ ...prev, nome: "" }));
+                }}
+                placeholder="ex: KAUA OLIVEIRA DA SILVA"
+                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden uppercase"
+              />
+              {editErrors.nome && <p className="text-[11px] text-rose-500 mt-1">{editErrors.nome}</p>}
+            </div>
+
+            {/* Campo: CPF */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                CPF do Titular
+              </label>
+              <input
+                type="text"
+                value={editCpf}
+                onChange={(e) => {
+                  setEditCpf(formatCPF(e.target.value));
+                  if (editErrors.cpf) setEditErrors((prev) => ({ ...prev, cpf: "" }));
+                }}
+                placeholder="000.000.000-00"
+                maxLength={14}
+                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+              />
+              {editErrors.cpf && <p className="text-[11px] text-rose-500 mt-1">{editErrors.cpf}</p>}
             </div>
 
             <div>
@@ -2659,15 +2738,17 @@ export const GeralPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setIsEditModalOpen(false)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl text-xs"
+                disabled={submittingEdit}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl text-xs cursor-pointer disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-md text-xs"
+                disabled={submittingEdit}
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-md text-xs cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
               >
-                Salvar Alterações
+                {submittingEdit ? "Salvando..." : "Salvar Alterações"}
               </button>
             </div>
           </form>

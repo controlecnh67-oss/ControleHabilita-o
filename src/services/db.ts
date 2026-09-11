@@ -3175,6 +3175,23 @@ export async function updateGeralCNH(
       undefined,
       atualizado.cpf
     );
+  } else if (ant.nome !== atualizado.nome || ant.cpf !== atualizado.cpf) {
+    const alteracoes: string[] = [];
+    if (ant.nome !== atualizado.nome) alteracoes.push(`Nome alterado de "${ant.nome}" para "${atualizado.nome}"`);
+    if (ant.cpf !== atualizado.cpf) alteracoes.push(`CPF alterado de "${ant.cpf || "não informado"}" para "${atualizado.cpf || "não informado"}"`);
+    await logHistorico(
+      atualizado.id,
+      atualizado.ordem,
+      atualizado.nome,
+      atualizado.situacao,
+      atualizado.situacao,
+      userId,
+      userNome,
+      alteracoes.join(" • "),
+      undefined,
+      undefined,
+      atualizado.cpf
+    );
   }
 
   await logAuditoria("geral", `Ordem #${ant.ordem}`, "Alteração", userId, userNome, ant, atualizado);
