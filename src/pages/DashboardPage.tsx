@@ -34,6 +34,7 @@ import {
 } from "recharts";
 import { getDashboardStats } from "../services/db";
 import { subscribeToMultipleSupabaseRealtime } from "../services/supabase";
+import { MapaArquivoFisicoCard } from "../components/MapaArquivoFisicoCard";
 
 export const DashboardPage: React.FC = () => {
   const [stats, setStats] = useState<any>(null);
@@ -198,6 +199,9 @@ export const DashboardPage: React.FC = () => {
         })}
       </div>
 
+      {/* Mapa Intuitivo do Arquivo Físico (4 Gavetas × 8 Repartições) */}
+      <MapaArquivoFisicoCard data={stats.mapaArquivoFisico} />
+
       {/* Gráficos Linha 1: Situação + Movimentação Mensal */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Gráfico de Situação (Pizza/Rosca) */}
@@ -279,7 +283,7 @@ export const DashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Gráficos Linha 2: Gaveta + Repartição */}
+      {/* Gráficos Linha 2: Gaveta + Repartição (Apenas CNHs Físicas Recebidas) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Gráfico por Gaveta */}
         <div className="bg-white dark:bg-slate-900 p-5 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
@@ -287,24 +291,35 @@ export const DashboardPage: React.FC = () => {
             <div>
               <h3 className="text-xs font-bold uppercase tracking-widest text-slate-700 dark:text-slate-200 flex items-center gap-2">
                 <MapPin className="w-4 h-4 text-blue-600" />
-                Alocação por Gaveta
+                Alocação por Gaveta (Recebidas)
               </h3>
-              <p className="text-[11px] text-slate-400 mt-0.5">Volume de CNHs em cada gaveta física do protocolo</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">Estoque físico de CNHs com status <strong>Recebida</strong> em cada gaveta</p>
             </div>
+            <span className="px-2.5 py-1 text-[11px] font-bold rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200/60 dark:border-blue-800/60 shrink-0">
+              {stats.cards.recebidas} CNHs físicas
+            </span>
           </div>
           <div className="min-h-[250px]">
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={stats.chartGaveta} margin={{ top: 10, right: 10, left: -10, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
-                <XAxis dataKey="name" stroke="#64748b" fontSize={10} angle={-15} textAnchor="end" />
-                <YAxis stroke="#64748b" fontSize={11} />
-                <Tooltip 
-                  formatter={(value) => [`${value} CNHs`, "Quantidade"]}
-                  contentStyle={{ backgroundColor: "#1e293b", borderColor: "#334155", borderRadius: "8px", color: "#fff", fontSize: "12px" }}
-                />
-                <Bar dataKey="quantidade" fill="#3b82f6" radius={[4, 4, 0, 0]} name="CNHs Armazenadas" />
-              </BarChart>
-            </ResponsiveContainer>
+            {stats.chartGaveta && stats.chartGaveta.length > 0 ? (
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={stats.chartGaveta} margin={{ top: 10, right: 10, left: -10, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
+                  <XAxis dataKey="name" stroke="#64748b" fontSize={10} angle={-15} textAnchor="end" />
+                  <YAxis stroke="#64748b" fontSize={11} allowDecimals={false} />
+                  <Tooltip 
+                    formatter={(value) => [`${value} CNHs`, "Estoque Físico"]}
+                    contentStyle={{ backgroundColor: "#1e293b", borderColor: "#334155", borderRadius: "8px", color: "#fff", fontSize: "12px" }}
+                  />
+                  <Bar dataKey="quantidade" fill="#3b82f6" radius={[4, 4, 0, 0]} name="CNHs Físicas em Gaveta" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-[250px] flex flex-col items-center justify-center text-center p-4 text-slate-400 text-xs">
+                <Inbox className="w-8 h-8 mb-2 text-slate-300 dark:text-slate-600" />
+                <p className="font-semibold text-slate-600 dark:text-slate-300">Nenhuma CNH recebida nas gavetas</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">As CNHs com situação &quot;Recebida&quot; aparecerão aqui contabilizadas por gaveta.</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -314,24 +329,35 @@ export const DashboardPage: React.FC = () => {
             <div>
               <h3 className="text-xs font-bold uppercase tracking-widest text-slate-700 dark:text-slate-200 flex items-center gap-2">
                 <Layers className="w-4 h-4 text-purple-600" />
-                Alocação por Repartição
+                Alocação por Repartição (Recebidas)
               </h3>
-              <p className="text-[11px] text-slate-400 mt-0.5">Subdivisão das CNHs por pasta/repartição nas gavetas</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">Estoque físico de CNHs com status <strong>Recebida</strong> por repartição/pasta</p>
             </div>
+            <span className="px-2.5 py-1 text-[11px] font-bold rounded-md bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200/60 dark:border-purple-800/60 shrink-0">
+              {stats.cards.recebidas} CNHs físicas
+            </span>
           </div>
           <div className="min-h-[250px]">
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={stats.chartReparticao} margin={{ top: 10, right: 10, left: -10, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
-                <XAxis dataKey="name" stroke="#64748b" fontSize={10} angle={-15} textAnchor="end" />
-                <YAxis stroke="#64748b" fontSize={11} />
-                <Tooltip 
-                  formatter={(value) => [`${value} CNHs`, "Quantidade"]}
-                  contentStyle={{ backgroundColor: "#1e293b", borderColor: "#334155", borderRadius: "8px", color: "#fff", fontSize: "12px" }}
-                />
-                <Bar dataKey="quantidade" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="CNHs por Repartição" />
-              </BarChart>
-            </ResponsiveContainer>
+            {stats.chartReparticao && stats.chartReparticao.length > 0 ? (
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={stats.chartReparticao} margin={{ top: 10, right: 10, left: -10, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.2} />
+                  <XAxis dataKey="name" stroke="#64748b" fontSize={10} angle={-15} textAnchor="end" />
+                  <YAxis stroke="#64748b" fontSize={11} allowDecimals={false} />
+                  <Tooltip 
+                    formatter={(value) => [`${value} CNHs`, "Estoque Físico"]}
+                    contentStyle={{ backgroundColor: "#1e293b", borderColor: "#334155", borderRadius: "8px", color: "#fff", fontSize: "12px" }}
+                  />
+                  <Bar dataKey="quantidade" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="CNHs Físicas por Repartição" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-[250px] flex flex-col items-center justify-center text-center p-4 text-slate-400 text-xs">
+                <Layers className="w-8 h-8 mb-2 text-slate-300 dark:text-slate-600" />
+                <p className="font-semibold text-slate-600 dark:text-slate-300">Nenhuma CNH recebida por repartição</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">As CNHs com situação &quot;Recebida&quot; aparecerão aqui contabilizadas por repartição.</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -470,3 +470,30 @@ export interface AcessoCidadaoLog {
   cidade_origem?: string;
   ip_mascarado?: string;
 }
+
+// Interfaces para o Mapa Visual de Gavetas e Repartições Físicas (4 Gavetas x 8 Repartições)
+export interface MapaReparticaoItem {
+  numero: number;
+  nome: string;
+  total: number;
+  iniciais: string[];
+  percentualGaveta: number;
+  percentualTotal: number;
+}
+
+export interface MapaGavetaItem {
+  numero: number;
+  nome: string;
+  total: number;
+  percentualTotal: number;
+  reparticoes: MapaReparticaoItem[];
+}
+
+export interface MapaArquivoFisico {
+  totalFisico: number;
+  gavetas: MapaGavetaItem[];
+  outrasNaoAlocadas: number;
+  reparticoesComCNH: number;
+  totalCompartimentos: number; // 32
+  gavetaMaiorVolume: { numero: number; nome: string; total: number } | null;
+}

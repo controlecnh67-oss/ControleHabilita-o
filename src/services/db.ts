@@ -10,6 +10,9 @@ import {
   SituacaoGeral,
   AcaoAuditoria,
   AcessoCidadaoLog,
+  MapaArquivoFisico,
+  MapaGavetaItem,
+  MapaReparticaoItem,
   getPermissoesPadrao
 } from "../types";
 import { getInitialChar, formatDateTime } from "../lib/utils";
@@ -3388,21 +3391,140 @@ export async function getDashboardStats() {
     { name: "Entregues", valor: entregues, color: "#10b981" }  // Green
   ];
 
-  // Gráfico por Gaveta
-  const gavetasMap: Record<string, number> = {};
-  geral.forEach((g) => {
-    const gav = g.gaveta && g.gaveta.trim() ? g.gaveta : "Sem Gaveta / Em Trânsito";
-    gavetasMap[gav] = (gavetasMap[gav] || 0) + 1;
-  });
-  const chartGaveta = Object.entries(gavetasMap).map(([name, quantidade]) => ({ name, quantidade })).sort((a, b) => b.quantidade - a.quantidade);
+  // Gráficos de Alocação Física (Gaveta e Repartição)
+  // Contar exclusivamente CNHs com situação "Recebida" para apurar o estoque físico real nas gavetas e repartições
+  const cnhsRecebidas = geral.filter((g) => g.situacao === "Recebida");
 
-  // Gráfico por Repartição
-  const reparticoesMap: Record<string, number> = {};
-  geral.forEach((g) => {
-    const rep = g.reparticao && g.reparticao.trim() ? g.reparticao : "Pendente Alocação";
-    reparticoesMap[rep] = (reparticoesMap[rep] || 0) + 1;
+  // Helper functions para parser seguro de números de gaveta e repartição
+  const parseGavetaNum = (val?: string): number | null => {
+    if (!val) return null;
+    const m = String(val).match(/(\d+)/);
+    if (!m) return null;
+    const n = parseInt(m[1], 10);
+    return n >= 1 && n <= 4 ? n : null;
+  };
+
+  const parseReparticaoNum = (val?: string): number | null => {
+    if (!val) return null;
+    const m = String(val).match(/(\d+)/);
+    if (!m) return null;
+    const n = parseInt(m[1], 10);
+    return n >= 1 && n <= 8 ? n : null;
+  };
+
+  // Carregar mapeamentos atuais para vincular as iniciais alfabéticas a cada repartição das gavetas
+  const mapeamentosLista = getStoredList<MapeamentoLocalizacao>("mapeamento", SEED_MAPEAMENTO);
+  const iniciaisPorCompartimento: Record<string, string[]> = {};
+  mapeamentosLista.forEach((m) => {
+    if (m.ativo === false) return;
+    const gNum = parseGavetaNum(m.gaveta);
+    const rNum = parseReparticaoNum(m.reparticao);
+    if (gNum && rNum && m.inicial) {
+      const key = `${gNum}-${rNum}`;
+      iniciaisPorCompartimento[key] = iniciaisPorCompartimento[key] || [];
+      const letter = m.inicial.trim().toUpperCase();
+      if (!iniciaisPorCompartimento[key].includes(letter)) {
+        iniciaisPorCompartimento[key].push(letter);
+      }
+    }
   });
-  const chartReparticao = Object.entries(reparticoesMap).map(([name, quantidade]) => ({ name, quantidade })).sort((a, b) => b.quantidade - a.quantidade);
+  Object.keys(iniciaisPorCompartimento).forEach((k) => {
+    iniciaisPorCompartimento[k].sort();
+  });
+
+  // Matriz 4 Gavetas x 8 Repartições (32 compartimentos físicos)
+  const matrixCounts: Record<number, Record<number, number>> = {
+    1: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0 },
+    2: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0 },
+    3: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0 },
+    4: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0 }
+  };
+
+  let outrasNaoAlocadas = 0;
+
+  // Mapear cada CNH com status "Recebida"
+  cnhsRecebidas.forEach((c) => {
+    let gNum = parseGavetaNum(c.gaveta);
+    let rNum = parseReparticaoNum(c.reparticao);
+
+    // Se faltar gaveta ou repartição, resolve dinamicamente pela inicial do titular da CNH
+    if ((!gNum || !rNum) && c.nome) {
+      const char = getInitialChar(c.nome);
+      const found = mapeamentosLista.find((m) => m.inicial.toUpperCase() === char && m.ativo !== false);
+      if (found) {
+        if (!gNum) gNum = parseGavetaNum(found.gaveta);
+        if (!rNum) rNum = parseReparticaoNum(found.reparticao);
+      }
+    }
+
+    if (gNum && gNum >= 1 && gNum <= 4 && rNum && rNum >= 1 && rNum <= 8) {
+      matrixCounts[gNum][rNum]++;
+    } else {
+      outrasNaoAlocadas++;
+    }
+  });
+
+  const totalFisico = cnhsRecebidas.length;
+  let reparticoesComCNH = 0;
+
+  const gavetasArquivo: MapaGavetaItem[] = [1, 2, 3, 4].map((g) => {
+    let totalGaveta = 0;
+    const reparticoes: MapaReparticaoItem[] = [1, 2, 3, 4, 5, 6, 7, 8].map((r) => {
+      const qtd = matrixCounts[g][r];
+      totalGaveta += qtd;
+      if (qtd > 0) reparticoesComCNH++;
+      const iniciais = iniciaisPorCompartimento[`${g}-${r}`] || [];
+      return {
+        numero: r,
+        nome: `Repartição ${r}`,
+        total: qtd,
+        iniciais,
+        percentualGaveta: 0,
+        percentualTotal: totalFisico > 0 ? Math.round((qtd / totalFisico) * 1000) / 10 : 0
+      };
+    });
+
+    // Atualizar percentual relativo da gaveta
+    reparticoes.forEach((rep) => {
+      rep.percentualGaveta = totalGaveta > 0 ? Math.round((rep.total / totalGaveta) * 1000) / 10 : 0;
+    });
+
+    return {
+      numero: g,
+      nome: `Gaveta ${g}`,
+      total: totalGaveta,
+      percentualTotal: totalFisico > 0 ? Math.round((totalGaveta / totalFisico) * 1000) / 10 : 0,
+      reparticoes
+    };
+  });
+
+  const gavetaMaiorVolume = [...gavetasArquivo].sort((a, b) => b.total - a.total)[0] || null;
+
+  const mapaArquivoFisico: MapaArquivoFisico = {
+    totalFisico,
+    gavetas: gavetasArquivo,
+    outrasNaoAlocadas,
+    reparticoesComCNH,
+    totalCompartimentos: 32,
+    gavetaMaiorVolume: gavetaMaiorVolume && gavetaMaiorVolume.total > 0
+      ? { numero: gavetaMaiorVolume.numero, nome: gavetaMaiorVolume.nome, total: gavetaMaiorVolume.total }
+      : null
+  };
+
+  // Gráfico por Gaveta (apenas CNHs com status "Recebida")
+  const chartGaveta = gavetasArquivo.map((gav) => ({
+    name: gav.nome,
+    quantidade: gav.total
+  }));
+
+  // Gráfico por Repartição (acumulado das 8 repartições somando todas as gavetas)
+  const chartReparticao = [1, 2, 3, 4, 5, 6, 7, 8].map((r) => {
+    const totalRep = gavetasArquivo.reduce((acc, gav) => acc + (gav.reparticoes[r - 1]?.total || 0), 0);
+    return {
+      name: `Repartição ${r}`,
+      quantidade: totalRep
+    };
+  });
 
   // Movimentação Mensal (Últimos meses simulados com base nas datas)
   const mensalMap: Record<string, { remessas: number; entregas: number }> = {
@@ -3432,7 +3554,8 @@ export async function getDashboardStats() {
     chartSituacao,
     chartGaveta,
     chartReparticao,
-    chartMensal
+    chartMensal,
+    mapaArquivoFisico
   };
 }
 
