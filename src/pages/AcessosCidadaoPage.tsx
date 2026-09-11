@@ -73,7 +73,7 @@ export const AcessosCidadaoPage: React.FC = () => {
   const [consolidating, setConsolidating] = useState(false);
   const [consolidationSuccess, setConsolidationSuccess] = useState<string | null>(null);
 
-  // Detecção de registros repetidos (mesmo CPF em intervalo inferior a 3 minutos)
+  // Detecção de registros repetidos (mesmo CPF ou mesmo dispositivo em intervalo inferior a 3 minutos)
   const duplicatesCount = useMemo(() => {
     if (!logs || logs.length === 0) return 0;
     const sorted = [...logs].sort((a, b) => new Date(a.data_hora).getTime() - new Date(b.data_hora).getTime());
@@ -83,13 +83,15 @@ export const AcessosCidadaoPage: React.FC = () => {
 
     for (const log of sorted) {
       const cleanCpf = (log.cpf || "").replace(/\D/g, "");
-      if (!cleanCpf || cleanCpf.length < 9) continue;
+      const logDisp = (log.dispositivo || "").toLowerCase().trim();
       const t = new Date(log.data_hora).getTime();
-      const lastT = seen.get(cleanCpf);
+
+      const primaryKey = cleanCpf && cleanCpf.length >= 9 ? `cpf_${cleanCpf}` : `dev_${logDisp}`;
+      const lastT = seen.get(primaryKey);
       if (lastT !== undefined && Math.abs(t - lastT) < THREE_MINS) {
         count++;
       } else {
-        seen.set(cleanCpf, t);
+        seen.set(primaryKey, t);
       }
     }
     return count;

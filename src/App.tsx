@@ -22,7 +22,7 @@ import { loadOrgaoConfigFromSupabase } from "./services/orgaoService";
 import { isSupabaseConfigured, subscribeToMultipleSupabaseRealtime } from "./services/supabase";
 import { checkAndRunDailyGoogleDriveBackup } from "./services/googleDriveService";
 import { dexieDb, normalizeCNHRecord, notifySyncUpdated, syncGeralWithSupabase } from "./services/dexieDb";
-import { notifyDataSync } from "./services/db";
+import { notifyDataSync, invalidateSupabaseCache } from "./services/db";
 
 const MainLayout: React.FC = () => {
   const { user, isAuthenticated, isLoading, timeRemaining, logout } = useAuth();
@@ -42,7 +42,7 @@ const MainLayout: React.FC = () => {
     }
   }, []);
 
-  // Sincronização em Tempo Real (Supabase Realtime) Multi-Máquina
+  // Sincronização em Tempo Real (Supabase Realtime) e Heartbeat Multi-Máquina
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
 
@@ -57,6 +57,7 @@ const MainLayout: React.FC = () => {
     ];
 
     const unsubscribe = subscribeToMultipleSupabaseRealtime(tablesToWatch, async (table, payload) => {
+      invalidateSupabaseCache(table);
       if (table === "geral_cnhs") {
         const eventType = payload.eventType;
         if ((eventType === "INSERT" || eventType === "UPDATE") && payload.new) {
@@ -80,15 +81,40 @@ const MainLayout: React.FC = () => {
       }
     });
 
-    // Ao focar na aba do navegador, efetua delta-sync automático
-    const handleFocus = () => {
-      syncGeralWithSupabase(false).catch(() => {});
+    // Polling inteligente em background (Delta Sync): verifica a cada 12 segundos se houve novas alterações em outras máquinas
+    const backgroundInterval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        syncGeralWithSupabase(false).catch(() => {});
+      }
+    }, 12000);
+
+    // Polling secundário para tabelas de apoio (memorandos, candidatos, responsáveis) a cada 30 segundos
+    const metaInterval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        invalidateSupabaseCache("memorandos");
+        invalidateSupabaseCache("candidatos");
+        invalidateSupabaseCache("responsaveis");
+        notifyDataSync("memorandos");
+      }
+    }, 30000);
+
+    // Ao focar na aba do navegador ou retornar a ela, efetua delta-sync automático imediato
+    const handleSyncTrigger = () => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") {
+        syncGeralWithSupabase(false).catch(() => {});
+        invalidateSupabaseCache();
+        notifyDataSync("all");
+      }
     };
-    window.addEventListener("focus", handleFocus);
+    window.addEventListener("focus", handleSyncTrigger);
+    document.addEventListener("visibilitychange", handleSyncTrigger);
 
     return () => {
       unsubscribe();
-      window.removeEventListener("focus", handleFocus);
+      clearInterval(backgroundInterval);
+      clearInterval(metaInterval);
+      window.removeEventListener("focus", handleSyncTrigger);
+      document.removeEventListener("visibilitychange", handleSyncTrigger);
     };
   }, []);
 

@@ -85,6 +85,53 @@ const cleanReparticaoText = (text?: string) => {
   return cleaned || text;
 };
 
+export const STORAGE_KEY_GERAL_COLUMNS = "detran_geral_visible_columns";
+
+// Colunas exibidas por padrão conforme solicitado:
+// Ordem, Nome, CPF, Gaveta, Repartição, Situação, Data Mov., Usuário e Ações
+export const DEFAULT_GERAL_VISIBLE_COLUMNS = {
+  ordem: true,
+  pa: false, // por padrão oculta
+  nome: true,
+  cpf: true,
+  telefone: false,
+  gaveta: true,
+  reparticao: true,
+  situacao: true,
+  responsavel: false,
+  data_movimento: true, // padrão: visível
+  usuario: true, // padrão: visível
+  observacao: false,
+  whatsapp: true,
+  wasender_direct: false,
+  acoes: true, // padrão: visível
+};
+
+export type GeralVisibleColumns = typeof DEFAULT_GERAL_VISIBLE_COLUMNS;
+
+function getInitialVisibleColumns(userKey?: string): GeralVisibleColumns {
+  if (typeof window === "undefined") return DEFAULT_GERAL_VISIBLE_COLUMNS;
+  try {
+    const key = userKey ? `${STORAGE_KEY_GERAL_COLUMNS}_${userKey}` : STORAGE_KEY_GERAL_COLUMNS;
+    let saved = localStorage.getItem(key);
+    if (!saved && userKey) {
+      saved = localStorage.getItem(STORAGE_KEY_GERAL_COLUMNS);
+    }
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (typeof parsed === "object" && parsed !== null) {
+        return {
+          ...DEFAULT_GERAL_VISIBLE_COLUMNS,
+          ...parsed,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn("Aviso ao carregar preferências de colunas do Geral:", e);
+  }
+  return DEFAULT_GERAL_VISIBLE_COLUMNS;
+}
+
 export const GeralPage: React.FC = () => {
   const { user, canEdit } = useAuth();
   const [cnhs, setCnhs] = useState<GeralCNH[]>([]);
@@ -97,26 +144,49 @@ export const GeralPage: React.FC = () => {
   const [filtroOrdemInicial, setFiltroOrdemInicial] = useState<string>("");
   const [filtroOrdemFinal, setFiltroOrdemFinal] = useState<string>("");
   
-  // Controle de visibilidade das colunas
+  // Controle de visibilidade das colunas com persistência no localStorage
   const [showColumnFilter, setShowColumnFilter] = useState(false);
+  const columnFilterRef = useRef<HTMLDivElement>(null);
   const [quickEditMode, setQuickEditMode] = useState(false);
-  const [visibleColumns, setVisibleColumns] = useState({
-    ordem: true,
-    pa: false, // por padrão oculta na tabela geral
-    nome: true,
-    cpf: true,
-    telefone: false,
-    gaveta: true,
-    reparticao: true,
-    situacao: true,
-    responsavel: false,
-    data_movimento: false,
-    usuario: false,
-    observacao: false,
-    whatsapp: true,
-    wasender_direct: false,
-    acoes: true,
-  });
+  const [visibleColumns, setVisibleColumns] = useState<GeralVisibleColumns>(() =>
+    getInitialVisibleColumns(user?.email || user?.id)
+  );
+
+  // Sincroniza preferências do usuário ao alternar de conta
+  useEffect(() => {
+    const loaded = getInitialVisibleColumns(user?.email || user?.id);
+    setVisibleColumns(loaded);
+  }, [user?.email, user?.id]);
+
+  // Salva no localStorage sempre que as colunas visíveis forem alteradas
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const userKey = user?.email || user?.id;
+        if (userKey) {
+          localStorage.setItem(`${STORAGE_KEY_GERAL_COLUMNS}_${userKey}`, JSON.stringify(visibleColumns));
+        }
+        localStorage.setItem(STORAGE_KEY_GERAL_COLUMNS, JSON.stringify(visibleColumns));
+      } catch (e) {
+        console.warn("Aviso ao persistir colunas do Geral no localStorage:", e);
+      }
+    }
+  }, [visibleColumns, user?.email, user?.id]);
+
+  // Fechar menu de colunas ao clicar fora
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (columnFilterRef.current && !columnFilterRef.current.contains(event.target as Node)) {
+        setShowColumnFilter(false);
+      }
+    };
+    if (showColumnFilter) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showColumnFilter]);
 
   // Ordenação
   const [sortColumn, setSortColumn] = useState<keyof GeralCNH>("ordem");
@@ -1442,15 +1512,28 @@ export const GeralPage: React.FC = () => {
             </button>
 
             {showColumnFilter && (
-              <div className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg p-3 z-50 space-y-2">
+              <div
+                ref={columnFilterRef}
+                className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg p-3 z-50 space-y-2"
+              >
                 <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-700/60">
                   <span className="text-[11px] font-bold uppercase text-slate-500 dark:text-slate-400">Exibir Colunas</span>
-                  <button
-                    onClick={() => setShowColumnFilter(false)}
-                    className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5 rounded"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setVisibleColumns(DEFAULT_GERAL_VISIBLE_COLUMNS)}
+                      title="Restaurar colunas padrão"
+                      className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline font-semibold cursor-pointer"
+                    >
+                      Padrão
+                    </button>
+                    <button
+                      onClick={() => setShowColumnFilter(false)}
+                      className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5 rounded cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
                 <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
                   {[

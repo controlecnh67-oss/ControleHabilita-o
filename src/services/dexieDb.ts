@@ -255,11 +255,17 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
           isOffline: false
         };
         updateSyncStats(finalStats);
+        notifySyncUpdated("geral");
         console.log(`✅ [ControleCNH IndexedDB] Sincronização Completa finalizada: ${totalDownloaded} registros em ${duration}ms.`);
         return finalStats;
       } else {
         // Sincronização Inteligente Delta Ultra-Econômica (Zero Egress Desperdiçado)
         let maxUpdatedAt: string | null = await getMeta("max_updated_at");
+
+        // Sanitização: não aceitar timestamps no futuro (evita travamento do delta sync)
+        if (maxUpdatedAt && new Date(maxUpdatedAt).getTime() > Date.now() + 60000) {
+          maxUpdatedAt = new Date().toISOString();
+        }
 
         if (!maxUpdatedAt) {
           const lastRecord = await dexieDb.geral.orderBy("updated_at").last();
@@ -298,14 +304,19 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
           trackEgress("geral_cnhs", "SELECT", approxBytes, false, reqDuration, `Delta: ${records.length} registros atualizados recebidos da nuvem`);
 
           let newestDate = maxUpdatedAt;
+          const nowMs = Date.now();
           for (const rec of records) {
             if (rec.updated_at && (!newestDate || rec.updated_at > newestDate)) {
-              newestDate = rec.updated_at;
+              if (new Date(rec.updated_at).getTime() <= nowMs + 120000) {
+                newestDate = rec.updated_at;
+              }
             }
           }
           if (newestDate) {
             await setMeta("max_updated_at", newestDate);
           }
+          // Notifica a aplicação para atualizar a visualização em tempo real
+          notifySyncUpdated("geral");
         } else {
           // Nenhum registro novo: apenas 120 bytes de payload de cabeçalho
           trackEgress("geral_cnhs", "SELECT", 128, false, reqDuration, "Delta verificado: Nenhum registro alterado na nuvem (0 novas linhas)");
@@ -456,20 +467,20 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
   notifySyncUpdated("geral");
 }
 
-// Salvar múltiplos registros (ex: importação Excel/Lote)
-export async function saveLocalGeralCNHsBulk(records: GeralCNH[]): Promise<void> {
+// Salvar múltiplos registros (ex: importação Excel/Lote ou sincronização)
+export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = false): Promise<void> {
   const now = new Date().toISOString();
   const normalized = records.map((r) => {
     const norm = normalizeCNHRecord(r);
-    norm.updated_at = now;
+    if (!norm.updated_at) norm.updated_at = now;
     return norm;
   });
 
   // Save to Dexie
   await dexieDb.geral.bulkPut(normalized);
 
-  // Save to Supabase
-  if (isSupabaseConfigured()) {
+  // Save to Supabase (somente se não for download da nuvem)
+  if (!skipRemote && isSupabaseConfigured()) {
     try {
       const payloads = normalized.map((r) => ({
         id: r.id,
@@ -491,7 +502,7 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[]): Promise<void>
         memorando_id: r.memorando_id || null,
         candidato_id: r.candidato_id || null,
         created_at: r.created_at,
-        updated_at: r.updated_at
+        updated_at: r.updated_at || now
       }));
 
       // Send in chunks of 250

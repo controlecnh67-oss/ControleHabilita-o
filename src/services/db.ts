@@ -17,6 +17,7 @@ import { supabase, isSupabaseConfigured } from "./supabase";
 import * as XLSX from "xlsx";
 import cnhSeedData from "../data/cnhSeedData.json";
 import {
+  dexieDb,
   saveLocalGeralCNH,
   saveLocalGeralCNHsBulk,
   deleteLocalGeralCNH,
@@ -2131,9 +2132,41 @@ export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
         (a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime()
       );
 
+      // Deduplicação semântica automática para que o usuário NUNCA veja múltiplos registros do mesmo dispositivo/CPF no mesmo horário
+      const deduplicated: AcessoCidadaoLog[] = [];
+      const seenTimeMap = new Map<string, number>();
+      const DEDUP_WINDOW = 3 * 60 * 1000;
+
+      for (const item of merged) {
+        const cleanCpf = (item.cpf || "").replace(/\D/g, "");
+        const t = new Date(item.data_hora).getTime();
+        const deviceKey = (item.dispositivo || "").toLowerCase().trim();
+        
+        // Chave por CPF se houver CPF, ou por dispositivo
+        const primaryKey = cleanCpf.length >= 9 ? `cpf_${cleanCpf}` : `dev_${deviceKey}`;
+        const lastT = seenTimeMap.get(primaryKey);
+
+        if (lastT !== undefined && Math.abs(t - lastT) < DEDUP_WINDOW) {
+          // Ignora registro repetido no mesmo horário
+          continue;
+        }
+
+        // Também valida se o mesmo dispositivo acessou no mesmo segundo
+        if (deviceKey && deviceKey !== "navegador web / mobile") {
+          const devLastT = seenTimeMap.get(`dev_${deviceKey}`);
+          if (devLastT !== undefined && Math.abs(t - devLastT) < 30 * 1000) {
+            continue;
+          }
+          seenTimeMap.set(`dev_${deviceKey}`, t);
+        }
+
+        seenTimeMap.set(primaryKey, t);
+        deduplicated.push(item);
+      }
+
       // Encontra o maior número presente na base
       let highestNum = 0;
-      merged.forEach((item) => {
+      deduplicated.forEach((item) => {
         if (typeof item.numero === "number" && !isNaN(item.numero) && item.numero > highestNum) {
           highestNum = item.numero;
         }
@@ -2146,9 +2179,9 @@ export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
           localStorage.setItem("detran_acessos_cidadao_max_numero", absoluteMax.toString());
           localStorage.setItem("detran_public_search_count", absoluteMax.toString());
         }
-        localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(merged.slice(0, 1000)));
+        localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(deduplicated.slice(0, 1000)));
       }
-      return merged;
+      return deduplicated;
     }
   } catch (e) {
     console.warn("Aviso ao sincronizar acessos do cidadão do Supabase:", e);
@@ -2156,15 +2189,70 @@ export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
   return local;
 }
 
-// Memória em tempo de execução para prevenir inserções simultâneas assíncronas do mesmo CPF
+// Identificador único persistente do dispositivo do usuário (para isolar logs e evitar duplicidades)
+export function getOrCreateDeviceId(): string {
+  if (typeof window === "undefined") return "server";
+  try {
+    let id = localStorage.getItem("detran_device_id");
+    if (!id) {
+      id = "dev_" + Math.random().toString(36).substring(2, 7) + Date.now().toString(36).substring(4, 8);
+      localStorage.setItem("detran_device_id", id);
+    }
+    return id;
+  } catch {
+    return "dev_default";
+  }
+}
+
+// Detecção precisa do modelo / plataforma / navegador do dispositivo do cidadão
+export function detectUserDevice(): string {
+  if (typeof window === "undefined" || !navigator) return "Navegador Web";
+  const ua = navigator.userAgent || "";
+  let platform = "Navegador Web";
+
+  if (/android/i.test(ua)) {
+    platform = "Android (Mobile)";
+  } else if (/iphone|ipad|ipod/i.test(ua)) {
+    platform = "Apple iOS (Mobile)";
+  } else if (/windows/i.test(ua)) {
+    platform = "Windows PC";
+  } else if (/macintosh|mac os x/i.test(ua)) {
+    platform = "Mac OS";
+  } else if (/linux/i.test(ua)) {
+    platform = "Linux";
+  }
+
+  let browser = "";
+  if (/edg/i.test(ua)) {
+    browser = "Edge";
+  } else if (/chrome|crios/i.test(ua) && !/opr/i.test(ua)) {
+    browser = "Chrome";
+  } else if (/safari/i.test(ua) && !/chrome|crios/i.test(ua)) {
+    browser = "Safari";
+  } else if (/firefox|fxios/i.test(ua)) {
+    browser = "Firefox";
+  }
+
+  const devTag = getOrCreateDeviceId().slice(0, 8);
+  return browser ? `${platform} • ${browser} [${devTag}]` : `${platform} [${devTag}]`;
+}
+
+// Memória em tempo de execução para prevenir inserções simultâneas assíncronas do mesmo CPF ou dispositivo
 const recentLogTimestampsPerCpf = new Map<string, number>();
+const recentLogTimestampsPerDevice = new Map<string, number>();
 
 export function registrarAcessoCidadaoLog(logData: Omit<AcessoCidadaoLog, "id" | "data_hora">): AcessoCidadaoLog {
   const cleanCpfDigits = (logData.cpf || "").replace(/\D/g, "");
   const now = Date.now();
-  const DEDUPLICATION_WINDOW_MS = 3 * 60 * 1000; // 3 minutos de janela anti-flood / anti-duplicação
+  const DEDUPLICATION_WINDOW_MS = 5 * 60 * 1000; // 5 minutos de janela anti-duplicação por CPF
+  const DEVICE_DEDUP_WINDOW_MS = 30 * 1000;     // 30 segundos de janela por dispositivo físico
 
-  // 1. Verificação em memória para requisições concorrentes ou em sequência imediata
+  // Garante que o dispositivo venha identificado com hardware/navegador real, e não com string genérica
+  const rawDisp = logData.dispositivo || "";
+  const resolvedDispositivo = (!rawDisp || rawDisp === "Navegador Web / Mobile") ? detectUserDevice() : rawDisp;
+  const currentDeviceId = getOrCreateDeviceId();
+
+  // 1. Verificação em memória para requisições concorrentes disparadas em rajada (ex: duplo-toque na tela)
   if (cleanCpfDigits.length >= 9) {
     const lastTimestamp = recentLogTimestampsPerCpf.get(cleanCpfDigits);
     if (lastTimestamp && (now - lastTimestamp) < DEDUPLICATION_WINDOW_MS) {
@@ -2176,9 +2264,22 @@ export function registrarAcessoCidadaoLog(logData: Omit<AcessoCidadaoLog, "id" |
     }
   }
 
+  // Verificação por dispositivo em memória
+  const lastDeviceTime = recentLogTimestampsPerDevice.get(currentDeviceId);
+  if (lastDeviceTime && (now - lastDeviceTime) < DEVICE_DEDUP_WINDOW_MS) {
+    const existingLogs = getAcessosCidadaoLogs();
+    if (existingLogs.length > 0) {
+      const match = existingLogs.find(l => {
+        const lCpf = (l.cpf || "").replace(/\D/g, "");
+        return lCpf === cleanCpfDigits;
+      });
+      if (match) return match;
+    }
+  }
+
   const currentLogs = getAcessosCidadaoLogs();
 
-  // 2. Verificação no histórico persistido: evita registros duplicados para o mesmo CPF dentro de 3 minutos
+  // 2. Verificação no histórico persistido: evita registros duplicados para o mesmo CPF dentro de 5 minutos
   if (cleanCpfDigits.length >= 9) {
     const existingRecent = currentLogs.find((l) => {
       const lCpf = (l.cpf || "").replace(/\D/g, "");
@@ -2189,23 +2290,31 @@ export function registrarAcessoCidadaoLog(logData: Omit<AcessoCidadaoLog, "id" |
 
     if (existingRecent) {
       recentLogTimestampsPerCpf.set(cleanCpfDigits, now);
+      recentLogTimestampsPerDevice.set(currentDeviceId, now);
       return existingRecent;
     }
   }
 
-  // Registra timestamp em memória para travar requisições concorrentes
+  // Registra timestamps para travar rajadas concorrentes
   if (cleanCpfDigits.length >= 9) {
     recentLogTimestampsPerCpf.set(cleanCpfDigits, now);
   }
+  recentLogTimestampsPerDevice.set(currentDeviceId, now);
 
   const currentMax = getMaxAcessoCidadaoNumero();
   const nextNumero = currentMax + 1;
 
+  // Gerar ID como UUID padrão para total conformidade com o PostgreSQL do Supabase
+  const logUuid = (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+    ? crypto.randomUUID()
+    : (toValidUUID(`log-${Date.now()}-${Math.random()}`) || "00000000-0000-4000-8000-" + Date.now().toString(16).padStart(12, "0").slice(-12));
+
   const newLog: AcessoCidadaoLog = {
-    id: `log-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+    id: logUuid,
     numero: nextNumero,
     data_hora: new Date().toISOString(),
-    ...logData
+    ...logData,
+    dispositivo: resolvedDispositivo
   };
   const updated = [newLog, ...currentLogs];
   if (typeof window !== "undefined") {
@@ -2243,7 +2352,7 @@ export function registrarAcessoCidadaoLog(logData: Omit<AcessoCidadaoLog, "id" |
 
 /**
  * Identifica e remove registros duplicados de acesso do cidadão ocorridos
- * para o mesmo CPF em intervalo inferior a 3 minutos (ex: múltiplos cliques no celular).
+ * para o mesmo CPF ou mesmo dispositivo em intervalo inferior a 3 minutos.
  */
 export async function consolidarAcessosCidadaoDuplicados(): Promise<{ removidos: number; restantes: number }> {
   const allLogs = getAcessosCidadaoLogs();
@@ -2251,7 +2360,7 @@ export async function consolidarAcessosCidadaoDuplicados(): Promise<{ removidos:
     return { removidos: 0, restantes: 0 };
   }
 
-  // Ordena cronologicamente crescente para manter o registro original
+  // Ordena cronologicamente crescente para manter o registro original mais antigo
   const sorted = [...allLogs].sort((a, b) => new Date(a.data_hora).getTime() - new Date(b.data_hora).getTime());
 
   const mantidos: AcessoCidadaoLog[] = [];
@@ -2261,18 +2370,21 @@ export async function consolidarAcessosCidadaoDuplicados(): Promise<{ removidos:
   for (const log of sorted) {
     const cleanCpf = (log.cpf || "").replace(/\D/g, "");
     const logTime = new Date(log.data_hora).getTime();
+    const logDisp = (log.dispositivo || "").toLowerCase().trim();
 
-    if (!cleanCpf || cleanCpf.length < 9) {
-      mantidos.push(log);
-      continue;
-    }
-
-    // Busca se já temos um registro mantido para o mesmo CPF dentro da janela de 3 minutos
+    // Busca se já temos um registro mantido para o mesmo CPF ou mesmo dispositivo dentro da janela
     const duplicateOf = mantidos.find((m) => {
-      const mCpf = (m.cpf || "").replace(/\D/g, "");
-      if (mCpf !== cleanCpf) return false;
       const mTime = new Date(m.data_hora).getTime();
-      return Math.abs(logTime - mTime) < THREE_MINUTES;
+      if (Math.abs(logTime - mTime) > THREE_MINUTES) return false;
+
+      const mCpf = (m.cpf || "").replace(/\D/g, "");
+      if (cleanCpf && mCpf && mCpf === cleanCpf) return true;
+
+      const mDisp = (m.dispositivo || "").toLowerCase().trim();
+      if (logDisp && mDisp && logDisp === mDisp && Math.abs(logTime - mTime) < 30 * 1000) {
+        return true;
+      }
+      return false;
     });
 
     if (duplicateOf) {
@@ -2650,7 +2762,7 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
         situacao: "Remetida",
         resultado_status: "EM_PROCESSAMENTO",
         canal: "App Android",
-        dispositivo: "Navegador Web / Mobile",
+        dispositivo: detectUserDevice(),
         cidade_origem: "Belém"
       });
 
@@ -2670,7 +2782,7 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
       situacao: "Não Encontrada",
       resultado_status: "NAO_ENCONTRADA",
       canal: "App Android",
-      dispositivo: "Navegador Web / Mobile",
+      dispositivo: detectUserDevice(),
       cidade_origem: "Belém"
     });
 
@@ -2710,7 +2822,7 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
       situacao: "Recebida",
       resultado_status: "DISPONIVEL",
       canal: "App Android",
-      dispositivo: "Navegador Web / Mobile",
+      dispositivo: detectUserDevice(),
       cidade_origem: "Belém"
     });
     return {
@@ -2730,7 +2842,7 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
       situacao: "Entregue",
       resultado_status: "ENTREGUE",
       canal: "App Android",
-      dispositivo: "Navegador Web / Mobile",
+      dispositivo: detectUserDevice(),
       cidade_origem: "Belém"
     });
     return {
@@ -2749,7 +2861,7 @@ export async function consultarCnhPublicaPorCpf(cpfInput: string): Promise<Resul
     situacao: (cnhMaisRecente.situacao as any) || "Pendente",
     resultado_status: "EM_PROCESSAMENTO",
     canal: "App Android",
-    dispositivo: "Navegador Web / Mobile",
+    dispositivo: detectUserDevice(),
     cidade_origem: "Belém"
   });
 
@@ -3906,6 +4018,12 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
       localCount = 1;
     } else if (item.key === "imagens") {
       localCount = 0;
+    } else if (item.key === "geral") {
+      try {
+        localCount = await dexieDb.geral.count();
+      } catch {
+        localCount = getStoredList(item.key, []).length;
+      }
     } else {
       localCount = getStoredList(item.key, []).length;
     }
@@ -4048,7 +4166,54 @@ async function upsertInBatches(
     const duration = Date.now() - reqStart;
 
     if (error) {
-      throw error;
+      console.warn(`Aviso no upsert em '${tableName}': ${error.message}. Iniciando recuperação...`);
+      // Recuperação 1: Se for geral_cnhs, remover foreign keys nulas ou problemáticas
+      let recovered = false;
+      if (tableName === "geral_cnhs") {
+        const safeBatch = batch.map((item: any) => ({
+          ...item,
+          responsavel_id: null,
+          usuario_id: null,
+          memorando_id: null,
+          candidato_id: null
+        }));
+        const { error: safeErr } = await supabase.from(tableName).upsert(safeBatch, { onConflict });
+        if (!safeErr) {
+          count += safeBatch.length;
+          recovered = true;
+          if (onProgress) onProgress(count, payload.length);
+          continue;
+        }
+      } else if (tableName === "historico_movimentacoes") {
+        const safeBatch = batch.map((item: any) => ({
+          ...item,
+          responsavel_id: null,
+          usuario_id: null
+        }));
+        const { error: safeErr } = await supabase.from(tableName).upsert(safeBatch, { onConflict });
+        if (!safeErr) {
+          count += safeBatch.length;
+          recovered = true;
+          if (onProgress) onProgress(count, payload.length);
+          continue;
+        }
+      }
+
+      // Recuperação 2: Inserção item a item para isolar registros problemáticos sem abortar a sincronização
+      if (!recovered) {
+        for (const singleItem of batch) {
+          try {
+            const { error: singleErr } = await supabase.from(tableName).upsert([singleItem], { onConflict });
+            if (!singleErr) {
+              count++;
+            } else {
+              console.warn(`Item descartado em '${tableName}':`, singleErr.message);
+            }
+          } catch {}
+        }
+        if (onProgress) onProgress(count, payload.length);
+        continue;
+      }
     }
     const batchBytes = JSON.stringify(batch).length;
     trackEgress(tableName, "BATCH_UPSERT", batchBytes, false, duration, `Lote de ${batch.length} registros enviados para ${tableName}`);
@@ -4302,7 +4467,8 @@ export async function syncLocalToSupabase(
         memorando_numero: g.memorando_numero || null,
         remessa: g.remessa || null,
         observacao: g.observacao || null,
-        created_at: g.created_at || new Date().toISOString()
+        created_at: g.created_at || new Date().toISOString(),
+        updated_at: g.updated_at || g.data_movimento || new Date().toISOString()
       }));
 
       const synced = await upsertInBatches("geral_cnhs", payload, 250, "id", (synced, total) => {
@@ -4323,7 +4489,7 @@ export async function syncLocalToSupabase(
     if (hist.length > 0) {
       const payload = hist
         .map(h => ({
-          id: h.id || `hist-${h.geral_id}-${Math.random().toString(36).substring(2, 7)}`,
+          id: toValidUUID(h.id) || (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : (toValidUUID(`hist-${h.geral_id}-${Math.random()}`) || "00000000-0000-4000-8000-" + Date.now().toString(16).padStart(12, "0").slice(-12))),
           geral_id: cleanFK(h.geral_id, validGeralIds),
           geral_ordem: h.geral_ordem || null,
           geral_nome: h.geral_nome || null,
@@ -4356,7 +4522,7 @@ export async function syncLocalToSupabase(
     log("📦 Sincronizando tabela 'auditoria'...");
     if (aud.length > 0) {
       const payload = aud.map(a => ({
-        id: a.id || `aud-${a.registro_id}-${Math.random().toString(36).substring(2, 7)}`,
+        id: toValidUUID(a.id) || (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : (toValidUUID(`aud-${a.registro_id}-${Math.random()}`) || "00000000-0000-4000-8000-" + Date.now().toString(16).padStart(12, "0").slice(-12))),
         tabela: a.tabela,
         registro_id: a.registro_id,
         acao: a.acao,
@@ -4506,9 +4672,9 @@ export async function syncSupabaseToLocal(
         }
         
         if (item.key === "geral") {
-          // Atualiza tanto localStorage quanto IndexedDB
+          // Atualiza tanto localStorage quanto IndexedDB sem disparar re-upload em loop
           saveStoredList("geral", filteredData);
-          await saveLocalGeralCNHsBulk(filteredData);
+          await saveLocalGeralCNHsBulk(filteredData, true);
         } else if (item.key === "acessos_cidadao") {
           if (typeof window !== "undefined") {
             localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(filteredData.slice(0, 500)));

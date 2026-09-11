@@ -180,14 +180,14 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
           <button
             onClick={() => setShowDbInfo(!showDbInfo)}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-all border ${
-              isSupabaseConnected
+              isSupabaseConnected()
                 ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800"
                 : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800"
             }`}
           >
             <Database className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">
-              {isSupabaseConnected ? "Supabase DB" : "Modo Demo Local"}
+              {isSupabaseConnected() ? "Supabase DB" : "Modo Demo Local"}
             </span>
           </button>
 
@@ -203,7 +203,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
                 </button>
               </div>
               
-              {isSupabaseConnected ? (
+              {isSupabaseConnected() ? (
                 <div className="flex items-start gap-2.5 text-xs text-slate-600 dark:text-slate-300 py-1">
                   <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                   <div>
