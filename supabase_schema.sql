@@ -435,7 +435,48 @@ CREATE TABLE IF NOT EXISTS public.imagens_sync (
 );
 
 -- ==============================================================================
--- 13. ÍNDICES DE ALTA PERFORMANCE
+-- 13. TABELA DE DECLARAÇÕES DE RETIRADA DE CNH POR PROCURADOR
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.declaracoes (
+    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    numero VARCHAR(50) NOT NULL UNIQUE,
+    ano INTEGER NOT NULL DEFAULT EXTRACT(YEAR FROM CURRENT_DATE),
+    data_emissao DATE NOT NULL DEFAULT CURRENT_DATE,
+    cidade VARCHAR(100) NOT NULL DEFAULT 'Itaituba',
+    uf VARCHAR(2) NOT NULL DEFAULT 'PA',
+    procurador_id TEXT,
+    procurador_nome VARCHAR(255) NOT NULL,
+    procurador_cpf VARCHAR(20) NOT NULL,
+    procurador_fone VARCHAR(50),
+    procurador_endereco TEXT,
+    texto_declaracao TEXT NOT NULL,
+    condutores JSONB NOT NULL DEFAULT '[]'::jsonb,
+    gerente_nome VARCHAR(255),
+    gerente_cargo VARCHAR(100),
+    gerente_unidade VARCHAR(100),
+    gerente_portaria VARCHAR(150),
+    observacao TEXT,
+    usuario_id TEXT,
+    usuario_nome VARCHAR(255),
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS condutores JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS observacao TEXT;
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS gerente_nome VARCHAR(255);
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS gerente_cargo VARCHAR(100);
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS gerente_unidade VARCHAR(100);
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS gerente_portaria VARCHAR(150);
+
+CREATE OR REPLACE TRIGGER trigger_declaracoes_updated_at
+BEFORE UPDATE ON public.declaracoes
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- ==============================================================================
+-- 14. ÍNDICES DE ALTA PERFORMANCE
 -- ==============================================================================
 CREATE INDEX IF NOT EXISTS idx_geral_cnhs_cpf ON public.geral_cnhs(cpf);
 CREATE INDEX IF NOT EXISTS idx_geral_cnhs_nome ON public.geral_cnhs(nome);
@@ -455,13 +496,21 @@ CREATE INDEX IF NOT EXISTS idx_auditoria_tabela_reg ON public.auditoria(tabela, 
 CREATE INDEX IF NOT EXISTS idx_responsaveis_cpf ON public.responsaveis(cpf);
 CREATE INDEX IF NOT EXISTS idx_acessos_cidadao_cpf ON public.acessos_cidadao(cpf);
 
+CREATE INDEX IF NOT EXISTS idx_declaracoes_numero ON public.declaracoes(numero);
+CREATE INDEX IF NOT EXISTS idx_declaracoes_ano ON public.declaracoes(ano);
+CREATE INDEX IF NOT EXISTS idx_declaracoes_procurador_cpf ON public.declaracoes(procurador_cpf);
+CREATE INDEX IF NOT EXISTS idx_declaracoes_data_emissao ON public.declaracoes(data_emissao DESC);
+CREATE INDEX IF NOT EXISTS idx_declaracoes_created_at ON public.declaracoes(created_at DESC);
+
 -- ==============================================================================
--- 14. SUPABASE REALTIME REPLICATION (Habilita sincronização instantânea multi-máquina)
+-- 15. SUPABASE REALTIME REPLICATION (Habilita sincronização instantânea multi-máquina)
 -- ==============================================================================
+ALTER TABLE public.declaracoes REPLICA IDENTITY FULL;
+
 DO $$
 DECLARE
     tbl text;
-    tbls text[] := ARRAY['geral_cnhs', 'memorandos', 'candidatos', 'responsaveis', 'mapeamento_localizacao', 'acessos_cidadao', 'orgao_config'];
+    tbls text[] := ARRAY['geral_cnhs', 'memorandos', 'candidatos', 'responsaveis', 'mapeamento_localizacao', 'acessos_cidadao', 'orgao_config', 'declaracoes'];
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
         FOREACH tbl IN ARRAY tbls LOOP
@@ -481,7 +530,7 @@ BEGIN
 END $$;
 
 -- ==============================================================================
--- 15. ROW LEVEL SECURITY (RLS) E POLÍTICAS DE ACESSO RBAC
+-- 16. ROW LEVEL SECURITY (RLS) E POLÍTICAS DE ACESSO RBAC
 -- ==============================================================================
 ALTER TABLE public.usuarios ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.responsaveis ENABLE ROW LEVEL SECURITY;
@@ -494,6 +543,7 @@ ALTER TABLE public.mapeamento_localizacao ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orgao_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.acessos_cidadao ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.imagens_sync ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.declaracoes ENABLE ROW LEVEL SECURITY;
 
 -- Limpeza de políticas existentes para evitar duplicidade
 DO $$
@@ -662,8 +712,26 @@ CREATE POLICY "imagens_sync_write_policy" ON public.imagens_sync
         public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
     );
 
+-- Políticas para DECLARAÇÕES DE RETIRADA POR PROCURADOR
+CREATE POLICY "declaracoes_read_policy" ON public.declaracoes
+    FOR SELECT TO authenticated, anon USING (true);
+
+CREATE POLICY "declaracoes_write_policy" ON public.declaracoes
+    FOR ALL TO authenticated
+    USING (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    )
+    WITH CHECK (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    );
+
+CREATE POLICY "declaracoes_anon_write_policy" ON public.declaracoes
+    FOR ALL TO anon
+    USING (true)
+    WITH CHECK (true);
+
 -- ==============================================================================
--- 16. CONFIGURAÇÃO DE STORAGE DO SUPABASE (Buckets para Logos e Anexos)
+-- 17. CONFIGURAÇÃO DE STORAGE DO SUPABASE (Buckets para Logos e Anexos)
 -- ==============================================================================
 DO $$
 BEGIN
@@ -704,3 +772,16 @@ BEGIN
             FOR UPDATE TO authenticated USING (bucket_id = 'orgao_logos');
     END IF;
 END $$;
+
+-- ==============================================================================
+-- 18. PERMISSÕES DE ACESSO (GRANTS) PARA ROLES SUPABASE
+-- ==============================================================================
+GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON TABLE public.declaracoes TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, anon, authenticated, service_role;
+

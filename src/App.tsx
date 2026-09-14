@@ -17,6 +17,7 @@ import { DatabaseMonitoringPage } from "./pages/DatabaseMonitoringPage";
 import { ConsultaPublicaPage } from "./pages/ConsultaPublicaPage";
 import { AcessosCidadaoPage } from "./pages/AcessosCidadaoPage";
 import { RelatoriosPage } from "./pages/RelatoriosPage";
+import { DeclaracoesPage } from "./pages/DeclaracoesPage";
 import { isTabAllowedForProfile, NavTab } from "./types";
 import { loadOrgaoConfigFromSupabase } from "./services/orgaoService";
 import { isSupabaseConfigured, subscribeToMultipleSupabaseRealtime } from "./services/supabase";
@@ -53,7 +54,8 @@ const MainLayout: React.FC = () => {
       "responsaveis",
       "mapeamento_localizacao",
       "acessos_cidadao",
-      "orgao_config"
+      "orgao_config",
+      "declaracoes"
     ];
 
     const unsubscribe = subscribeToMultipleSupabaseRealtime(tablesToWatch, async (table, payload) => {
@@ -240,6 +242,7 @@ const MainLayout: React.FC = () => {
             {activeTab === "dashboard" && isTabAllowedForProfile("dashboard", user?.perfil, user?.permissoes) && <DashboardPage />}
             {activeTab === "geral" && isTabAllowedForProfile("geral", user?.perfil, user?.permissoes) && <GeralPage />}
             {activeTab === "memorandos" && isTabAllowedForProfile("memorandos", user?.perfil, user?.permissoes) && <MemorandosPage onNavigateToGeral={() => setActiveTab("geral")} />}
+            {activeTab === "declaracao" && isTabAllowedForProfile("declaracao", user?.perfil, user?.permissoes) && <DeclaracoesPage />}
             {activeTab === "acessos_cidadao" && isTabAllowedForProfile("acessos_cidadao", user?.perfil, user?.permissoes) && <AcessosCidadaoPage />}
             {activeTab === "relatorios" && isTabAllowedForProfile("relatorios", user?.perfil, user?.permissoes) && <RelatoriosPage />}
             {activeTab === "responsaveis" && isTabAllowedForProfile("responsaveis", user?.perfil, user?.permissoes) && <ResponsaveisPage />}

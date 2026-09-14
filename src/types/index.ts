@@ -7,6 +7,7 @@ export type NavTab =
   | "dashboard" 
   | "geral" 
   | "memorandos" 
+  | "declaracao"
   | "acessos_cidadao"
   | "relatorios"
   | "responsaveis" 
@@ -47,6 +48,13 @@ export function isTabAllowedForProfile(
         permissoes.includes("memorandos:remeter")
       );
     }
+    if (tab === "declaracao") {
+      return (
+        permissoes.includes("declaracao:gerenciar") ||
+        permissoes.includes("declaracao:visualizar") ||
+        permissoes.includes("cnh:entregar")
+      );
+    }
     if (tab === "acessos_cidadao") {
       return permissoes.includes("acessos_cidadao:visualizar");
     }
@@ -83,13 +91,13 @@ export function isTabAllowedForProfile(
   // Fallback padrão se não houver array de permissões customizadas
   switch (perfil) {
     case "Supervisor":
-      return ["dashboard", "geral", "memorandos", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento", "historico", "auditoria", "orgao"].includes(tab);
+      return ["dashboard", "geral", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento", "historico", "auditoria", "orgao"].includes(tab);
 
     case "Operador":
-      return ["dashboard", "geral", "memorandos", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento"].includes(tab);
+      return ["dashboard", "geral", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento"].includes(tab);
 
     case "Consulta":
-      return ["dashboard", "geral", "acessos_cidadao", "relatorios", "historico", "auditoria"].includes(tab);
+      return ["dashboard", "geral", "declaracao", "acessos_cidadao", "relatorios", "historico", "auditoria"].includes(tab);
 
     default:
       return false;
@@ -172,6 +180,15 @@ export const PERMISSOES_SISTEMA: PermissaoItem[] = [
     label: "Remeter e Finalizar Memorandos", 
     category: "Remessas e Memorandos", 
     description: "Permite enviar o memorando para o protocolo e converter candidatos em CNHs" 
+  },
+
+  // 4. Declaração de Retirada de CNH por Procurador
+  { 
+    id: "declaracao:gerenciar", 
+    label: "Aba Declaração de Retirada", 
+    category: "Atendimento & Cidadão", 
+    description: "Permite emitir declarações oficiais de retirada de CNH por procuradores e gerar PDF",
+    isTab: true
   },
 
   // 4. Consulta Cidadão (App)
@@ -265,6 +282,7 @@ export function getPermissoesPadrao(perfil: PerfilUsuario): string[] {
         "dashboard:visualizar",
         "geral:visualizar", "cnh:receber", "cnh:entregar", "cnh:editar",
         "memorandos:criar", "memorandos:remeter",
+        "declaracao:gerenciar",
         "acessos_cidadao:visualizar",
         "relatorios:visualizar",
         "responsaveis:gerenciar",
@@ -278,6 +296,7 @@ export function getPermissoesPadrao(perfil: PerfilUsuario): string[] {
         "dashboard:visualizar",
         "geral:visualizar", "cnh:receber", "cnh:entregar",
         "memorandos:criar", "memorandos:remeter",
+        "declaracao:gerenciar",
         "acessos_cidadao:visualizar",
         "relatorios:visualizar",
         "responsaveis:gerenciar",
@@ -497,3 +516,39 @@ export interface MapaArquivoFisico {
   totalCompartimentos: number; // 32
   gavetaMaiorVolume: { numero: number; nome: string; total: number } | null;
 }
+
+// Interfaces para Declaração de Retirada de CNH por Procurador / Responsável
+export interface DeclaracaoItemCondutor {
+  item: number;
+  cnh_id?: string;
+  nome: string;
+  cpf: string;
+  pa?: string;
+  situacao?: string;
+}
+
+export interface Declaracao {
+  id: string;
+  numero: string;             // ex: "0109/2026"
+  ano: number;                // ex: 2026
+  data_emissao: string;       // "2026-09-14"
+  procurador_id?: string;     // id do Responsavel cadastrado
+  procurador_nome: string;    // ex: "REGINALDO DE SOUZA SANTOS"
+  procurador_cpf: string;     // ex: "36956201291"
+  procurador_telefone?: string; // ex: "93992912928"
+  procurador_endereco?: string; // ex: "Campo Verde, MT, 78840-000, Brasil"
+  texto_declaracao: string;   // Texto legal padrão
+  condutores: DeclaracaoItemCondutor[];
+  cidade: string;             // ex: "Itaituba"
+  uf: string;                 // ex: "PA"
+  gerente_nome?: string;      // ex: "Zedequias Carlos de Melo"
+  gerente_cargo?: string;     // ex: "Gerente DETRAN"
+  gerente_unidade?: string;   // ex: "ITAITUBA-PA"
+  gerente_portaria?: string;  // ex: "Portaria 1.083/2025 - CCG"
+  observacao?: string;
+  usuario_id: string;
+  usuario_nome: string;
+  created_at: string;
+  updated_at?: string;
+}
+

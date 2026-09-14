@@ -1,362 +1,787 @@
--- ============================================================================
--- SCRIPT DE INTEGRAÇÃO E SEED - SUPABASE (POSTGRESQL)
--- Sistema de Controle de Fluxo de CNHs - DETRAN/PA
--- ============================================================================
--- Instruções:
--- 1. Acesse o painel do seu projeto no Supabase (https://supabase.com).
--- 2. No menu lateral esquerdo, clique em "SQL Editor".
--- 3. Clique em "New query" e cole todo o conteúdo deste arquivo.
--- 4. Clique em "Run" para criar as tabelas, políticas RLS e popular os dados iniciais.
--- ============================================================================
+-- ==============================================================================
+-- SISTEMA DE CONTROLE DE CNH - DETRAN (SETOR DE PROTOCOLO)
+-- SCRIPT MESTRE DE BANCO DE DADOS POSTGRESQL + SUPABASE AUTH + REALTIME + STORAGE
+-- Versão 3.1.0 - Totalmente Idempotente, Tolerante a Falhas e Compatível com Supabase
+-- ==============================================================================
 
--- 1. REMOÇÃO DE TABELAS ANTIGAS (SE EXISTIREM) PARA GARANTIR INSTALAÇÃO LIMPA
-DROP TABLE IF EXISTS auditoria CASCADE;
-DROP TABLE IF EXISTS historico_movimentacoes CASCADE;
-DROP TABLE IF EXISTS geral_cnhs CASCADE;
-DROP TABLE IF EXISTS candidatos CASCADE;
-DROP TABLE IF EXISTS memorandos CASCADE;
-DROP TABLE IF EXISTS mapeamento_localizacao CASCADE;
-DROP TABLE IF EXISTS responsaveis CASCADE;
-DROP TABLE IF EXISTS usuarios CASCADE;
+-- 0. EXTENSÕES DO POSTGRESQL
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- 2. CRIAÇÃO DAS TABELAS
+-- ==============================================================================
+-- 1. FUNÇÕES AUXILIARES DE AUDITORIA E ATUALIZAÇÃO AUTOMÁTICA
+-- ==============================================================================
 
--- Tabela de Usuários / Operadores do Sistema
-CREATE TABLE usuarios (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  nome TEXT NOT NULL,
-  nome_completo TEXT,
-  nome_curto TEXT NOT NULL,
-  cpf TEXT,
-  fone TEXT,
-  email TEXT UNIQUE NOT NULL,
-  funcao TEXT,
-  setor TEXT DEFAULT 'Protocolo',
-  login TEXT UNIQUE NOT NULL,
-  senha TEXT DEFAULT 'detran@123',
-  permissoes JSONB DEFAULT '["memorandos:criar", "memorandos:remeter", "cnh:receber", "cnh:entregar", "cnh:editar", "mapeamento:gerenciar", "responsaveis:gerenciar", "usuarios:gerenciar", "auditoria:visualizar"]'::jsonb,
-  perfil TEXT NOT NULL CHECK (perfil IN ('Administrador', 'Supervisor', 'Operador', 'Consulta')),
-  ativo BOOLEAN DEFAULT true,
-  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
+CREATE OR REPLACE FUNCTION public.set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = timezone('utc'::text, now());
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ==============================================================================
+-- 2. TABELA DE USUÁRIOS (Perfis vinculados ao Supabase Auth)
+-- NOTA: Senhas são gerenciadas exclusivamente pelo Supabase Auth (auth.users).
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.usuarios (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    nome VARCHAR(255) NOT NULL,
+    nome_curto VARCHAR(100) NOT NULL,
+    fone VARCHAR(50),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    funcao VARCHAR(100) DEFAULT 'Agente de Trânsito',
+    setor VARCHAR(100) DEFAULT 'Protocolo',
+    login VARCHAR(100) UNIQUE NOT NULL,
+    perfil VARCHAR(50) NOT NULL CHECK (perfil IN ('Administrador', 'Supervisor', 'Operador', 'Consulta')),
+    permissoes JSONB DEFAULT '[]'::jsonb,
+    ativo BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Tabela de Responsáveis / Procuradores / Titulares
-CREATE TABLE responsaveis (
-  id TEXT PRIMARY KEY,
-  nome TEXT NOT NULL,
-  cpf TEXT,
-  telefone TEXT,
-  registro TEXT,
-  observacao TEXT,
-  ativo BOOLEAN DEFAULT true,
-  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
+-- Garante que colunas existam caso a tabela tenha sido criada em versão anterior
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS permissoes JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE;
+
+CREATE OR REPLACE TRIGGER trigger_usuarios_updated_at
+BEFORE UPDATE ON public.usuarios
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- Se a tabela usuarios já existia com coluna 'senha', removemos para conformidade de segurança
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'usuarios' AND column_name = 'senha'
+    ) THEN
+        ALTER TABLE public.usuarios DROP COLUMN senha;
+    END IF;
+END $$;
+
+-- ==============================================================================
+-- 3. TABELA DE RESPONSÁVEIS PELA RETIRADA DE CNHS
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.responsaveis (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    nome VARCHAR(255) NOT NULL,
+    cpf VARCHAR(14) UNIQUE NOT NULL,
+    telefone VARCHAR(50),
+    registro VARCHAR(100),
+    observacao TEXT,
+    ativo BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Tabela de Mapeamento de Localização (Letra Inicial -> Gaveta e Repartição)
-CREATE TABLE mapeamento_localizacao (
-  id TEXT PRIMARY KEY,
-  inicial TEXT UNIQUE NOT NULL,
-  gaveta TEXT NOT NULL,
-  reparticao TEXT NOT NULL,
-  ativo BOOLEAN DEFAULT true
+ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE;
+
+CREATE OR REPLACE TRIGGER trigger_responsaveis_updated_at
+BEFORE UPDATE ON public.responsaveis
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- Proteção: O registro padrão "Proprietário" não pode ser excluído
+CREATE OR REPLACE FUNCTION public.proteger_registro_proprietario()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.nome = 'Proprietário' OR OLD.cpf = '000.000.000-00' THEN
+        RAISE EXCEPTION 'O registro padrão Proprietário não pode ser excluído do sistema DETRAN.';
+    END IF;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_proteger_proprietario ON public.responsaveis;
+CREATE TRIGGER trigger_proteger_proprietario
+BEFORE DELETE ON public.responsaveis
+FOR EACH ROW EXECUTE FUNCTION public.proteger_registro_proprietario();
+
+-- Inserção idempotente do Responsável padrão "Proprietário"
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM public.responsaveis WHERE id = 'a0000000-0000-0000-0000-000000000001' OR cpf = '000.000.000-00') THEN
+        INSERT INTO public.responsaveis (id, nome, cpf, telefone, observacao, ativo)
+        VALUES (
+            'a0000000-0000-0000-0000-000000000001',
+            'Proprietário',
+            '000.000.000-00',
+            '(93) 00000-0000',
+            'Titular da CNH retirando seu próprio documento no guichê',
+            TRUE
+        );
+    ELSE
+        UPDATE public.responsaveis 
+        SET nome = 'Proprietário', ativo = TRUE 
+        WHERE id = 'a0000000-0000-0000-0000-000000000001' OR cpf = '000.000.000-00';
+    END IF;
+END $$;
+
+-- ==============================================================================
+-- 4. TABELA DE MAPEAMENTO DE LOCALIZAÇÃO (Gavetas e Repartições por Inicial)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.mapeamento_localizacao (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    inicial VARCHAR(5) UNIQUE NOT NULL,
+    gaveta VARCHAR(50) NOT NULL,
+    reparticao VARCHAR(50) NOT NULL,
+    ativo BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Tabela de Memorandos e Remessas
-CREATE TABLE memorandos (
-  id TEXT PRIMARY KEY,
-  numero TEXT UNIQUE NOT NULL,
-  usuario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
-  usuario_nome TEXT,
-  remessa TEXT,
-  status TEXT NOT NULL DEFAULT 'Em elaboração' CHECK (status IN ('Em elaboração', 'Remetido')),
-  candidatos_count INTEGER DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
+ALTER TABLE public.mapeamento_localizacao ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.mapeamento_localizacao ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.mapeamento_localizacao ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE;
+
+CREATE OR REPLACE TRIGGER trigger_mapeamento_updated_at
+BEFORE UPDATE ON public.mapeamento_localizacao
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- Seed inicial de mapeamento A-Z
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM public.mapeamento_localizacao LIMIT 1) THEN
+        INSERT INTO public.mapeamento_localizacao (inicial, gaveta, reparticao, ativo) VALUES
+        ('A', 'GAVETA 1', 'REPARTIÇÃO 1', true),
+        ('B', 'GAVETA 1', 'REPARTIÇÃO 2', true),
+        ('C', 'GAVETA 1', 'REPARTIÇÃO 3', true),
+        ('D', 'GAVETA 1', 'REPARTIÇÃO 4', true),
+        ('E', 'GAVETA 1', 'REPARTIÇÃO 5', true),
+        ('F', 'GAVETA 2', 'REPARTIÇÃO 1', true),
+        ('G', 'GAVETA 2', 'REPARTIÇÃO 2', true),
+        ('H', 'GAVETA 2', 'REPARTIÇÃO 3', true),
+        ('I', 'GAVETA 2', 'REPARTIÇÃO 4', true),
+        ('J', 'GAVETA 2', 'REPARTIÇÃO 5', true),
+        ('K', 'GAVETA 3', 'REPARTIÇÃO 1', true),
+        ('L', 'GAVETA 3', 'REPARTIÇÃO 2', true),
+        ('M', 'GAVETA 3', 'REPARTIÇÃO 3', true),
+        ('N', 'GAVETA 3', 'REPARTIÇÃO 4', true),
+        ('O', 'GAVETA 3', 'REPARTIÇÃO 5', true),
+        ('P', 'GAVETA 4', 'REPARTIÇÃO 1', true),
+        ('Q', 'GAVETA 4', 'REPARTIÇÃO 2', true),
+        ('R', 'GAVETA 4', 'REPARTIÇÃO 3', true),
+        ('S', 'GAVETA 4', 'REPARTIÇÃO 4', true),
+        ('T', 'GAVETA 4', 'REPARTIÇÃO 5', true),
+        ('U', 'GAVETA 5', 'REPARTIÇÃO 1', true),
+        ('V', 'GAVETA 5', 'REPARTIÇÃO 2', true),
+        ('W', 'GAVETA 5', 'REPARTIÇÃO 3', true),
+        ('X', 'GAVETA 5', 'REPARTIÇÃO 4', true),
+        ('Y', 'GAVETA 5', 'REPARTIÇÃO 5', true),
+        ('Z', 'GAVETA 5', 'REPARTIÇÃO 5', true);
+    END IF;
+END $$;
+
+-- ==============================================================================
+-- 5. TABELA DE MEMORANDOS
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.memorandos (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    numero VARCHAR(100) NOT NULL,
+    usuario_id UUID REFERENCES public.usuarios(id) ON DELETE SET NULL,
+    usuario_nome VARCHAR(255),
+    remessa VARCHAR(100),
+    status VARCHAR(50) NOT NULL DEFAULT 'Em elaboração' CHECK (status IN ('Em elaboração', 'Remetido', 'Recebido')),
+    candidatos_count INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Tabela de Candidatos vinculados aos Memorandos
-CREATE TABLE candidatos (
-  id TEXT PRIMARY KEY,
-  memorando_id TEXT REFERENCES memorandos(id) ON DELETE CASCADE,
-  numero TEXT,
-  nome TEXT NOT NULL,
-  cpf TEXT NOT NULL,
-  telefone TEXT,
-  remessa TEXT,
-  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
+ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS candidatos_count INTEGER DEFAULT 0;
+
+CREATE OR REPLACE TRIGGER trigger_memorandos_updated_at
+BEFORE UPDATE ON public.memorandos
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- ==============================================================================
+-- 6. TABELA DE CANDIDATOS (Filha de Memorandos)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.candidatos (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    memorando_id UUID REFERENCES public.memorandos(id) ON DELETE CASCADE,
+    numero VARCHAR(50),
+    nome VARCHAR(255) NOT NULL,
+    cpf VARCHAR(14) NOT NULL,
+    telefone VARCHAR(50),
+    remessa VARCHAR(100),
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Tabela Geral de CNHs (Protocolo e Gavetas)
-CREATE TABLE geral_cnhs (
-  id TEXT PRIMARY KEY,
-  ordem INTEGER NOT NULL,
-  memorando_id TEXT REFERENCES memorandos(id) ON DELETE SET NULL,
-  candidato_id TEXT REFERENCES candidatos(id) ON DELETE SET NULL,
-  nome TEXT NOT NULL,
-  cpf TEXT NOT NULL,
-  gaveta TEXT,
-  reparticao TEXT,
-  situacao TEXT NOT NULL DEFAULT 'Recebida' CHECK (situacao IN ('Remetida', 'Recebida', 'Pendente', 'Entregue')),
-  responsavel_id TEXT REFERENCES responsaveis(id) ON DELETE SET NULL,
-  responsavel_nome TEXT,
-  data_movimento TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()),
-  usuario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
-  usuario_nome TEXT,
-  memorando_numero TEXT,
-  remessa TEXT,
-  observacao TEXT,
-  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
+ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS remessa VARCHAR(100);
+ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS telefone VARCHAR(50);
+
+-- ==============================================================================
+-- 7. TABELA OFICIAL: GERAL_CNHS (Tabela Principal de Controle de CNHs e Protocolo)
+-- ==============================================================================
+CREATE SEQUENCE IF NOT EXISTS public.geral_cnhs_ordem_seq START 1;
+
+CREATE TABLE IF NOT EXISTS public.geral_cnhs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    ordem INTEGER NOT NULL DEFAULT nextval('public.geral_cnhs_ordem_seq'),
+    memorando_id UUID REFERENCES public.memorandos(id) ON DELETE SET NULL,
+    candidato_id UUID REFERENCES public.candidatos(id) ON DELETE SET NULL,
+    nome VARCHAR(255) NOT NULL,
+    cpf VARCHAR(14) NOT NULL,
+    telefone VARCHAR(50),
+    notificado_whatsapp BOOLEAN DEFAULT FALSE,
+    notificado_at TIMESTAMPTZ,
+    gaveta VARCHAR(50) DEFAULT '',
+    reparticao VARCHAR(50) DEFAULT '',
+    situacao VARCHAR(50) NOT NULL DEFAULT 'Remetida' CHECK (situacao IN ('Remetida', 'Recebida', 'Pendente', 'Entregue')),
+    responsavel_id UUID REFERENCES public.responsaveis(id) ON DELETE SET NULL,
+    responsavel_nome VARCHAR(255),
+    data_movimento TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    usuario_id UUID REFERENCES public.usuarios(id) ON DELETE SET NULL,
+    usuario_nome VARCHAR(255),
+    memorando_numero VARCHAR(100),
+    remessa VARCHAR(100),
+    observacao TEXT,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Tabela de Histórico de Movimentações (Trilha de Auditoria das CNHs)
-CREATE TABLE historico_movimentacoes (
-  id TEXT PRIMARY KEY,
-  geral_id TEXT REFERENCES geral_cnhs(id) ON DELETE CASCADE,
-  geral_ordem INTEGER,
-  geral_nome TEXT,
-  situacao_anterior TEXT CHECK (situacao_anterior IN ('Remetida', 'Recebida', 'Pendente', 'Entregue') OR situacao_anterior IS NULL),
-  situacao_nova TEXT NOT NULL CHECK (situacao_nova IN ('Remetida', 'Recebida', 'Pendente', 'Entregue')),
-  responsavel_id TEXT REFERENCES responsaveis(id) ON DELETE SET NULL,
-  responsavel_nome TEXT,
-  usuario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
-  usuario_nome TEXT,
-  observacao TEXT,
-  data_hora TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS notificado_whatsapp BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS notificado_at TIMESTAMPTZ;
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS remessa VARCHAR(100);
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS memorando_numero VARCHAR(100);
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS responsavel_nome VARCHAR(255);
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS usuario_nome VARCHAR(255);
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS observacao TEXT;
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS telefone VARCHAR(50);
+
+CREATE OR REPLACE TRIGGER trigger_geral_cnhs_updated_at
+BEFORE UPDATE ON public.geral_cnhs
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- Rotina de migração transparente: se a tabela legada 'geral' existir como tabela física, migra para geral_cnhs
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables 
+        WHERE table_schema = 'public' AND table_name = 'geral' AND table_type = 'BASE TABLE'
+    ) THEN
+        ALTER TABLE public.geral ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+        ALTER TABLE public.geral ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+
+        INSERT INTO public.geral_cnhs (
+            id, ordem, memorando_id, candidato_id, nome, cpf, gaveta, reparticao,
+            situacao, responsavel_id, data_movimento, usuario_id, observacao, created_at, updated_at
+        )
+        SELECT 
+            id, 
+            COALESCE(ordem, nextval('public.geral_cnhs_ordem_seq')), 
+            memorando_id, candidato_id, nome, cpf, gaveta, reparticao,
+            situacao, responsavel_id, data_movimento, usuario_id, observacao, 
+            COALESCE(created_at, timezone('utc'::text, now())), 
+            COALESCE(updated_at, timezone('utc'::text, now()))
+        FROM public.geral
+        ON CONFLICT (id) DO NOTHING;
+
+        DROP TABLE public.geral CASCADE;
+        CREATE OR REPLACE VIEW public.geral AS SELECT * FROM public.geral_cnhs;
+    ELSIF NOT EXISTS (
+        SELECT 1 FROM information_schema.views 
+        WHERE table_schema = 'public' AND table_name = 'geral'
+    ) THEN
+        CREATE OR REPLACE VIEW public.geral AS SELECT * FROM public.geral_cnhs;
+    END IF;
+END $$;
+
+-- ==============================================================================
+-- 8. TABELA DE HISTÓRICO DE MOVIMENTAÇÕES (IMUTÁVEL)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.historico_movimentacoes (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    geral_id UUID REFERENCES public.geral_cnhs(id) ON DELETE CASCADE,
+    situacao_anterior VARCHAR(50),
+    situacao_nova VARCHAR(50) NOT NULL,
+    responsavel_id UUID REFERENCES public.responsaveis(id) ON DELETE SET NULL,
+    responsavel_nome VARCHAR(255),
+    usuario_id UUID REFERENCES public.usuarios(id) ON DELETE SET NULL,
+    usuario_nome VARCHAR(255),
+    observacao TEXT,
+    data_hora TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Tabela de Registros de Auditoria do Sistema
-CREATE TABLE auditoria (
-  id TEXT PRIMARY KEY,
-  tabela TEXT NOT NULL,
-  registro_id TEXT NOT NULL,
-  acao TEXT NOT NULL,
-  usuario_id UUID REFERENCES usuarios(id) ON DELETE SET NULL,
-  usuario_nome TEXT,
-  data_hora TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()),
-  ip TEXT,
-  valores_anteriores JSONB,
-  valores_novos JSONB
+-- Proteção: Registros do histórico são imutáveis
+CREATE OR REPLACE FUNCTION public.impedir_exclusao_historico()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'Registros de histórico de movimentações são estritamente imutáveis e não podem ser excluídos.';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_impedir_exclusao_historico ON public.historico_movimentacoes;
+CREATE TRIGGER trigger_impedir_exclusao_historico
+BEFORE DELETE OR UPDATE ON public.historico_movimentacoes
+FOR EACH ROW EXECUTE FUNCTION public.impedir_exclusao_historico();
+
+-- ==============================================================================
+-- 9. TABELA DE AUDITORIA DO SISTEMA (IMUTÁVEL)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.auditoria (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tabela VARCHAR(100) NOT NULL,
+    registro_id VARCHAR(100) NOT NULL,
+    acao VARCHAR(50) NOT NULL CHECK (acao IN ('Inclusão', 'Alteração', 'Exclusão', 'Login', 'Logout', 'Remessa', 'Recebimento', 'Entrega', 'Reabertura', 'Importação', 'Backup')),
+    usuario_id UUID REFERENCES public.usuarios(id) ON DELETE SET NULL,
+    usuario_nome VARCHAR(255),
+    data_hora TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    ip VARCHAR(50) DEFAULT '127.0.0.1',
+    valores_anteriores JSONB,
+    valores_novos JSONB
 );
 
--- ============================================================================
--- 3. CONFIGURAÇÃO DE SEGURANÇA POR LINHA (ROW LEVEL SECURITY - RLS)
--- ============================================================================
--- Habilitamos o RLS e criamos políticas de acesso público para permitir o uso imediato pela aplicação frontend
+-- Proteção: Registros de auditoria nunca podem ser alterados ou excluídos
+CREATE OR REPLACE FUNCTION public.impedir_modificacao_auditoria()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'Registros de auditoria são estritamente protegidos e não podem ser alterados nem excluídos.';
+END;
+$$ LANGUAGE plpgsql;
 
-ALTER TABLE usuarios ENABLE ROW LEVEL SECURITY;
-ALTER TABLE responsaveis ENABLE ROW LEVEL SECURITY;
-ALTER TABLE mapeamento_localizacao ENABLE ROW LEVEL SECURITY;
-ALTER TABLE memorandos ENABLE ROW LEVEL SECURITY;
-ALTER TABLE candidatos ENABLE ROW LEVEL SECURITY;
-ALTER TABLE geral_cnhs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE historico_movimentacoes ENABLE ROW LEVEL SECURITY;
-ALTER TABLE auditoria ENABLE ROW LEVEL SECURITY;
+DROP TRIGGER IF EXISTS trigger_impedir_modificacao_auditoria ON public.auditoria;
+CREATE TRIGGER trigger_impedir_modificacao_auditoria
+BEFORE UPDATE OR DELETE ON public.auditoria
+FOR EACH ROW EXECUTE FUNCTION public.impedir_modificacao_auditoria();
 
-CREATE POLICY "Permitir acesso total em usuarios" ON usuarios FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Permitir acesso total em responsaveis" ON responsaveis FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Permitir acesso total em mapeamento_localizacao" ON mapeamento_localizacao FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Permitir acesso total em memorandos" ON memorandos FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Permitir acesso total em candidatos" ON candidatos FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Permitir acesso total em geral_cnhs" ON geral_cnhs FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Permitir acesso total em historico_movimentacoes" ON historico_movimentacoes FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Permitir acesso total em auditoria" ON auditoria FOR ALL USING (true) WITH CHECK (true);
+-- ==============================================================================
+-- 10. TABELA DE CONFIGURAÇÃO INSTITUCIONAL DO ÓRGÃO
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.orgao_config (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    governo TEXT DEFAULT 'GOVERNO DO ESTADO DO PARÁ',
+    secretaria TEXT DEFAULT 'SECRETARIA DE ESTADO DE TRANSPORTES',
+    orgao TEXT DEFAULT 'DEPARTAMENTO DE TRÂNSITO DO ESTADO DO PARÁ',
+    sigla TEXT DEFAULT 'DETRAN/PA - Ciretran Itaituba',
+    origem_padrao TEXT DEFAULT 'Agência DETRAN Itaituba',
+    destino_padrao TEXT DEFAULT 'Coordenação de Habilitação / RENACH',
+    cidade_uf TEXT DEFAULT 'Itaituba - PA',
+    telefone TEXT DEFAULT '(93) 3518-1234',
+    email TEXT DEFAULT 'protocolo.itaituba@detran.pa.gov.br',
+    endereco TEXT DEFAULT 'Rod. Transamazônica, Km 02 - Bela Vista',
+    subtitulo_relatorio TEXT DEFAULT 'Setor de Protocolo e Controle de CNHs',
+    logo TEXT,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
 
--- ============================================================================
--- 4. INSERÇÃO DOS DADOS INICIAIS (POPULAÇÃO / SEED DATA)
--- ============================================================================
+ALTER TABLE public.orgao_config ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
 
--- Inserir Usuários
-INSERT INTO usuarios (id, nome, nome_curto, fone, email, funcao, setor, login, perfil, created_at, ativo) VALUES
-('11111111-1111-1111-1111-111111111111', 'Carlos Eduardo Mendes (Administrador)', 'Carlos Eduardo', '(67) 99111-2222', 'admin@detran.pa.gov.br', 'Chefe de Setor de Protocolo', 'Protocolo Geral', 'admin', 'Administrador', NOW() - INTERVAL '30 days', true),
-('22222222-2222-2222-2222-222222222222', 'Fernanda Souza Vasconcelos (Supervisora)', 'Fernanda Souza', '(67) 99222-3333', 'supervisor@detran.pa.gov.br', 'Supervisora de Operações', 'Atendimento CNH', 'supervisor', 'Supervisor', NOW() - INTERVAL '25 days', true),
-('33333333-3333-3333-3333-333333333333', 'Roberto Alves Pereira (Operador)', 'Roberto Alves', '(67) 99333-4444', 'operador@detran.pa.gov.br', 'Agente de Trânsito / Protocolista', 'Guichê de Entrega', 'operador', 'Operador', NOW() - INTERVAL '15 days', true),
-('44444444-4444-4444-4444-444444444444', 'Juliana Lima Rocha (Consulta)', 'Juliana Lima', '(67) 99444-5555', 'consulta@detran.pa.gov.br', 'Auditora de Controle Interno', 'Auditoria Geral', 'consulta', 'Consulta', NOW() - INTERVAL '10 days', true);
+CREATE OR REPLACE TRIGGER trigger_orgao_config_updated_at
+BEFORE UPDATE ON public.orgao_config
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
--- Inserir Responsáveis / Procuradores
-INSERT INTO responsaveis (id, nome, registro, cpf, telefone, observacao, ativo, created_at) VALUES
-('e2335b1e', 'PROPRIETÁRIO(A)', '1', '', '', 'Registro padrão intransferível para entrega ao próprio titular da CNH', true, NOW()),
-('d2b9952a', 'FRANCINEY DESPACHANTE', '1522', '', '', '', true, NOW()),
-('f4f347f1', 'CLEONAR DESPCHANTE', '4567', '', '', '', true, NOW()),
-('39de40af', 'BRIZOLA AUTO ESCOLA', NULL, '', '', '', true, NOW()),
-('384b2d8c', 'DARLAN DESPACHANTE', NULL, '', '', '', true, NOW()),
-('60c09b00', 'MARLISSON DESPACHANTE', NULL, '', '', '', true, NOW()),
-('33a90e11', 'NATIELE', NULL, '', '', '', true, NOW()),
-('71396f81', 'JOÃO PULO R MARQUES', NULL, '', '', '', true, NOW()),
-('97d3ad5e', 'AUTO ESCOLA SANTANA', NULL, '', '', '', true, NOW()),
-('fa41cde8', 'ARY DESPACHANTE', NULL, '', '', '', true, NOW()),
-('402ee83c', 'BAMBAM DESPACHANTE', NULL, '', '', '', true, NOW()),
-('b9bfae57', 'MARIA EUNICE DESPACHANTE', NULL, '', '', '', true, NOW()),
-('1f3d321e', 'MOISES DESPACAHNTE', NULL, '', '', '', true, NOW()),
-('5c4f215f', 'GILMAR DESPACHANTE', NULL, '', '', '', true, NOW()),
-('772dfcfd', 'NEILA DESPACHANTE', NULL, '', '', '', true, NOW()),
-('56899764', 'KAIO LOHANDES', NULL, '', '', '', true, NOW()),
-('bb95cdf5', 'WALTER DESPACHANTE', NULL, '', '', '', true, NOW()),
-('1b5ecd73', 'ODON DESPACHANTE', NULL, '', '', '', true, NOW()),
-('ee175176', 'TULA DESPACHANTE', NULL, '', '', '', true, NOW()),
-('fa1481d9', 'ESPOSA', NULL, '', '', '', true, NOW()),
-('527d4682', 'ELIONAI DESPACHANTE', '52', '67079733200', '', '', true, NOW()),
-('c1058daa', 'ANTONIO WELITON RODRIGUES', NULL, '51548496200', 'XXXXXX', '', true, NOW()),
-('efd23bd9', 'NICE DESPACHANTE', NULL, '5555555', '555555', '', true, NOW()),
-('7345b45d', 'GUSTAVO HENRIQUE SENA', NULL, '', '', '', true, NOW()),
-('85415cb3', 'SOCORRO DESPACHANTE', NULL, '', '', '', true, NOW()),
-('2995c099', 'ADAO DA ROSA NETO', NULL, '', '', '', true, NOW()),
-('6fb3467c', 'EDCARLOS LOLO', NULL, '', '', '', true, NOW()),
-('68b5d3ce', 'FERNANDO DESPACHANTE', NULL, '', '', '', true, NOW()),
-('a84dc2b7', 'JULIMAR DESPACHANTE', NULL, '', '', '', true, NOW()),
-('6da4b403', 'ED CARLOS BRAGA DOS SANTOS', NULL, '57950040220', '', '', true, NOW()),
-('b7d9a27f', 'ANA CRISTINA CIRINO', NULL, '', '', '', true, NOW()),
-('9a185a18', 'JACKSON DESPACHANTE', NULL, '', '', '', true, NOW()),
-('54a9108e', 'DIEGO DESPACHANTE', NULL, '', '', '', true, NOW()),
-('9387e9c9', 'ADENIL DESPACHANTE', NULL, '', '', '', true, NOW()),
-('f785d235', 'LIDIANE FARIAS DA SILVA', NULL, '64639363249', '92991058775', '', true, NOW()),
-('458fc6d7', 'NICE DESPACHANTE', NULL, '', '', '', true, NOW()),
-('221601a6', 'AMOS OLIVEIRA DOS ANJOS', NULL, '', '', '', true, NOW()),
-('0db81080', 'REGIS', NULL, '', '', '', true, NOW()),
-('40fda483', 'leonardo', NULL, '', '', '', true, NOW()),
-('83147b46', 'LUCIVAN DESPACHANTE', NULL, '', '', '', true, NOW()),
-('cc2a44d9', 'MANOEL DESPACHANTE', NULL, '', '', '', true, NOW()),
-('9967d842', 'RONALDO DESPACHANTE', NULL, '', '', '', true, NOW()),
-('8e90b2b1', 'ROSA DOS SANTOS DA SILVA', NULL, '', '', '', true, NOW()),
-('b1597c81', 'PIERRE DESPACHANTE', NULL, '', '', '', true, NOW()),
-('f8b761c2', 'LEONARDO F MORAIS', NULL, '04456813229', '', '', true, NOW()),
-('a08afa6e', 'RAMON STIVENSON SILVA BANDEIRA', NULL, '', '', '', true, NOW()),
-('bd4309ca', 'NAIZA KM 70', NULL, '', '', '', true, NOW()),
-('461abe27', 'CARLOS ROBERTO CORDEIRO DE SOUZA', NULL, '', '', '', true, NOW()),
-('1852a327', 'ALESSANDRO DESPACHANTE', NULL, '', '', '', true, NOW()),
-('42121784', 'VERA LUCIA GONCALVES TEIXEIRA', NULL, '', '', '', true, NOW()),
-('868e33c3', 'WANDERLEIA DE SENA', NULL, '', '', '', true, NOW()),
-('b8c3fb7f', 'GERALDO BIESEK', NULL, '', '', '', true, NOW()),
-('24553e1f', 'JEAN COMTRI', NULL, '', '', '', true, NOW()),
-('541e38dc', 'ANGELO SILVA DO NASCIMENTO NETO', NULL, '', '', '', true, NOW()),
-('7b906878', 'VALDIR AG DETRAN', NULL, '', '', '', true, NOW()),
-('dfc67cdf', 'IVANILDE S SOUZA', NULL, '', '', '', true, NOW()),
-('f2e68384', 'EVANILDO', NULL, '30862111234', '93991522309', '', true, NOW()),
-('773b2b5e', 'DESPACHANTE BEZERRA', NULL, '04546542133', '9341286985', '', true, NOW()),
-('1f8d56b0', 'HELIO JUNIOR FERREIRA DA SILVA', NULL, '58896740215', '93991611255', '', true, NOW()),
-('bd613528', 'VAN DESPACHANTE', NULL, '64753808220', '93991523181', '', true, NOW()),
-('bedd6d31', 'MARIA DA SILVA SOUSA', NULL, '88281221372', '91999019284', '', true, NOW()),
-('bbfd243b', 'elisangela costa de souza', NULL, '40261735268', '93991230100', '', true, NOW()),
-('c600348a', 'ALDAMIRO DE SOUSA', NULL, '00581706269', '93991634132', '', true, NOW()),
-('2bace6d9', 'jamilson despachante', NULL, '98075829204', '93991380811', '', true, NOW()),
-('5054bcf2', 'flavio da conceicao silva', NULL, '99015560153', '9398420915091', '', true, NOW()),
-('bd2db3cb', 'BRUNO SA', NULL, '90619277220', '222222222', '', true, NOW()),
-('a6638725', 'NEILA DESPACHANTE', NULL, '64752186268', '93991841911', '', true, NOW()),
-('b9ace4bd', 'ANDREIA SOUZA DA CRUZ', NULL, '01421637243', '93991023212', '', true, NOW()),
-('8724bcf3', 'NEY PEREIRA DE SOUSA JUNIOR', NULL, '01268469289', '93991546577', '', true, NOW()),
-('853abea7', 'RENILDO MARTINS SANTOS', NULL, '28418838841', '93991395729', '', true, NOW()),
-('78a4531a', 'MARINTIA DUTRA OLIVEIRA', NULL, '02818939267', '979911720559', '', true, NOW()),
-('bf84ea0a', 'lazaro josevaldo dias moraes', NULL, '03255827264', '93991403019', '', true, NOW()),
-('77b81905', 'VALMIRA DE BRITO PASSOS BRASIL', NULL, '31107613272', '93991416828', '', true, NOW()),
-('4a72c6fa', 'maria de fatima barros morais', NULL, '63494388253', '93992292653', '', true, NOW()),
-('74346934', 'ELIS MATIAS DE SOUZA', NULL, '59588209404', '9399181343381', '', true, NOW()),
-('79d70e03', 'bruno cordeiro de moraes', NULL, '03911236298', '93991848502', '', true, NOW()),
-('2a61a311', 'silvio vieira da silva', NULL, '03019656257', '939911712267', '', true, NOW()),
-('75da89d6', 'EMANUEL AUTO ESCOLA', NULL, '4561.515613', '93991386008', '', true, NOW());
+-- Registro padrão de configuração do órgão
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM public.orgao_config WHERE id = 'default') THEN
+        INSERT INTO public.orgao_config (id, governo, secretaria, orgao, sigla, origem_padrao, destino_padrao, cidade_uf, telefone, email, endereco, subtitulo_relatorio)
+        VALUES (
+            'default',
+            'GOVERNO DO ESTADO DO PARÁ',
+            'SECRETARIA DE ESTADO DE TRANSPORTES',
+            'DEPARTAMENTO DE TRÂNSITO DO ESTADO DO PARÁ',
+            'DETRAN/PA - Agência Itaituba',
+            'Agência DETRAN Itaituba',
+            'Coordenação de Habilitação / RENACH',
+            'Itaituba - PA',
+            '(93) 3518-1234',
+            'protocolo.itaituba@detran.pa.gov.br',
+            'Rod. Transamazônica, Km 02 - Bela Vista',
+            'Setor de Protocolo e Controle de CNHs'
+        );
+    END IF;
+END $$;
 
--- Inserir Mapeamento de Localização (A a Z)
-INSERT INTO mapeamento_localizacao (id, inicial, gaveta, reparticao, ativo) VALUES
-('m-a', 'A', 'Gaveta 1', 'Repartição 1', true),
-('m-b', 'B', 'Gaveta 1', 'Repartição 2', true),
-('m-c', 'C', 'Gaveta 1', 'Repartição 3', true),
-('m-d', 'D', 'Gaveta 1', 'Repartição 4', true),
-('m-e', 'E', 'Gaveta 1', 'Repartição 5', true),
-('m-f', 'F', 'Gaveta 1', 'Repartição 6', true),
-('m-g', 'G', 'Gaveta 1', 'Repartição 7', true),
-('m-h', 'H', 'Gaveta 1', 'Repartição 8', true),
-('m-i', 'I', 'Gaveta 3', 'Repartição 1', true),
-('m-j', 'J', 'Gaveta 3', 'Repartição 2', true),
-('m-k', 'K', 'Gaveta 3', 'Repartição 3', true),
-('m-l', 'L', 'Gaveta 3', 'Repartição 4', true),
-('m-m', 'M', 'Gaveta 3', 'Repartição 6', true),
-('m-n', 'N', 'Gaveta 3', 'Repartição 7', true),
-('m-o', 'O', 'Gaveta 3', 'Repartição 8', true),
-('m-p', 'P', 'Gaveta 4', 'Repartição 1', true),
-('m-q', 'Q', 'Gaveta 4', 'Repartição 2', true),
-('m-r', 'R', 'Gaveta 4', 'Repartição 3', true),
-('m-s', 'S', 'Gaveta 4', 'Repartição 4', true),
-('m-t', 'T', 'Gaveta 4', 'Repartição 5', true),
-('m-v', 'V', 'Gaveta 4', 'Repartição 6', true),
-('m-y', 'Y', 'Gaveta 4', 'Repartição 7', true),
-('m-z', 'Z', 'Gaveta 4', 'Repartição 7', true),
-('m-w', 'W', 'Gaveta 4', 'Repartição 6', true);
+-- ==============================================================================
+-- 11. TABELA DE LOGS DE CONSULTA DO CIDADÃO (Consulta Pública por CPF)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.acessos_cidadao (
+    id TEXT PRIMARY KEY,
+    numero INTEGER,
+    data_hora TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    cpf TEXT NOT NULL,
+    nome_titular TEXT,
+    situacao TEXT,
+    resultado_status TEXT,
+    canal TEXT DEFAULT 'Web Mobile',
+    dispositivo TEXT,
+    cidade_origem TEXT,
+    ip_mascarado TEXT
+);
 
--- Inserir Memorandos
-INSERT INTO memorandos (id, numero, usuario_id, usuario_nome, remessa, status, created_at, candidatos_count) VALUES
-('memo-01', 'MEMO-2026/042', '33333333-3333-3333-3333-333333333333', 'Roberto Alves', 'REM-001/ABRIL', 'Remetido', NOW() - INTERVAL '5 days', 2),
-('memo-02', 'MEMO-2026/043', '22222222-2222-2222-2222-222222222222', 'Fernanda Souza', 'REM-002/ABRIL', 'Remetido', NOW() - INTERVAL '3 days', 2),
-('memo-03', 'MEMO-2026/044', '33333333-3333-3333-3333-333333333333', 'Roberto Alves', 'REM-003/ABRIL', 'Em elaboração', NOW() - INTERVAL '1 day', 3);
+-- ==============================================================================
+-- 12. TABELA DE IMAGENS E ANEXOS SINCRONIZADOS
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.imagens_sync (
+    id TEXT PRIMARY KEY,
+    tabela_ref TEXT,
+    registro_id TEXT,
+    nome TEXT NOT NULL,
+    tipo TEXT,
+    tamanho INTEGER,
+    dados_base64 TEXT,
+    url_publica TEXT,
+    usuario_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
 
--- Inserir Candidatos
-INSERT INTO candidatos (id, memorando_id, numero, nome, cpf, telefone, remessa, created_at) VALUES
-('cand-01', 'memo-03', '01', 'Luciana Borges Ferreira', '555.666.777-88', '(67) 98111-2233', 'REM-003/ABRIL', NOW()),
-('cand-02', 'memo-03', '02', 'Marcos Vinicius Santos', '666.777.888-99', '(67) 98222-3344', 'REM-003/ABRIL', NOW()),
-('cand-03', 'memo-03', '03', 'Helena Maria de Souza', '777.888.999-00', '(67) 98333-4455', 'REM-003/ABRIL', NOW());
+-- ==============================================================================
+-- 13. TABELA DE DECLARAÇÕES DE RETIRADA DE CNH POR PROCURADOR
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.declaracoes (
+    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    numero VARCHAR(50) NOT NULL UNIQUE,
+    ano INTEGER NOT NULL DEFAULT EXTRACT(YEAR FROM CURRENT_DATE),
+    data_emissao DATE NOT NULL DEFAULT CURRENT_DATE,
+    cidade VARCHAR(100) NOT NULL DEFAULT 'Itaituba',
+    uf VARCHAR(2) NOT NULL DEFAULT 'PA',
+    procurador_id TEXT,
+    procurador_nome VARCHAR(255) NOT NULL,
+    procurador_cpf VARCHAR(20) NOT NULL,
+    procurador_fone VARCHAR(50),
+    procurador_endereco TEXT,
+    texto_declaracao TEXT NOT NULL,
+    condutores JSONB NOT NULL DEFAULT '[]'::jsonb,
+    gerente_nome VARCHAR(255),
+    gerente_cargo VARCHAR(100),
+    gerente_unidade VARCHAR(100),
+    gerente_portaria VARCHAR(150),
+    observacao TEXT,
+    usuario_id TEXT,
+    usuario_nome VARCHAR(255),
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
 
--- Inserir Tela Geral de CNHs
-INSERT INTO geral_cnhs (id, ordem, memorando_id, candidato_id, nome, cpf, gaveta, reparticao, situacao, responsavel_id, responsavel_nome, data_movimento, usuario_id, usuario_nome, memorando_numero, remessa, observacao, created_at) VALUES
-('cnh-01', 1, 'memo-01', NULL, 'Ana Paula da Silva Santos', '123.456.789-00', '', '', 'Remetida', NULL, NULL, NOW() - INTERVAL '4 days', '33333333-3333-3333-3333-333333333333', 'Roberto Alves', 'MEMO-2026/042', 'REM-001/ABRIL', 'Remessa enviada da Gráfica / Prodata em 25/07', NOW() - INTERVAL '4 days'),
-('cnh-02', 2, 'memo-01', NULL, 'Bruno Costa Oliveira', '234.567.890-11', '', '', 'Remetida', NULL, NULL, NOW() - INTERVAL '4 days', '33333333-3333-3333-3333-333333333333', 'Roberto Alves', 'MEMO-2026/042', 'REM-001/ABRIL', 'Aguardando conferência no protocolo da agência', NOW() - INTERVAL '4 days'),
-('cnh-03', 3, 'memo-02', NULL, 'Carlos Alberto Albuquerque', '345.678.901-22', 'Gaveta 1', 'Repartição 3', 'Recebida', NULL, NULL, NOW() - INTERVAL '2 days', '22222222-2222-2222-2222-222222222222', 'Fernanda Souza', 'MEMO-2026/043', 'REM-002/ABRIL', 'Recebida e arquivada na Gaveta 1 Repartição 3 (Inicial C)', NOW() - INTERVAL '3 days'),
-('cnh-04', 4, 'memo-02', NULL, 'Daniela Rodrigues de Castro', '456.789.012-33', 'Gaveta 1', 'Repartição 4', 'Recebida', NULL, NULL, NOW() - INTERVAL '2 days', '22222222-2222-2222-2222-222222222222', 'Fernanda Souza', 'MEMO-2026/043', 'REM-002/ABRIL', 'Recebida via malote expresso', NOW() - INTERVAL '3 days'),
-('cnh-05', 5, NULL, NULL, 'Eduardo Henrique Gonzaga', '888.999.000-11', 'Gaveta 1', 'Repartição 5', 'Entregue', '00000000-0000-0000-0000-000000000001', 'Proprietário', NOW() - INTERVAL '1 day', '33333333-3333-3333-3333-333333333333', 'Roberto Alves', NULL, NULL, 'Retirada efetuada pelo próprio titular no guichê 4', NOW() - INTERVAL '6 days'),
-('cnh-06', 6, NULL, NULL, 'Gabriel Augusto Peixoto', '999.000.111-22', 'Gaveta 1', 'Repartição 7', 'Entregue', '00000000-0000-0000-0000-000000000003', 'Dr. Marcos Silva Procurações', NOW() - INTERVAL '1 hour', '33333333-3333-3333-3333-333333333333', 'Roberto Alves', NULL, NULL, 'Entregue para despachante Dr. Marcos Silva via procuração', NOW() - INTERVAL '5 days');
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS condutores JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS observacao TEXT;
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS gerente_nome VARCHAR(255);
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS gerente_cargo VARCHAR(100);
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS gerente_unidade VARCHAR(100);
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS gerente_portaria VARCHAR(150);
 
--- Inserir Histórico de Movimentações
-INSERT INTO historico_movimentacoes (id, geral_id, geral_ordem, geral_nome, situacao_anterior, situacao_nova, responsavel_id, responsavel_nome, usuario_id, usuario_nome, observacao, data_hora) VALUES
-('hist-01', 'cnh-03', 3, 'Carlos Alberto Albuquerque', 'Remetida', 'Recebida', NULL, NULL, '22222222-2222-2222-2222-222222222222', 'Fernanda Souza', 'CNH Recebida na Agência e alocada em Gaveta 1 Repartição 3', NOW() - INTERVAL '2 days'),
-('hist-02', 'cnh-05', 5, 'Eduardo Henrique Gonzaga', 'Recebida', 'Entregue', '00000000-0000-0000-0000-000000000001', 'Proprietário', '33333333-3333-3333-3333-333333333333', 'Roberto Alves', 'Retirada efetuada pelo titular no guichê', NOW() - INTERVAL '1 day');
+CREATE OR REPLACE TRIGGER trigger_declaracoes_updated_at
+BEFORE UPDATE ON public.declaracoes
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
--- Inserir Registros de Auditoria
-INSERT INTO auditoria (id, tabela, registro_id, acao, usuario_id, usuario_nome, data_hora, ip, valores_anteriores, valores_novos) VALUES
-('aud-01', 'memorandos', 'MEMO-2026/042', 'Remessa', '33333333-3333-3333-3333-333333333333', 'Roberto Alves', NOW() - INTERVAL '5 days', '10.0.1.15', NULL, '{"status": "Remetido", "total_cnhs": 2}'::jsonb),
-('aud-02', 'geral', 'Ordem #3', 'Recebimento', '22222222-2222-2222-2222-222222222222', 'Fernanda Souza', NOW() - INTERVAL '2 days', '10.0.1.20', NULL, '{"situacao": "Recebida", "gaveta": "Gaveta 1", "reparticao": "Repartição 3"}'::jsonb),
-('aud-03', 'geral', 'Ordem #5', 'Entrega', '33333333-3333-3333-3333-333333333333', 'Roberto Alves', NOW() - INTERVAL '1 day', '10.0.1.15', NULL, '{"situacao": "Entregue", "responsavel": "Proprietário"}'::jsonb);
+-- ==============================================================================
+-- 14. ÍNDICES DE ALTA PERFORMANCE
+-- ==============================================================================
+CREATE INDEX IF NOT EXISTS idx_geral_cnhs_cpf ON public.geral_cnhs(cpf);
+CREATE INDEX IF NOT EXISTS idx_geral_cnhs_nome ON public.geral_cnhs(nome);
+CREATE INDEX IF NOT EXISTS idx_geral_cnhs_situacao ON public.geral_cnhs(situacao);
+CREATE INDEX IF NOT EXISTS idx_geral_cnhs_ordem ON public.geral_cnhs(ordem DESC);
+CREATE INDEX IF NOT EXISTS idx_geral_cnhs_memorando ON public.geral_cnhs(memorando_id);
+CREATE INDEX IF NOT EXISTS idx_geral_cnhs_updated_at ON public.geral_cnhs(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_geral_cnhs_data_movimento ON public.geral_cnhs(data_movimento DESC);
 
--- ============================================================================
--- HABILITAR REALTIME (SUPABASE REALTIME) PARA TODAS AS TABELAS
--- ============================================================================
+CREATE INDEX IF NOT EXISTS idx_candidatos_cpf ON public.candidatos(cpf);
+CREATE INDEX IF NOT EXISTS idx_candidatos_memo ON public.candidatos(memorando_id);
+CREATE INDEX IF NOT EXISTS idx_memorandos_status ON public.memorandos(status);
+CREATE INDEX IF NOT EXISTS idx_memorandos_updated_at ON public.memorandos(updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_historico_geral ON public.historico_movimentacoes(geral_id);
+CREATE INDEX IF NOT EXISTS idx_auditoria_tabela_reg ON public.auditoria(tabela, registro_id);
+CREATE INDEX IF NOT EXISTS idx_responsaveis_cpf ON public.responsaveis(cpf);
+CREATE INDEX IF NOT EXISTS idx_acessos_cidadao_cpf ON public.acessos_cidadao(cpf);
+
+CREATE INDEX IF NOT EXISTS idx_declaracoes_numero ON public.declaracoes(numero);
+CREATE INDEX IF NOT EXISTS idx_declaracoes_ano ON public.declaracoes(ano);
+CREATE INDEX IF NOT EXISTS idx_declaracoes_procurador_cpf ON public.declaracoes(procurador_cpf);
+CREATE INDEX IF NOT EXISTS idx_declaracoes_data_emissao ON public.declaracoes(data_emissao DESC);
+CREATE INDEX IF NOT EXISTS idx_declaracoes_created_at ON public.declaracoes(created_at DESC);
+
+-- ==============================================================================
+-- 15. SUPABASE REALTIME REPLICATION (Habilita sincronização instantânea multi-máquina)
+-- ==============================================================================
+ALTER TABLE public.declaracoes REPLICA IDENTITY FULL;
 
 DO $$
 DECLARE
-  t text;
-  tabelas text[] := ARRAY[
-    'usuarios', 
-    'responsaveis', 
-    'mapeamento_localizacao', 
-    'memorandos', 
-    'candidatos', 
-    'geral_cnhs', 
-    'historico_movimentacoes', 
-    'auditoria'
-  ];
+    tbl text;
+    tbls text[] := ARRAY['geral_cnhs', 'memorandos', 'candidatos', 'responsaveis', 'mapeamento_localizacao', 'acessos_cidadao', 'orgao_config', 'declaracoes'];
 BEGIN
-  -- Garante que a publicação do Supabase Realtime existe
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime'
-  ) THEN
-    CREATE PUBLICATION supabase_realtime;
-  END IF;
-
-  -- Para cada tabela que de fato existir no banco de dados
-  FOREACH t IN ARRAY tabelas LOOP
-    IF EXISTS (
-      SELECT 1 FROM information_schema.tables 
-      WHERE table_schema = 'public' AND table_name = t
-    ) THEN
-      -- Configura Replica Identity FULL para transmitir alterações completas em UPDATE/DELETE
-      EXECUTE format('ALTER TABLE %I REPLICA IDENTITY FULL;', t);
-
-      -- Adiciona a tabela à publicação do Supabase Realtime se ainda não estiver
-      BEGIN
-        EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE %I;', t);
-      EXCEPTION 
-        WHEN duplicate_object THEN
-          -- Tabela já adicionada previamente na publicação
-          NULL;
-      END;
+    IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        FOREACH tbl IN ARRAY tbls LOOP
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_publication_tables 
+                WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = tbl
+            ) THEN
+                BEGIN
+                    EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', tbl);
+                EXCEPTION
+                    WHEN duplicate_object OR duplicate_table OR undefined_object THEN
+                        NULL;
+                END;
+            END IF;
+        END LOOP;
     END IF;
-  END LOOP;
 END $$;
 
--- ============================================================================
--- FIM DO SCRIPT
--- ============================================================================
+-- ==============================================================================
+-- 16. ROW LEVEL SECURITY (RLS) E POLÍTICAS DE ACESSO RBAC
+-- ==============================================================================
+ALTER TABLE public.usuarios ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.responsaveis ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.memorandos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.candidatos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.geral_cnhs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.historico_movimentacoes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.auditoria ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.mapeamento_localizacao ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.orgao_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.acessos_cidadao ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.imagens_sync ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.declaracoes ENABLE ROW LEVEL SECURITY;
+
+-- Limpeza de políticas existentes para evitar duplicidade
+DO $$
+DECLARE
+    pol RECORD;
+BEGIN
+    FOR pol IN 
+        SELECT schemaname, tablename, policyname 
+        FROM pg_policies 
+        WHERE schemaname = 'public'
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', pol.policyname, pol.schemaname, pol.tablename);
+    END LOOP;
+END $$;
+
+-- Função auxiliar segura para obter o perfil do usuário autenticado no JWT / tabela usuarios
+CREATE OR REPLACE FUNCTION public.get_current_user_profile()
+RETURNS VARCHAR AS $$
+DECLARE
+    usr_perfil VARCHAR;
+BEGIN
+    SELECT perfil INTO usr_perfil
+    FROM public.usuarios
+    WHERE id = auth.uid() OR email = auth.email()
+    LIMIT 1;
+
+    RETURN COALESCE(usr_perfil, 'Consulta');
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Políticas para USUÁRIOS
+CREATE POLICY "usuarios_select_policy" ON public.usuarios
+    FOR SELECT TO authenticated, anon USING (true);
+
+CREATE POLICY "usuarios_admin_manage_policy" ON public.usuarios
+    FOR ALL TO authenticated
+    USING (
+        auth.role() = 'authenticated' AND (
+            public.get_current_user_profile() = 'Administrador' OR
+            id = auth.uid()
+        )
+    )
+    WITH CHECK (
+        auth.role() = 'authenticated' AND (
+            public.get_current_user_profile() = 'Administrador' OR
+            id = auth.uid()
+        )
+    );
+
+-- Políticas para GERAL_CNHS (Controle de CNHs)
+CREATE POLICY "geral_cnhs_read_policy" ON public.geral_cnhs
+    FOR SELECT TO authenticated, anon USING (true);
+
+CREATE POLICY "geral_cnhs_write_policy" ON public.geral_cnhs
+    FOR ALL TO authenticated
+    USING (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    )
+    WITH CHECK (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    );
+
+-- Políticas para MEMORANDOS
+CREATE POLICY "memorandos_read_policy" ON public.memorandos
+    FOR SELECT TO authenticated, anon USING (true);
+
+CREATE POLICY "memorandos_write_policy" ON public.memorandos
+    FOR ALL TO authenticated
+    USING (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    )
+    WITH CHECK (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    );
+
+-- Políticas para CANDIDATOS
+CREATE POLICY "candidatos_read_policy" ON public.candidatos
+    FOR SELECT TO authenticated, anon USING (true);
+
+CREATE POLICY "candidatos_write_policy" ON public.candidatos
+    FOR ALL TO authenticated
+    USING (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    )
+    WITH CHECK (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    );
+
+-- Políticas para RESPONSÁVEIS
+CREATE POLICY "responsaveis_read_policy" ON public.responsaveis
+    FOR SELECT TO authenticated, anon USING (true);
+
+CREATE POLICY "responsaveis_write_policy" ON public.responsaveis
+    FOR ALL TO authenticated
+    USING (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    )
+    WITH CHECK (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    );
+
+-- Políticas para MAPEAMENTO_LOCALIZACAO
+CREATE POLICY "mapeamento_read_policy" ON public.mapeamento_localizacao
+    FOR SELECT TO authenticated, anon USING (true);
+
+CREATE POLICY "mapeamento_write_policy" ON public.mapeamento_localizacao
+    FOR ALL TO authenticated
+    USING (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor')
+    )
+    WITH CHECK (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor')
+    );
+
+-- Políticas para HISTÓRICO DE MOVIMENTAÇÕES
+CREATE POLICY "historico_read_policy" ON public.historico_movimentacoes
+    FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "historico_insert_policy" ON public.historico_movimentacoes
+    FOR INSERT TO authenticated
+    WITH CHECK (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    );
+
+-- Políticas para AUDITORIA
+CREATE POLICY "auditoria_read_policy" ON public.auditoria
+    FOR SELECT TO authenticated
+    USING (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor')
+    );
+
+CREATE POLICY "auditoria_insert_policy" ON public.auditoria
+    FOR INSERT TO authenticated, anon
+    WITH CHECK (true);
+
+-- Políticas para CONFIGURAÇÃO DO ÓRGÃO
+CREATE POLICY "orgao_config_read_policy" ON public.orgao_config
+    FOR SELECT TO authenticated, anon USING (true);
+
+CREATE POLICY "orgao_config_write_policy" ON public.orgao_config
+    FOR ALL TO authenticated
+    USING (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor')
+    )
+    WITH CHECK (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor')
+    );
+
+-- Políticas para ACESSOS DO CIDADÃO (Registro de consultas públicas por CPF)
+CREATE POLICY "acessos_cidadao_read_policy" ON public.acessos_cidadao
+    FOR SELECT TO authenticated, anon USING (true);
+
+CREATE POLICY "acessos_cidadao_insert_policy" ON public.acessos_cidadao
+    FOR INSERT TO authenticated, anon WITH CHECK (true);
+
+-- Políticas para IMAGENS SYNC
+CREATE POLICY "imagens_sync_read_policy" ON public.imagens_sync
+    FOR SELECT TO authenticated, anon USING (true);
+
+CREATE POLICY "imagens_sync_write_policy" ON public.imagens_sync
+    FOR ALL TO authenticated
+    USING (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    )
+    WITH CHECK (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    );
+
+-- Políticas para DECLARAÇÕES DE RETIRADA POR PROCURADOR
+CREATE POLICY "declaracoes_read_policy" ON public.declaracoes
+    FOR SELECT TO authenticated, anon USING (true);
+
+CREATE POLICY "declaracoes_write_policy" ON public.declaracoes
+    FOR ALL TO authenticated
+    USING (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    )
+    WITH CHECK (
+        public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
+    );
+
+CREATE POLICY "declaracoes_anon_write_policy" ON public.declaracoes
+    FOR ALL TO anon
+    USING (true)
+    WITH CHECK (true);
+
+-- ==============================================================================
+-- 17. CONFIGURAÇÃO DE STORAGE DO SUPABASE (Buckets para Logos e Anexos)
+-- ==============================================================================
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'buckets') THEN
+        IF NOT EXISTS (SELECT 1 FROM storage.buckets WHERE id = 'orgao_logos') THEN
+            INSERT INTO storage.buckets (id, name, public) VALUES ('orgao_logos', 'orgao_logos', true);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM storage.buckets WHERE id = 'anexos_detran') THEN
+            INSERT INTO storage.buckets (id, name, public) VALUES ('anexos_detran', 'anexos_detran', true);
+        END IF;
+    END IF;
+END $$;
+
+-- Políticas de Storage para o bucket orgao_logos
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'orgao_logos_public_read'
+    ) THEN
+        CREATE POLICY "orgao_logos_public_read" ON storage.objects
+            FOR SELECT TO public USING (bucket_id = 'orgao_logos');
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'orgao_logos_auth_insert'
+    ) THEN
+        CREATE POLICY "orgao_logos_auth_insert" ON storage.objects
+            FOR INSERT TO authenticated WITH CHECK (bucket_id = 'orgao_logos');
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'orgao_logos_auth_update'
+    ) THEN
+        CREATE POLICY "orgao_logos_auth_update" ON storage.objects
+            FOR UPDATE TO authenticated USING (bucket_id = 'orgao_logos');
+    END IF;
+END $$;
+
+-- ==============================================================================
+-- 18. PERMISSÕES DE ACESSO (GRANTS) PARA ROLES SUPABASE
+-- ==============================================================================
+GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON TABLE public.declaracoes TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, anon, authenticated, service_role;
+

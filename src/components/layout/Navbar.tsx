@@ -241,7 +241,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
                       const res = await fetch('/supabase_schema.sql');
                       const sql = await res.text();
                       await navigator.clipboard.writeText(sql);
-                      alert("✅ Script SQL do Supabase copiado com sucesso!\n\nCole no Editor SQL (SQL Editor) do seu painel Supabase para criar e popular todas as 8 tabelas iniciais.");
+                      alert("✅ Script SQL do Supabase copiado com sucesso!\n\nCole no Editor SQL (SQL Editor) do seu painel Supabase para criar e atualizar todas as tabelas e permissões (incluindo a nova tabela de Declarações, CNHs, Memorandos, etc.).");
                     } catch (e) {
                       alert("⚠️ O arquivo supabase_schema.sql está disponível na raiz do projeto!");
                     }

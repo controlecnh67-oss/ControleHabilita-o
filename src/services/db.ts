@@ -13,7 +13,9 @@ import {
   MapaArquivoFisico,
   MapaGavetaItem,
   MapaReparticaoItem,
-  getPermissoesPadrao
+  getPermissoesPadrao,
+  Declaracao,
+  DeclaracaoItemCondutor
 } from "../types";
 import { getInitialChar, formatDateTime } from "../lib/utils";
 import { supabase, isSupabaseConfigured } from "./supabase";
@@ -388,6 +390,37 @@ const SEED_CANDIDATOS: Candidato[] = [
   { id: "cand-03", memorando_id: "memo-03", numero: "03", nome: "Helena Maria de Souza", cpf: "777.888.999-00", pa: "100200303", telefone: "(67) 98333-4455", remessa: "REM-003/ABRIL", created_at: new Date().toISOString() }
 ];
 
+const SEED_DECLARACOES: Declaracao[] = [
+  {
+    id: "decl-0109-2026",
+    numero: "0109/2026",
+    ano: 2026,
+    data_emissao: "2026-09-14",
+    procurador_nome: "REGINALDO DE SOUZA SANTOS",
+    procurador_cpf: "36956201291",
+    procurador_telefone: "93992912928",
+    procurador_endereco: "Campo Verde, MT, 78840-000, Brasil",
+    texto_declaracao: "Declaro, para fins administrativos, que recebi nesta agência, a Carteira Nacional de Habilitação, ou as Carteiras Nacionais de Habilitação, do(s) condutor(es) abaixo identificado(s), assumindo a responsabilidade por sua entrega ao(s) respectivo(s) destinatário(s).",
+    condutores: [
+      {
+        item: 1,
+        nome: "MAIARA AMORIM SANTOS",
+        cpf: "02633555276",
+        pa: "7849102"
+      }
+    ],
+    cidade: "Itaituba",
+    uf: "PA",
+    gerente_nome: "Zedequias Carlos de Melo",
+    gerente_cargo: "Gerente DETRAN",
+    gerente_unidade: "ITAITUBA-PA",
+    gerente_portaria: "Portaria 1.083/2025 - CCG",
+    usuario_id: "admin",
+    usuario_nome: "Agente DETRAN",
+    created_at: "2026-09-14T11:31:23.000Z"
+  }
+];
+
 const SEED_GERAL: GeralCNH[] = cnhSeedData as GeralCNH[];
 
 const SEED_HISTORICO: HistoricoMovimentacao[] = [
@@ -518,8 +551,8 @@ let isIdbInitialized = false;
 export async function initStorage(): Promise<void> {
   if (isIdbInitialized) return;
   const keys = [
-    "usuarios", "responsaveis", "memorandos", "candidatos", "geral", "historico", "auditoria", "mapeamento",
-    "deleted_memorandos", "deleted_candidatos", "deleted_geral", "deleted_responsaveis"
+    "usuarios", "responsaveis", "memorandos", "candidatos", "geral", "historico", "auditoria", "mapeamento", "declaracoes",
+    "deleted_memorandos", "deleted_candidatos", "deleted_geral", "deleted_responsaveis", "deleted_declaracoes"
   ];
   for (const k of keys) {
     try {
@@ -624,7 +657,7 @@ export function resetDemoData(): void {
   for (const k of Object.keys(memoryStore)) {
     delete memoryStore[k];
   }
-  const keys = ["usuarios", "responsaveis", "memorandos", "candidatos", "geral", "historico", "auditoria", "mapeamento"];
+  const keys = ["usuarios", "responsaveis", "memorandos", "candidatos", "geral", "historico", "auditoria", "mapeamento", "declaracoes"];
   for (const k of keys) {
     idbSet(`detran_cnh_${k}`, null).catch(() => {});
   }
@@ -636,6 +669,7 @@ export function resetDemoData(): void {
   localStorage.setItem("detran_cnh_historico", JSON.stringify(SEED_HISTORICO));
   localStorage.setItem("detran_cnh_auditoria", JSON.stringify(SEED_AUDITORIA));
   localStorage.setItem("detran_cnh_mapeamento", JSON.stringify(SEED_MAPEAMENTO));
+  localStorage.setItem("detran_cnh_declaracoes", JSON.stringify(SEED_DECLARACOES));
 }
 
 // Inicializar store local caso não exista
@@ -647,6 +681,7 @@ getStoredList("geral", SEED_GERAL);
 getStoredList("historico", SEED_HISTORICO);
 getStoredList("auditoria", SEED_AUDITORIA);
 getStoredList("mapeamento", SEED_MAPEAMENTO);
+getStoredList("declaracoes", SEED_DECLARACOES);
 
 // ============================================================================
 // SERVIÇOS DE AUDITORIA E HISTÓRICO INTERNOS
@@ -1879,6 +1914,186 @@ export async function sincronizarDataMovimentoComCriacao(): Promise<number> {
   }
 
   return updatedCount;
+}
+
+// ============================================================================
+// DECLARAÇÃO DE RETIRADA DE CNH POR PROCURADOR / RESPONSÁVEL
+// ============================================================================
+
+export async function getDeclaracoes(): Promise<Declaracao[]> {
+  await initStorage();
+  const deletedIds = getDeletedIds("declaracoes");
+
+  if (isSupabaseConfigured()) {
+    try {
+      const data = await fetchAllRowsFromSupabase<Declaracao>("declaracoes", 1000, "created_at", false);
+      if (data && Array.isArray(data)) {
+        const validRemote: Declaracao[] = [];
+        for (const d of data) {
+          if (deletedIds.has(d.id)) {
+            try {
+              await supabase.from("declaracoes").delete().eq("id", d.id);
+            } catch (e) {
+              console.warn("Aviso ao excluir declaracao remota:", e);
+            }
+          } else {
+            validRemote.push(d);
+          }
+        }
+        const local = getStoredList<Declaracao>("declaracoes", SEED_DECLARACOES).filter((d) => !deletedIds.has(d.id));
+        const remoteIds = new Set(validRemote.map((d) => d.id));
+        const localOnly = local.filter((d) => !remoteIds.has(d.id) && !deletedIds.has(d.id));
+        const merged = [...validRemote, ...localOnly].filter((d) => !deletedIds.has(d.id));
+        saveStoredList("declaracoes", merged);
+      }
+    } catch (err) {
+      console.warn("Aviso ao buscar declaracoes no Supabase:", err);
+    }
+  }
+
+  const list = getStoredList<Declaracao>("declaracoes", SEED_DECLARACOES).filter((d) => !deletedIds.has(d.id));
+  return list.sort((a, b) => new Date(b.created_at || b.data_emissao).getTime() - new Date(a.created_at || a.data_emissao).getTime());
+}
+
+export async function getNextDeclaracaoNumero(anoParam?: number): Promise<string> {
+  const ano = anoParam || new Date().getFullYear();
+  const declaracoes = await getDeclaracoes();
+  
+  let maxSeq = 0;
+  for (const d of declaracoes) {
+    if (d.ano === ano || (d.numero && d.numero.endsWith(`/${ano}`))) {
+      const match = d.numero.match(/^(\d+)\//);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxSeq) {
+          maxSeq = num;
+        }
+      }
+    }
+  }
+
+  // Se a última for 0109/2026, a próxima sugerida será 0110/2026
+  const nextSeq = maxSeq + 1;
+  const seqFormatted = String(nextSeq).padStart(4, "0");
+  return `${seqFormatted}/${ano}`;
+}
+
+export async function createDeclaracao(
+  data: Omit<Declaracao, "id" | "created_at" | "updated_at">,
+  userId: string,
+  userNome: string
+): Promise<Declaracao> {
+  await initStorage();
+  const list = await getDeclaracoes();
+
+  const numeroLimpo = data.numero.trim();
+  if (list.some((d) => d.numero.toLowerCase() === numeroLimpo.toLowerCase())) {
+    throw new Error(`Já existe uma declaração com o número "${numeroLimpo}".`);
+  }
+
+  const declId = typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `decl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+  const now = new Date().toISOString();
+  const nova: Declaracao = {
+    ...data,
+    id: declId,
+    numero: numeroLimpo,
+    ano: data.ano || new Date().getFullYear(),
+    created_at: now,
+    usuario_id: userId,
+    usuario_nome: userNome,
+  };
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { error } = await supabase.from("declaracoes").insert([nova]);
+      if (error) {
+        console.warn("Aviso ao salvar declaração no Supabase (será mantido localmente):", error.message);
+      }
+    } catch (e) {
+      console.warn("Erro ao salvar declaração no Supabase:", e);
+    }
+  }
+
+  saveStoredList("declaracoes", [nova, ...list.filter((d) => d.id !== nova.id)]);
+  notifyDataSync("declaracoes");
+
+  await logAuditoria(
+    "declaracoes",
+    nova.numero,
+    "Inclusão",
+    userId,
+    userNome,
+    null,
+    {
+      numero: nova.numero,
+      procurador: nova.procurador_nome,
+      qtd_condutores: nova.condutores.length
+    }
+  );
+
+  return nova;
+}
+
+export async function updateDeclaracao(
+  id: string,
+  data: Partial<Declaracao>,
+  userId: string,
+  userNome: string
+): Promise<Declaracao> {
+  await initStorage();
+  const list = getStoredList<Declaracao>("declaracoes", SEED_DECLARACOES);
+  const index = list.findIndex((d) => d.id === id);
+  if (index === -1) throw new Error("Declaração não encontrada");
+  const ant = list[index];
+
+  const atualizado: Declaracao = {
+    ...ant,
+    ...data,
+    updated_at: new Date().toISOString()
+  };
+
+  list[index] = atualizado;
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("declaracoes").update(atualizado).eq("id", id);
+    } catch (e) {
+      console.warn("Aviso ao atualizar declaração no Supabase:", e);
+    }
+  }
+
+  saveStoredList("declaracoes", list);
+  notifyDataSync("declaracoes");
+
+  await logAuditoria("declaracoes", atualizado.numero, "Alteração", userId, userNome, ant, atualizado);
+  return atualizado;
+}
+
+export async function deleteDeclaracao(id: string, userId: string, userNome: string): Promise<void> {
+  await initStorage();
+  const list = getStoredList<Declaracao>("declaracoes", SEED_DECLARACOES);
+  const target = list.find((d) => d.id === id);
+
+  addDeletedId("declaracoes", id);
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("declaracoes").delete().eq("id", id);
+    } catch (e) {
+      console.warn("Aviso ao deletar declaração no Supabase:", e);
+    }
+  }
+
+  const filtrados = list.filter((d) => d.id !== id);
+  saveStoredList("declaracoes", filtrados);
+  notifyDataSync("declaracoes");
+
+  if (target) {
+    await logAuditoria("declaracoes", target.numero, "Exclusão", userId, userNome, target, null);
+  }
 }
 
 export async function getGeralCNHs(): Promise<GeralCNH[]> {
