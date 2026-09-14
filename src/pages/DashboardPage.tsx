@@ -34,7 +34,6 @@ import {
 } from "recharts";
 import { getDashboardStats } from "../services/db";
 import { subscribeToMultipleSupabaseRealtime } from "../services/supabase";
-import { MapaArquivoFisicoCard } from "../components/MapaArquivoFisicoCard";
 
 export const DashboardPage: React.FC = () => {
   const [stats, setStats] = useState<any>(null);
@@ -198,9 +197,6 @@ export const DashboardPage: React.FC = () => {
           );
         })}
       </div>
-
-      {/* Mapa Intuitivo do Arquivo Físico (4 Gavetas × 8 Repartições) */}
-      <MapaArquivoFisicoCard data={stats.mapaArquivoFisico} />
 
       {/* Gráficos Linha 1: Situação + Movimentação Mensal */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

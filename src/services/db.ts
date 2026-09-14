@@ -3559,6 +3559,15 @@ export async function getDashboardStats() {
   };
 }
 
+/**
+ * Retorna os dados estruturados do Mapa do Arquivo Físico (4 Gavetas x 8 Repartições)
+ * com as CNHs em estoque físico (Situação: "Recebida").
+ */
+export async function getMapaArquivoFisico(): Promise<MapaArquivoFisico> {
+  const stats = await getDashboardStats();
+  return stats.mapaArquivoFisico;
+}
+
 // ============================================================================
 // SERVIÇOS DE BACKUP, RESTAURAÇÃO E SINCRONIZAÇÃO COM SUPABASE
 // ============================================================================
