@@ -781,7 +781,38 @@ GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, servi
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 GRANT ALL ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 GRANT ALL ON TABLE public.declaracoes TO postgres, anon, authenticated, service_role;
+GRANT ALL ON TABLE public.lotes TO postgres, anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, anon, authenticated, service_role;
+
+-- ==============================================================================
+-- 19. TABELA DE LOTES (PROTOCOLO GERAL)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.lotes (
+    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    numero INTEGER NOT NULL,
+    data_recebimento DATE NOT NULL DEFAULT CURRENT_DATE,
+    documentos_impressos INTEGER NOT NULL DEFAULT 0,
+    pdf_nome TEXT,
+    pdf_url TEXT,
+    observacao TEXT,
+    usuario_id TEXT,
+    usuario_nome VARCHAR(255),
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_lotes_numero ON public.lotes(numero);
+CREATE INDEX IF NOT EXISTS idx_lotes_data_recebimento ON public.lotes(data_recebimento DESC);
+CREATE INDEX IF NOT EXISTS idx_lotes_created_at ON public.lotes(created_at DESC);
+
+ALTER TABLE public.lotes ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "lotes_read_policy" ON public.lotes;
+CREATE POLICY "lotes_read_policy" ON public.lotes FOR SELECT TO authenticated, anon USING (true);
+DROP POLICY IF EXISTS "lotes_write_policy" ON public.lotes;
+CREATE POLICY "lotes_write_policy" ON public.lotes FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "lotes_anon_write_policy" ON public.lotes;
+CREATE POLICY "lotes_anon_write_policy" ON public.lotes FOR ALL TO anon USING (true) WITH CHECK (true);
+GRANT ALL ON TABLE public.lotes TO postgres, anon, authenticated, service_role;
 

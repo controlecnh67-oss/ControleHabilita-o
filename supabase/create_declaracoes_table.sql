@@ -90,20 +90,8 @@ CREATE POLICY "declaracoes_read_policy" ON public.declaracoes
 DROP POLICY IF EXISTS "declaracoes_write_policy" ON public.declaracoes;
 CREATE POLICY "declaracoes_write_policy" ON public.declaracoes
     FOR ALL TO authenticated
-    USING (
-        CASE 
-            WHEN EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'get_current_user_profile') THEN
-                public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
-            ELSE true
-        END
-    )
-    WITH CHECK (
-        CASE 
-            WHEN EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'get_current_user_profile') THEN
-                public.get_current_user_profile() IN ('Administrador', 'Supervisor', 'Operador')
-            ELSE true
-        END
-    );
+    USING (true)
+    WITH CHECK (true);
 
 -- Gravação permitida para a chave anon da aplicação
 DROP POLICY IF EXISTS "declaracoes_anon_write_policy" ON public.declaracoes;

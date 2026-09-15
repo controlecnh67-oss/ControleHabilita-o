@@ -15,7 +15,9 @@ import {
   MapaReparticaoItem,
   getPermissoesPadrao,
   Declaracao,
-  DeclaracaoItemCondutor
+  DeclaracaoItemCondutor,
+  Lote,
+  LoteInput
 } from "../types";
 import { getInitialChar, formatDateTime } from "../lib/utils";
 import { supabase, isSupabaseConfigured } from "./supabase";
@@ -421,6 +423,43 @@ const SEED_DECLARACOES: Declaracao[] = [
   }
 ];
 
+const SEED_LOTES: Lote[] = [
+  {
+    id: "lote-seed-142",
+    numero: 142,
+    data_recebimento: "2026-09-10",
+    documentos_impressos: 48,
+    pdf_nome: "Lote_142_Remessa_Detran.pdf",
+    pdf_tamanho: 245800,
+    observacao: "Remessa oficial recebida da sede regional - Malote A",
+    usuario_id: "admin",
+    usuario_nome: "Agente DETRAN",
+    created_at: "2026-09-10T10:15:00.000Z"
+  },
+  {
+    id: "lote-seed-143",
+    numero: 143,
+    data_recebimento: "2026-09-12",
+    documentos_impressos: 65,
+    pdf_nome: "Lote_143_Expedicao_Capital.pdf",
+    pdf_tamanho: 312400,
+    observacao: "CNHs de primeira habilitação e renovações ordinárias",
+    usuario_id: "admin",
+    usuario_nome: "Agente DETRAN",
+    created_at: "2026-09-12T14:30:00.000Z"
+  },
+  {
+    id: "lote-seed-144",
+    numero: 144,
+    data_recebimento: "2026-09-14",
+    documentos_impressos: 32,
+    observacao: "Lote recebido nesta manhã via SEDEX / Malote postal",
+    usuario_id: "admin",
+    usuario_nome: "Agente DETRAN",
+    created_at: "2026-09-14T09:00:00.000Z"
+  }
+];
+
 const SEED_GERAL: GeralCNH[] = cnhSeedData as GeralCNH[];
 
 const SEED_HISTORICO: HistoricoMovimentacao[] = [
@@ -551,8 +590,8 @@ let isIdbInitialized = false;
 export async function initStorage(): Promise<void> {
   if (isIdbInitialized) return;
   const keys = [
-    "usuarios", "responsaveis", "memorandos", "candidatos", "geral", "historico", "auditoria", "mapeamento", "declaracoes",
-    "deleted_memorandos", "deleted_candidatos", "deleted_geral", "deleted_responsaveis", "deleted_declaracoes"
+    "usuarios", "responsaveis", "memorandos", "candidatos", "geral", "historico", "auditoria", "mapeamento", "declaracoes", "lotes",
+    "deleted_memorandos", "deleted_candidatos", "deleted_geral", "deleted_responsaveis", "deleted_declaracoes", "deleted_lotes"
   ];
   for (const k of keys) {
     try {
@@ -2093,6 +2132,225 @@ export async function deleteDeclaracao(id: string, userId: string, userNome: str
 
   if (target) {
     await logAuditoria("declaracoes", target.numero, "Exclusão", userId, userNome, target, null);
+  }
+}
+
+// ============================================================================
+// CONTROLE DE LOTES DE CNHS (SUB-ABA PROTOCOLO GERAL)
+// ============================================================================
+
+export async function getLotes(): Promise<Lote[]> {
+  await initStorage();
+  const deletedIds = getDeletedIds("lotes");
+
+  if (isSupabaseConfigured()) {
+    try {
+      const data = await fetchAllRowsFromSupabase<Lote>("lotes", 1000, "data_recebimento", false);
+      if (data && Array.isArray(data)) {
+        const validRemote: Lote[] = [];
+        for (const l of data) {
+          if (deletedIds.has(l.id)) {
+            try {
+              await supabase.from("lotes").delete().eq("id", l.id);
+            } catch (e) {
+              console.warn("Aviso ao excluir lote remoto:", e);
+            }
+          } else {
+            validRemote.push(l);
+          }
+        }
+        const local = getStoredList<Lote>("lotes", SEED_LOTES).filter((l) => !deletedIds.has(l.id));
+        const remoteIds = new Set(validRemote.map((l) => l.id));
+        const localOnly = local.filter((l) => !remoteIds.has(l.id) && !deletedIds.has(l.id));
+        const merged = [...validRemote, ...localOnly].filter((l) => !deletedIds.has(l.id));
+        saveStoredList("lotes", merged);
+        try {
+          if (dexieDb.lotes) {
+            await dexieDb.lotes.bulkPut(merged);
+          }
+        } catch {}
+      }
+    } catch (err) {
+      console.warn("Aviso ao buscar lotes no Supabase:", err);
+    }
+  }
+
+  const list = getStoredList<Lote>("lotes", SEED_LOTES).filter((l) => !deletedIds.has(l.id));
+  return list.sort((a, b) => {
+    if (b.numero !== a.numero) return b.numero - a.numero;
+    return new Date(b.data_recebimento || b.created_at).getTime() - new Date(a.data_recebimento || a.created_at).getTime();
+  });
+}
+
+export async function getLoteById(id: string): Promise<Lote | null> {
+  const lotes = await getLotes();
+  return lotes.find((l) => l.id === id) || null;
+}
+
+export async function getNextLoteNumero(): Promise<number> {
+  const lotes = await getLotes();
+  if (lotes.length === 0) return 1;
+  const maxNum = Math.max(...lotes.map((l) => Number(l.numero) || 0));
+  return maxNum > 0 ? maxNum + 1 : 1;
+}
+
+export async function createLote(
+  data: LoteInput,
+  userId: string,
+  userNome: string
+): Promise<Lote> {
+  await initStorage();
+  const list = await getLotes();
+
+  const num = Number(data.numero);
+  if (isNaN(num) || num <= 0) {
+    throw new Error("O número do Lote deve ser um valor numérico positivo.");
+  }
+
+  if (list.some((l) => Number(l.numero) === num)) {
+    throw new Error(`Já existe um Lote cadastrado com o número ${num}.`);
+  }
+
+  const docCount = Number(data.documentos_impressos);
+  if (isNaN(docCount) || docCount < 0) {
+    throw new Error("A quantidade de documentos impressos deve ser um número maior ou igual a zero.");
+  }
+
+  const loteId = typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `lote-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+  const now = new Date().toISOString();
+  const novo: Lote = {
+    id: loteId,
+    numero: num,
+    data_recebimento: data.data_recebimento || now.split("T")[0],
+    documentos_impressos: docCount,
+    pdf_nome: data.pdf_nome || undefined,
+    pdf_tamanho: data.pdf_tamanho || undefined,
+    pdf_url: data.pdf_url || undefined,
+    observacao: data.observacao?.trim() || undefined,
+    usuario_id: userId,
+    usuario_nome: userNome,
+    created_at: now,
+    updated_at: now
+  };
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { error } = await supabase.from("lotes").insert([novo]);
+      if (error) {
+        console.warn("Aviso ao salvar lote no Supabase (mantido localmente):", error.message);
+      }
+    } catch (e) {
+      console.warn("Erro ao inserir lote no Supabase:", e);
+    }
+  }
+
+  saveStoredList("lotes", [novo, ...list.filter((l) => l.id !== novo.id)]);
+  try {
+    if (dexieDb.lotes) {
+      await dexieDb.lotes.put(novo);
+    }
+  } catch {}
+  notifyDataSync("lotes");
+
+  await logAuditoria(
+    "lotes",
+    String(novo.numero),
+    "Inclusão",
+    userId,
+    userNome,
+    null,
+    {
+      numero: novo.numero,
+      data_recebimento: novo.data_recebimento,
+      documentos_impressos: novo.documentos_impressos,
+      possui_pdf: !!novo.pdf_url
+    }
+  );
+
+  return novo;
+}
+
+export async function updateLote(
+  id: string,
+  data: Partial<LoteInput>,
+  userId: string,
+  userNome: string
+): Promise<Lote> {
+  await initStorage();
+  const list = getStoredList<Lote>("lotes", SEED_LOTES);
+  const index = list.findIndex((l) => l.id === id);
+  if (index === -1) throw new Error("Lote não encontrado");
+  const ant = list[index];
+
+  if (data.numero !== undefined) {
+    const num = Number(data.numero);
+    if (isNaN(num) || num <= 0) {
+      throw new Error("O número do Lote deve ser um valor numérico positivo.");
+    }
+    if (list.some((l) => l.id !== id && Number(l.numero) === num)) {
+      throw new Error(`Já existe outro Lote cadastrado com o número ${num}.`);
+    }
+  }
+
+  const atualizado: Lote = {
+    ...ant,
+    ...data,
+    numero: data.numero !== undefined ? Number(data.numero) : ant.numero,
+    documentos_impressos: data.documentos_impressos !== undefined ? Number(data.documentos_impressos) : ant.documentos_impressos,
+    updated_at: new Date().toISOString()
+  };
+
+  list[index] = atualizado;
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("lotes").update(atualizado).eq("id", id);
+    } catch (e) {
+      console.warn("Aviso ao atualizar lote no Supabase:", e);
+    }
+  }
+
+  saveStoredList("lotes", list);
+  try {
+    if (dexieDb.lotes) {
+      await dexieDb.lotes.put(atualizado);
+    }
+  } catch {}
+  notifyDataSync("lotes");
+
+  await logAuditoria("lotes", String(atualizado.numero), "Alteração", userId, userNome, ant, atualizado);
+  return atualizado;
+}
+
+export async function deleteLote(id: string, userId: string, userNome: string): Promise<void> {
+  await initStorage();
+  const list = getStoredList<Lote>("lotes", SEED_LOTES);
+  const target = list.find((l) => l.id === id);
+
+  addDeletedId("lotes", id);
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase.from("lotes").delete().eq("id", id);
+    } catch (e) {
+      console.warn("Aviso ao deletar lote no Supabase:", e);
+    }
+  }
+
+  const filtrados = list.filter((l) => l.id !== id);
+  saveStoredList("lotes", filtrados);
+  try {
+    if (dexieDb.lotes) {
+      await dexieDb.lotes.delete(id);
+    }
+  } catch {}
+  notifyDataSync("lotes");
+
+  if (target) {
+    await logAuditoria("lotes", String(target.numero), "Exclusão", userId, userNome, target, null);
   }
 }
 

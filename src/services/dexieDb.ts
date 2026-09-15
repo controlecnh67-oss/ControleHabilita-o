@@ -1,5 +1,5 @@
 import Dexie, { Table } from "dexie";
-import { GeralCNH } from "../types";
+import { GeralCNH, Lote } from "../types";
 import { supabase, isSupabaseConfigured } from "./supabase";
 import { trackEgress } from "./egressMonitorService";
 
@@ -21,12 +21,16 @@ export interface SyncMetaItem {
 export class ControleCNHDatabase extends Dexie {
   geral!: Table<GeralCNH, string>;
   syncMeta!: Table<SyncMetaItem, string>;
+  lotes!: Table<Lote, string>;
 
   constructor() {
     super("ControleCNH");
     this.version(1).stores({
       geral: "id, ordem, pa, nome, cpf, gaveta, reparticao, situacao, responsavel_nome, data_movimento, usuario_nome, updated_at, created_at",
       syncMeta: "key"
+    });
+    this.version(2).stores({
+      lotes: "id, numero, data_recebimento, documentos_impressos, created_at, updated_at"
     });
   }
 }

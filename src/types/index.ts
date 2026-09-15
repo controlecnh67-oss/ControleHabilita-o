@@ -552,3 +552,29 @@ export interface Declaracao {
   updated_at?: string;
 }
 
+// Interfaces para Controle de Lotes (Sub-aba do Protocolo Geral)
+export interface Lote {
+  id: string;
+  numero: number;                    // Lote (número)
+  data_recebimento: string;          // Data de Recebimento (YYYY-MM-DD)
+  documentos_impressos: number;      // Documentos Impressos (número)
+  pdf_nome?: string;                 // Nome do arquivo PDF anexado
+  pdf_tamanho?: number;              // Tamanho em bytes do PDF
+  pdf_url?: string;                  // Base64 Data URL ou URL remota
+  observacao?: string;               // Observação sobre o lote
+  usuario_id?: string;               // ID do operador
+  usuario_nome?: string;             // Nome do operador
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface LoteInput {
+  numero: number;
+  data_recebimento: string;
+  documentos_impressos: number;
+  pdf_nome?: string;
+  pdf_tamanho?: number;
+  pdf_url?: string;
+  observacao?: string;
+}
+

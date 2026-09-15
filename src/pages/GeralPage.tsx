@@ -60,7 +60,8 @@ import {
   getResponsaveis, 
   createResponsavel,
   importSpreadsheetData,
-  getPublicSearchCount
+  getPublicSearchCount,
+  getLotes
 } from "../services/db";
 import { syncGeralWithSupabase, dexieDb, normalizeCNHRecord } from "../services/dexieDb";
 import { getPublicShareUrl, subscribeToSupabaseRealtime } from "../services/supabase";
@@ -72,6 +73,7 @@ import { ExcelRecebimentoModal } from "../components/ExcelRecebimentoModal";
 import { DuplicatasModal } from "../components/DuplicatasModal";
 import { CadastroManualModal } from "../components/CadastroManualModal";
 import { EditarCNHModal } from "../components/EditarCNHModal";
+import { LotesSubTab } from "../components/geral/LotesSubTab";
 import { formatCPF, formatPhone, formatDateTime, normalizeSearch, matchDigitsSafe } from "../lib/utils";
 
 // Helper para exibir Gaveta e Repartição de forma compacta (apenas número/código) na tabela
@@ -139,6 +141,10 @@ export const GeralPage: React.FC = () => {
   const [cnhs, setCnhs] = useState<GeralCNH[]>([]);
   const [loading, setLoading] = useState(true);
   const [responsaveis, setResponsaveis] = useState<Responsavel[]>([]);
+
+  // Sub-aba ativa do Protocolo Geral: "cnhs" ou "lotes"
+  const [activeSubTab, setActiveSubTab] = useState<"cnhs" | "lotes">("cnhs");
+  const [lotesCount, setLotesCount] = useState<number>(0);
 
   // Filtros e Busca Instantânea
   const [searchTerm, setSearchTerm] = useState("");
@@ -529,9 +535,17 @@ export const GeralPage: React.FC = () => {
     fetchDados();
   };
 
+  const updateLotesCount = async () => {
+    try {
+      const data = await getLotes();
+      setLotesCount(data.length);
+    } catch {}
+  };
+
   useEffect(() => {
     // 1. Carregar imediatamente os dados locais para abertura instantânea
     fetchDados();
+    updateLotesCount();
 
     // 2. Sincronização silenciosa inicial com Supabase em segundo plano
     syncGeralWithSupabase(false).then(() => {
@@ -574,6 +588,9 @@ export const GeralPage: React.FC = () => {
       const customEvt = e as CustomEvent;
       if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "geral") {
         fetchDados();
+      }
+      if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "lotes") {
+        updateLotesCount();
       }
     };
 
@@ -1101,85 +1118,135 @@ export const GeralPage: React.FC = () => {
           <div>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <FolderArchive className="w-6 h-6 text-blue-600" />
-              Tela Geral de Controle e Entrega de CNHs
+              Protocolo Geral de CNHs
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Gestão de protocolo: remessas recebidas, arquivamento nas gavetas físicas e entrega ao titular ou despachante.
+              {activeSubTab === "cnhs" 
+                ? "Gestão de protocolo: remessas recebidas, arquivamento nas gavetas físicas e entrega ao titular ou despachante."
+                : "Gestão e controle de lotes de CNHs recebidas com anexo de comprovantes e documentos em PDF."}
             </p>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => setIsCitizenQrModalOpen(true)}
-              title="Abrir e compartilhar QR Code / Link de Consulta do Cidadão"
-              className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-200 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-emerald-300 dark:border-emerald-800"
-            >
-              <QrCode className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-              <span>📱 QR Code Cidadão</span>
-            </button>
-
-            <button
-              onClick={handleExportExcel}
-              title="Exportar para Excel (.xlsx)"
-              className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900 text-emerald-700 dark:text-emerald-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
-            >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-              <span>Excel</span>
-            </button>
-
-            <button
-              onClick={() => setIsPrintModalOpen(true)}
-              title="Gerar impressão (PDF) do protocolo na orientação horizontal"
-              className="flex items-center gap-1.5 px-3 py-2 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/60 dark:hover:bg-purple-900 text-purple-700 dark:text-purple-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
-            >
-              <Printer className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-              <span>Imprimir (PDF)</span>
-            </button>
-
-            {canEdit && (
+          {activeSubTab === "cnhs" && (
+            <div className="flex items-center gap-2 flex-wrap">
               <button
-                onClick={() => setIsDuplicatasModalOpen(true)}
-                title="Executar varredura por duplicatas (mesmo CPF, mesmo Nome ou similaridade) com modal de auditoria para exclusão em lote"
-                className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900 text-rose-800 dark:text-rose-200 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-rose-300 dark:border-rose-800"
-              >
-                <CopyCheck className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-                <span>🔍 Varredura de Duplicatas</span>
-              </button>
-            )}
-
-            {canEdit && (
-              <button
-                onClick={() => setIsExcelRecebidasModalOpen(true)}
-                title="Importar planilha Excel (.xlsx, .xls, .csv) com lista de nomes de CNHs recebidas para conferência e alteração de status para RECEBIDA"
+                onClick={() => setIsCitizenQrModalOpen(true)}
+                title="Abrir e compartilhar QR Code / Link de Consulta do Cidadão"
                 className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-200 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-emerald-300 dark:border-emerald-800"
               >
-                <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                <span>📥 Importar Excel (Recebidas)</span>
+                <QrCode className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>📱 QR Code Cidadão</span>
               </button>
-            )}
 
-            {canEdit && (
               <button
-                onClick={() => setIsOcrModalOpen(true)}
-                title="Escanear documento (PDF ou Imagem) via OCR com IA para conferência e recebimento de CNHs"
-                className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-indigo-200 dark:border-indigo-800"
+                onClick={handleExportExcel}
+                title="Exportar para Excel (.xlsx)"
+                className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900 text-emerald-700 dark:text-emerald-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
               >
-                <ScanLine className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                <span>📷 Escanear OCR</span>
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span>Excel</span>
               </button>
-            )}
 
-            {canEdit && (
               <button
-                onClick={handleOpenManualModal}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md shadow-blue-600/20 text-xs transition-all shrink-0 cursor-pointer"
+                onClick={() => setIsPrintModalOpen(true)}
+                title="Gerar impressão (PDF) do protocolo na orientação horizontal"
+                className="flex items-center gap-1.5 px-3 py-2 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/60 dark:hover:bg-purple-900 text-purple-700 dark:text-purple-300 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
               >
-                <Plus className="w-4 h-4" />
-                <span>➕ Cadastro Manual</span>
+                <Printer className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                <span>Imprimir (PDF)</span>
               </button>
-            )}
+
+              {canEdit && (
+                <button
+                  onClick={() => setIsDuplicatasModalOpen(true)}
+                  title="Executar varredura por duplicatas (mesmo CPF, mesmo Nome ou similaridade) com modal de auditoria para exclusão em lote"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900 text-rose-800 dark:text-rose-200 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-rose-300 dark:border-rose-800"
+                >
+                  <CopyCheck className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                  <span>🔍 Varredura de Duplicatas</span>
+                </button>
+              )}
+
+              {canEdit && (
+                <button
+                  onClick={() => setIsExcelRecebidasModalOpen(true)}
+                  title="Importar planilha Excel (.xlsx, .xls, .csv) com lista de nomes de CNHs recebidas para conferência e alteração de status para RECEBIDA"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-200 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-emerald-300 dark:border-emerald-800"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>📥 Importar Excel (Recebidas)</span>
+                </button>
+              )}
+
+              {canEdit && (
+                <button
+                  onClick={() => setIsOcrModalOpen(true)}
+                  title="Escanear documento (PDF ou Imagem) via OCR com IA para conferência e recebimento de CNHs"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-indigo-200 dark:border-indigo-800"
+                >
+                  <ScanLine className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <span>📷 Escanear OCR</span>
+                </button>
+              )}
+
+              {canEdit && (
+                <button
+                  onClick={handleOpenManualModal}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md shadow-blue-600/20 text-xs transition-all shrink-0 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>➕ Cadastro Manual</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
-      </div>
+
+        {/* Sub-Abas do Menu Protocolo Geral */}
+        <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800/80 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-700/60 max-w-fit">
+          <button
+            onClick={() => setActiveSubTab("cnhs")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+              activeSubTab === "cnhs"
+                ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+            }`}
+          >
+            <FolderArchive className="w-4 h-4" />
+            <span>Controle Geral de CNHs</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+              activeSubTab === "cnhs"
+                ? "bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300"
+                : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+            }`}>
+              {cnhs.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab("lotes")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+              activeSubTab === "lotes"
+                ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            <span>Lotes</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+              activeSubTab === "lotes"
+                ? "bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300"
+                : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+            }`}>
+              {lotesCount}
+            </span>
+          </button>
+        </div>
+
+        {activeSubTab === "lotes" ? (
+          <LotesSubTab />
+        ) : (
+          <div className="space-y-6">
 
       {message && (
         <div
@@ -2050,7 +2117,9 @@ export const GeralPage: React.FC = () => {
             </div>
           </div>
         )}
-      </div>
+            </div>
+          </div>
+        )}
 
       {/* MODAL 1: ➕ CADASTRO MANUAL (Isolado e Otimizado para Digitação Rápida em Caixa Alta) */}
       <CadastroManualModal
