@@ -55,3 +55,32 @@
     display: table-footer-group !important;
   }
 }
+
+/* Barra de rolagem visível e estilizada para o menu principal lateral */
+.custom-menu-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #475569 #0f172a;
+}
+
+.custom-menu-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-menu-scrollbar::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+
+.custom-menu-scrollbar::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 9999px;
+  border: 1px solid #1e293b;
+}
+
+.custom-menu-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+.custom-menu-scrollbar::-webkit-scrollbar-thumb:active {
+  background: #94a3b8;
+}
+
