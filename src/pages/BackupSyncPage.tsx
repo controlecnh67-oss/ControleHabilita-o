@@ -304,7 +304,49 @@ CREATE TABLE IF NOT EXISTS public.imagens_sync (
     created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 12. ÍNDICES DE PERFORMANCE
+-- 12. TABELA DE LOTES DE CNHs (CNHs RECEBIDAS)
+CREATE TABLE IF NOT EXISTS public.lotes (
+    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    numero INTEGER NOT NULL,
+    data_recebimento DATE NOT NULL DEFAULT CURRENT_DATE,
+    documentos_impressos INTEGER NOT NULL DEFAULT 0,
+    pdf_nome TEXT,
+    pdf_url TEXT,
+    pdf_tamanho BIGINT,
+    observacao TEXT,
+    usuario_id TEXT,
+    usuario_nome VARCHAR(255),
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 13. TABELA DE DECLARAÇÕES EMITIDAS
+CREATE TABLE IF NOT EXISTS public.declaracoes (
+    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    numero VARCHAR(100) NOT NULL,
+    ano INTEGER NOT NULL,
+    data_emissao DATE NOT NULL DEFAULT CURRENT_DATE,
+    procurador_id TEXT,
+    procurador_nome TEXT NOT NULL,
+    procurador_cpf VARCHAR(14) NOT NULL,
+    procurador_telefone VARCHAR(50),
+    procurador_endereco TEXT,
+    texto_declaracao TEXT,
+    condutores JSONB DEFAULT '[]'::jsonb,
+    cidade VARCHAR(100) DEFAULT 'Itaituba',
+    uf VARCHAR(10) DEFAULT 'PA',
+    gerente_nome VARCHAR(255),
+    gerente_cargo VARCHAR(255),
+    gerente_unidade VARCHAR(255),
+    gerente_portaria VARCHAR(255),
+    observacao TEXT,
+    usuario_id TEXT,
+    usuario_nome VARCHAR(255),
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 14. ÍNDICES DE PERFORMANCE
 CREATE INDEX IF NOT EXISTS idx_geral_cnhs_cpf ON public.geral_cnhs(cpf);
 CREATE INDEX IF NOT EXISTS idx_geral_cnhs_pa ON public.geral_cnhs(pa);
 CREATE INDEX IF NOT EXISTS idx_candidatos_pa ON public.candidatos(pa);
@@ -313,8 +355,11 @@ CREATE INDEX IF NOT EXISTS idx_geral_cnhs_situacao ON public.geral_cnhs(situacao
 CREATE INDEX IF NOT EXISTS idx_geral_cnhs_ordem ON public.geral_cnhs(ordem DESC);
 CREATE INDEX IF NOT EXISTS idx_geral_cnhs_memorando ON public.geral_cnhs(memorando_id);
 CREATE INDEX IF NOT EXISTS idx_geral_cnhs_updated_at ON public.geral_cnhs(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lotes_numero ON public.lotes(numero);
+CREATE INDEX IF NOT EXISTS idx_lotes_data_recebimento ON public.lotes(data_recebimento DESC);
+CREATE INDEX IF NOT EXISTS idx_declaracoes_numero ON public.declaracoes(numero);
 
--- 13. HABILITAR ROW LEVEL SECURITY (RLS)
+-- 15. HABILITAR ROW LEVEL SECURITY (RLS)
 ALTER TABLE public.usuarios ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.responsaveis ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.mapeamento_localizacao ENABLE ROW LEVEL SECURITY;
@@ -326,8 +371,10 @@ ALTER TABLE public.auditoria ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orgao_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.acessos_cidadao ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.imagens_sync ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.lotes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.declaracoes ENABLE ROW LEVEL SECURITY;
 
--- 14. POLÍTICAS DE ACESSO
+-- 16. POLÍTICAS DE ACESSO
 DO $$
 DECLARE
     pol RECORD;
@@ -352,12 +399,14 @@ CREATE POLICY "auditoria_policy" ON public.auditoria FOR ALL TO authenticated, a
 CREATE POLICY "orgao_config_policy" ON public.orgao_config FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
 CREATE POLICY "acessos_cidadao_policy" ON public.acessos_cidadao FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
 CREATE POLICY "imagens_sync_policy" ON public.imagens_sync FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
+CREATE POLICY "lotes_policy" ON public.lotes FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
+CREATE POLICY "declaracoes_policy" ON public.declaracoes FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
 
--- 15. HABILITAR REALTIME REPLICATION
+-- 17. HABILITAR REALTIME REPLICATION
 DO $$
 DECLARE
     tbl text;
-    tbls text[] := ARRAY['geral_cnhs', 'memorandos', 'candidatos', 'responsaveis', 'mapeamento_localizacao', 'acessos_cidadao', 'orgao_config'];
+    tbls text[] := ARRAY['geral_cnhs', 'memorandos', 'candidatos', 'responsaveis', 'mapeamento_localizacao', 'acessos_cidadao', 'orgao_config', 'declaracoes', 'lotes'];
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
         FOREACH tbl IN ARRAY tbls LOOP
@@ -517,13 +566,12 @@ USING (bucket_id = 'app_images');
   };
 
   const handleClearCredentials = () => {
-    if (confirm("Deseja remover as credenciais do Supabase salvas localmente?")) {
-      clearLocalSupabaseConfig();
-      setInputUrl("");
-      setInputKey("");
-      loadStats();
-      alert("Credenciais locais removidas.");
-    }
+    clearLocalSupabaseConfig();
+    setInputUrl("");
+    setInputKey("");
+    loadStats();
+    setSaveSuccessMsg("Credenciais locais do Supabase foram removidas com sucesso.");
+    setTimeout(() => setSaveSuccessMsg(null), 3500);
   };
 
   const loadStats = async () => {
@@ -570,7 +618,8 @@ USING (bucket_id = 'app_images');
 
   const handleSyncUpload = async () => {
     if (!isConnected) {
-      alert("Conexão Supabase não configurada.");
+      setShowConfigModal(true);
+      setLogs(["⚠️ Supabase não configurado. Por favor, insira a URL e Chave ANON no painel para ativar o envio."]);
       return;
     }
     setIsSyncingUpload(true);
@@ -594,10 +643,8 @@ USING (bucket_id = 'app_images');
 
   const handleSyncDownload = async () => {
     if (!isConnected) {
-      alert("Conexão Supabase não configurada.");
-      return;
-    }
-    if (!confirm("Atenção: Baixar dados do Supabase atualizará seu armazenamento local com os dados do banco de dados remoto. Deseja continuar?")) {
+      setShowConfigModal(true);
+      setLogs(["⚠️ Supabase não configurado. Por favor, insira a URL e Chave ANON no painel para ativar o download."]);
       return;
     }
 
@@ -622,7 +669,8 @@ USING (bucket_id = 'app_images');
 
   const handleSyncBiDirectional = async () => {
     if (!isConnected) {
-      alert("Conexão Supabase não configurada.");
+      setShowConfigModal(true);
+      setLogs(["⚠️ Supabase não configurado. Por favor, insira a URL e Chave ANON no painel para ativar a sincronização."]);
       return;
     }
     setIsSyncingBiDirectional(true);
@@ -745,7 +793,7 @@ USING (bucket_id = 'app_images');
 DO $$
 DECLARE
   t text;
-  tabelas text[] := ARRAY['usuarios', 'responsaveis', 'mapeamento_localizacao', 'memorandos', 'candidatos', 'geral_cnhs', 'historico_movimentacoes', 'auditoria'];
+  tabelas text[] := ARRAY['usuarios', 'responsaveis', 'mapeamento_localizacao', 'memorandos', 'candidatos', 'geral_cnhs', 'historico_movimentacoes', 'auditoria', 'declaracoes', 'lotes'];
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
     CREATE PUBLICATION supabase_realtime;
@@ -942,7 +990,7 @@ END $$;`;
 
           <button
             onClick={handleSyncBiDirectional}
-            disabled={isSyncingBiDirectional || isSyncingUpload || isSyncingDownload || !isConnected}
+            disabled={isSyncingBiDirectional || isSyncingUpload || isSyncingDownload}
             className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-indigo-900/50 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${isSyncingBiDirectional ? "animate-spin" : ""}`} />
@@ -966,7 +1014,7 @@ END $$;`;
 
           <button
             onClick={handleSyncUpload}
-            disabled={isSyncingUpload || isSyncingBiDirectional || !isConnected}
+            disabled={isSyncingUpload || isSyncingBiDirectional}
             className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-xs shadow-md shadow-blue-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
             <UploadCloud className={`w-4 h-4 ${isSyncingUpload ? "animate-bounce" : ""}`} />
@@ -990,7 +1038,7 @@ END $$;`;
 
           <button
             onClick={handleSyncDownload}
-            disabled={isSyncingDownload || isSyncingBiDirectional || !isConnected}
+            disabled={isSyncingDownload || isSyncingBiDirectional}
             className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-xs shadow-md shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
             <DownloadCloud className={`w-4 h-4 ${isSyncingDownload ? "animate-bounce" : ""}`} />

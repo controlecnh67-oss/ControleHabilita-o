@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Users, Plus, Search, Edit2, Trash2, ShieldCheck, CheckCircle2, Mail, Key, UserCheck, Eye, EyeOff, Lock, Shield } from "lucide-react";
+import { Users, Plus, Search, Edit2, Trash2, ShieldCheck, CheckCircle2, Mail, Key, UserCheck, Eye, EyeOff, Lock, Shield, RotateCcw } from "lucide-react";
 import { Usuario, PerfilAcesso, UsuarioSchema, PERMISSOES_SISTEMA, getPermissoesPadrao } from "../types";
-import { getUsuarios, createUsuario, updateUsuario, deleteUsuario } from "../services/db";
+import { getUsuarios, createUsuario, updateUsuario, deleteUsuario, restaurarCredenciaisOficiais } from "../services/db";
 import { subscribeToSupabaseRealtime } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
@@ -31,6 +31,26 @@ export const UsuariosPage: React.FC = () => {
   const [permissoes, setPermissoes] = useState<string[]>([]);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+
+  const handleRestaurarCredenciais = async () => {
+    setRestoring(true);
+    try {
+      const res = await restaurarCredenciaisOficiais();
+      setMessage({
+        type: "success",
+        text: `Credenciais originais dos servidores restabelecidas com sucesso (${res.count} verificados).`
+      });
+      await fetchDados(true);
+    } catch (err: any) {
+      setMessage({
+        type: "error",
+        text: `Erro ao restabelecer credenciais: ${err.message}`
+      });
+    } finally {
+      setRestoring(false);
+    }
+  };
 
   const fetchDados = useCallback(async (isInitial = false) => {
     if (isFetchingRef.current) return;
@@ -278,6 +298,16 @@ export const UsuariosPage: React.FC = () => {
               className="pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500 transition-all w-full sm:w-64"
             />
           </div>
+
+          <button
+            onClick={handleRestaurarCredenciais}
+            disabled={restoring}
+            title="Restaura os e-mails (@detran.pa.gov.br) e logins oficiais dos servidores caso tenham sido alterados por sincronizações antigas"
+            className="flex items-center gap-2 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold rounded-xl text-xs transition-all shrink-0 cursor-pointer disabled:opacity-50 border border-slate-200 dark:border-slate-700"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${restoring ? "animate-spin text-blue-600" : "text-slate-500"}`} />
+            <span>{restoring ? "Restaurando..." : "Restaurar Logins Oficiais"}</span>
+          </button>
 
           <button
             onClick={() => handleOpenModal()}

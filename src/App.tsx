@@ -55,7 +55,8 @@ const MainLayout: React.FC = () => {
       "mapeamento_localizacao",
       "acessos_cidadao",
       "orgao_config",
-      "declaracoes"
+      "declaracoes",
+      "lotes"
     ];
 
     const unsubscribe = subscribeToMultipleSupabaseRealtime(tablesToWatch, async (table, payload) => {
@@ -78,6 +79,22 @@ const MainLayout: React.FC = () => {
             console.warn("Erro ao excluir registro Realtime em geral_cnhs:", e);
           }
         }
+      } else if (table === "lotes") {
+        const eventType = payload.eventType;
+        if ((eventType === "INSERT" || eventType === "UPDATE") && payload.new) {
+          try {
+            if (dexieDb.lotes) await dexieDb.lotes.put(payload.new);
+          } catch (e) {
+            console.warn("Erro ao atualizar lote no Realtime:", e);
+          }
+        } else if (eventType === "DELETE" && payload.old?.id) {
+          try {
+            if (dexieDb.lotes) await dexieDb.lotes.delete(payload.old.id);
+          } catch (e) {
+            console.warn("Erro ao remover lote no Realtime:", e);
+          }
+        }
+        notifyDataSync("lotes");
       } else {
         notifyDataSync(table);
       }

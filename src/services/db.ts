@@ -952,21 +952,94 @@ export async function findLocalizacaoPorNome(nome: string): Promise<{ gaveta: st
 // MÓDULO DE USUÁRIOS
 // ============================================================================
 
+export function repairCorruptedUsuarios(users: Usuario[]): { users: Usuario[]; repairedCount: number } {
+  let repairedCount = 0;
+  const seedMap = new Map<string, Usuario>(SEED_USUARIOS.map((u) => [u.id, u]));
+
+  const repaired = users.map((u) => {
+    // Detecta e-mail corrompido com @detran.local ou login alterado para UUID sanitizado
+    const isCorruptedEmail = !!(
+      u.email &&
+      u.email.endsWith("@detran.local") &&
+      !["sistema@detran.local", "admin@detran.local"].includes(u.email)
+    );
+    const isCorruptedLogin = !!(
+      u.login &&
+      u.id &&
+      u.login.toLowerCase() === u.id.toLowerCase().replace(/[^a-z0-9]/g, "")
+    );
+
+    if (isCorruptedEmail || isCorruptedLogin) {
+      const seedUser = seedMap.get(u.id);
+      if (seedUser) {
+        repairedCount++;
+        return {
+          ...u,
+          nome: seedUser.nome,
+          nome_curto: seedUser.nome_curto || seedUser.nome,
+          nome_completo: seedUser.nome,
+          email: seedUser.email,
+          login: seedUser.login,
+          senha: u.senha && u.senha !== "detran@123" ? u.senha : seedUser.senha,
+          perfil: seedUser.perfil || u.perfil || "Operador",
+          permissoes: seedUser.permissoes || u.permissoes || getPermissoesPadrao("Operador")
+        };
+      } else {
+        if (isCorruptedEmail) {
+          repairedCount++;
+          const cleanName = (u.nome_curto || u.nome || "usuario").toLowerCase().replace(/[^a-z0-9]/g, "");
+          return {
+            ...u,
+            login: isCorruptedLogin ? cleanName : u.login,
+            email: `${cleanName}@detran.pa.gov.br`
+          };
+        }
+      }
+    }
+    return u;
+  });
+
+  return { users: repaired, repairedCount };
+}
+
 export async function getUsuarios(): Promise<Usuario[]> {
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<Usuario>("usuarios", 1000, "created_at", false);
       if (data && Array.isArray(data)) {
         const activeUsers = data.filter((u) => u.ativo !== false);
-        saveStoredList("usuarios", activeUsers);
-        return activeUsers;
+        const { users: sanitizedUsers, repairedCount } = repairCorruptedUsuarios(activeUsers);
+        saveStoredList("usuarios", sanitizedUsers);
+        if (repairedCount > 0) {
+          // Corrige imediatamente no Supabase para restaurar os e-mails e logins originais no banco remoto
+          const payloadToFix = sanitizedUsers.map((u) => ({
+            id: u.id,
+            nome: u.nome,
+            nome_curto: u.nome_curto || u.nome,
+            email: u.email,
+            login: u.login,
+            senha: u.senha || "detran@123",
+            perfil: u.perfil || "Operador",
+            permissoes: u.permissoes || getPermissoesPadrao("Operador"),
+            ativo: u.ativo !== false,
+            created_at: u.created_at || new Date().toISOString()
+          }));
+          upsertInBatches("usuarios", payloadToFix, 100, "id").catch((e) =>
+            console.warn("Erro ao atualizar usuários reparados no Supabase:", e)
+          );
+        }
+        return sanitizedUsers;
       }
     } catch (err) {
       console.warn("Aviso ao buscar usuários do Supabase, caindo para local:", err);
     }
   }
   const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
-  return localList.filter((u) => u.ativo !== false);
+  const { users: sanitizedLocal, repairedCount: localRepaired } = repairCorruptedUsuarios(localList);
+  if (localRepaired > 0) {
+    saveStoredList("usuarios", sanitizedLocal);
+  }
+  return sanitizedLocal.filter((u) => u.ativo !== false);
 }
 
 export async function createUsuario(data: Omit<Usuario, "id" | "created_at">, adminId: string, adminNome: string): Promise<Usuario> {
@@ -1109,6 +1182,48 @@ export async function deleteUsuario(id: string, adminId: string, adminNome: stri
   saveStoredList("usuarios", filtrados);
   notifyDataSync("usuarios");
   await logAuditoria("usuarios", target.login, "Exclusão", adminId, adminNome, target, null);
+}
+
+export async function restaurarCredenciaisOficiais(): Promise<{ count: number }> {
+  const usuarios = await getUsuarios();
+  const seedMap = new Map<string, Usuario>(SEED_USUARIOS.map((u) => [u.id, u]));
+  let count = 0;
+  const updatedList = usuarios.map((u) => {
+    const seed = seedMap.get(u.id);
+    if (seed) {
+      count++;
+      return {
+        ...u,
+        nome: seed.nome,
+        nome_curto: seed.nome_curto || seed.nome,
+        email: seed.email,
+        login: seed.login,
+        perfil: seed.perfil,
+        permissoes: seed.permissoes,
+        senha: u.senha && u.senha !== "detran@123" ? u.senha : seed.senha
+      };
+    }
+    return u;
+  });
+  saveStoredList("usuarios", updatedList);
+  if (isSupabaseConfigured()) {
+    const payload = updatedList.map((u) => ({
+      id: u.id,
+      nome: u.nome,
+      nome_curto: u.nome_curto || u.nome,
+      email: u.email,
+      login: u.login,
+      senha: u.senha || "detran@123",
+      perfil: u.perfil || "Operador",
+      permissoes: u.permissoes || getPermissoesPadrao("Operador"),
+      ativo: u.ativo !== false,
+      created_at: u.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }));
+    await upsertInBatches("usuarios", payload, 100, "id");
+  }
+  notifyDataSync("usuarios");
+  return { count };
 }
 
 // ============================================================================
@@ -4055,6 +4170,8 @@ export function exportDatabaseJSON(): string {
     memorandos: getStoredList("memorandos", SEED_MEMORANDOS),
     candidatos: getStoredList("candidatos", SEED_CANDIDATOS),
     geral: getStoredList("geral", SEED_GERAL),
+    lotes: getStoredList("lotes", SEED_LOTES),
+    declaracoes: getStoredList("declaracoes", []),
     historico: getStoredList("historico", SEED_HISTORICO),
     auditoria: getStoredList("auditoria", SEED_AUDITORIA),
     mapeamento: getStoredList("mapeamento", SEED_MAPEAMENTO),
@@ -4073,6 +4190,8 @@ export function exportDatabaseExcel(): void {
     { name: "Memorandos", key: "memorandos", seed: SEED_MEMORANDOS },
     { name: "Candidatos", key: "candidatos", seed: SEED_CANDIDATOS },
     { name: "Protocolo Geral CNHs", key: "geral", seed: SEED_GERAL },
+    { name: "Lotes de CNHs", key: "lotes", seed: SEED_LOTES },
+    { name: "Declarações Emitidas", key: "declaracoes", seed: [] },
     { name: "Histórico Movimentos", key: "historico", seed: SEED_HISTORICO },
     { name: "Auditoria Sistema", key: "auditoria", seed: SEED_AUDITORIA },
     { name: "Consultas Cidadão", key: "acessos_cidadao", seed: [] }
@@ -4108,6 +4227,8 @@ export function exportTableExcel(tableName: string, label: string): void {
     memorandos: SEED_MEMORANDOS,
     candidatos: SEED_CANDIDATOS,
     geral: SEED_GERAL,
+    lotes: SEED_LOTES,
+    declaracoes: [],
     historico: SEED_HISTORICO,
     auditoria: SEED_AUDITORIA
   };
@@ -4161,6 +4282,17 @@ export function importDatabaseJSON(jsonContent: string): { success: boolean; mes
     if (Array.isArray(data.geral)) {
       saveStoredList("geral", data.geral);
       counts.geral = data.geral.length;
+    }
+    if (Array.isArray(data.lotes)) {
+      saveStoredList("lotes", data.lotes);
+      try {
+        if (dexieDb.lotes) dexieDb.lotes.bulkPut(data.lotes);
+      } catch {}
+      counts.lotes = data.lotes.length;
+    }
+    if (Array.isArray(data.declaracoes)) {
+      saveStoredList("declaracoes", data.declaracoes);
+      counts.declaracoes = data.declaracoes.length;
     }
     if (Array.isArray(data.historico)) {
       saveStoredList("historico", data.historico);
@@ -4517,40 +4649,13 @@ export async function importSpreadsheetData(
         supabaseError = "Supabase não está configurado. Os dados foram salvos no armazenamento local.";
       } else {
         try {
-          // 1. Auto-upsert any responsaveis from spreadsheet to Supabase table "responsaveis"
-          const respItemsToUpsert = new Map<string, string>();
-          newItems.forEach(g => {
-            if (g.responsavel_id) {
-              respItemsToUpsert.set(g.responsavel_id, g.responsavel_nome || `Responsável ${g.responsavel_id}`);
-            }
-          });
-          if (respItemsToUpsert.size > 0) {
-            const respPayload = Array.from(respItemsToUpsert.entries()).map(([rid, rnome]) => ({
-              id: rid,
-              nome: rnome,
-              ativo: true
-            }));
-            await supabase.from("responsaveis").upsert(respPayload, { onConflict: "id" });
-          }
+          // Validação segura de chaves estrangeiras sem corromper usuários ou responsáveis existentes
+          const existingUsuarios = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+          const validUserSet = new Set(existingUsuarios.map(u => u.id));
+          const existingResponsaveis = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+          const validRespSet = new Set(existingResponsaveis.map(r => r.id));
 
-          // 2. Auto-upsert any usuarios from spreadsheet to Supabase table "usuarios"
-          const userItemsToUpsert = new Map<string, string>();
-          newItems.forEach(g => {
-            if (g.usuario_id) {
-              userItemsToUpsert.set(g.usuario_id, g.usuario_nome || `Usuário ${g.usuario_id}`);
-            }
-          });
-          if (userItemsToUpsert.size > 0) {
-            const userPayload = Array.from(userItemsToUpsert.entries()).map(([uid, unome]) => ({
-              id: uid,
-              nome: unome.split(" ")[0],
-              nome_completo: unome,
-              ativo: true
-            }));
-            await supabase.from("usuarios").upsert(userPayload, { onConflict: "id" });
-          }
-
-          // 3. Upsert into geral_cnhs with exact columns from spreadsheet
+          // Upsert into geral_cnhs with exact columns from spreadsheet
           const payload = newItems.map(g => ({
             id: g.id,
             ordem: g.ordem,
@@ -4559,10 +4664,10 @@ export async function importSpreadsheetData(
             gaveta: g.gaveta || "",
             reparticao: g.reparticao || "",
             situacao: g.situacao,
-            responsavel_id: g.responsavel_id || null,
+            responsavel_id: (g.responsavel_id && validRespSet.has(g.responsavel_id)) ? g.responsavel_id : null,
             responsavel_nome: g.responsavel_nome || null,
             data_movimento: g.data_movimento || new Date().toISOString(),
-            usuario_id: g.usuario_id || null,
+            usuario_id: (g.usuario_id && validUserSet.has(g.usuario_id)) ? g.usuario_id : null,
             usuario_nome: g.usuario_nome || null,
             memorando_numero: g.memorando_numero || null,
             remessa: g.remessa || null,
@@ -4623,6 +4728,8 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
     { key: "memorandos", label: "Memorandos e Remessas", tableName: "memorandos" },
     { key: "candidatos", label: "Candidatos Vinculados", tableName: "candidatos" },
     { key: "geral", label: "Protocolo Geral CNHs", tableName: "geral_cnhs" },
+    { key: "lotes", label: "Lotes de CNHs (Protocolo)", tableName: "lotes" },
+    { key: "declaracoes", label: "Declarações Emitidas", tableName: "declaracoes" },
     { key: "historico", label: "Histórico de Movimento", tableName: "historico_movimentacoes" },
     { key: "auditoria", label: "Auditoria do Sistema", tableName: "auditoria" },
     { key: "acessos_cidadao", label: "Consultas do Cidadão (Logs)", tableName: "acessos_cidadao" },
@@ -4640,6 +4747,18 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
       localCount = 1;
     } else if (item.key === "imagens") {
       localCount = 0;
+    } else if (item.key === "lotes") {
+      try {
+        if (dexieDb.lotes) {
+          localCount = await dexieDb.lotes.count();
+        } else {
+          localCount = getStoredList("lotes", []).length;
+        }
+      } catch {
+        localCount = getStoredList("lotes", []).length;
+      }
+    } else if (item.key === "declaracoes") {
+      localCount = getStoredList("declaracoes", []).length;
     } else if (item.key === "geral") {
       try {
         localCount = await dexieDb.geral.count();
@@ -4865,6 +4984,8 @@ export async function syncLocalToSupabase(
 
   const deletedMemoIds = getDeletedIds("memorandos");
   const deletedCandIds = getDeletedIds("candidatos");
+  const deletedLoteIds = getDeletedIds("lotes");
+  const deletedDeclIds = getDeletedIds("declaracoes");
 
   // Purge any deleted items from Supabase if present
   if (deletedMemoIds.size > 0 && isSupabaseConfigured()) {
@@ -4878,8 +4999,29 @@ export async function syncLocalToSupabase(
     }
   }
 
+  if (deletedLoteIds.size > 0 && isSupabaseConfigured()) {
+    for (const dId of deletedLoteIds) {
+      try {
+        await supabase.from("lotes").delete().eq("id", dId);
+      } catch (e) {}
+    }
+  }
+
+  if (deletedDeclIds.size > 0 && isSupabaseConfigured()) {
+    for (const dId of deletedDeclIds) {
+      try {
+        await supabase.from("declaracoes").delete().eq("id", dId);
+      } catch (e) {}
+    }
+  }
+
   // Pré-carregar listas locais para validar chaves estrangeiras de forma estrita
-  const usuarios = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+  const rawUsuarios = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+  const { users: usuarios, repairedCount } = repairCorruptedUsuarios(rawUsuarios);
+  if (repairedCount > 0) {
+    saveStoredList("usuarios", usuarios);
+    log(`🛠️ Reparados ${repairedCount} usuário(s) com dados legítimos antes da sincronização.`);
+  }
   const resp = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
   const mapList = getStoredList<MapeamentoLocalizacao>("mapeamento", SEED_MAPEAMENTO);
   const mems = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS).filter((m) => !deletedMemoIds.has(m.id));
@@ -5027,50 +5169,6 @@ export async function syncLocalToSupabase(
   try {
     log(`📦 Sincronizando tabela 'geral_cnhs' (${geral.length} registros em lotes de 250)...`);
     if (geral.length > 0) {
-      // Auto-upsert missing responsaveis into Supabase
-      const respMapToUpsert = new Map<string, string>();
-      geral.forEach(g => {
-        if (g.responsavel_id) {
-          respMapToUpsert.set(g.responsavel_id, g.responsavel_nome || `Responsável ${g.responsavel_id}`);
-        }
-      });
-      if (respMapToUpsert.size > 0) {
-        const respBatch = Array.from(respMapToUpsert.entries()).map(([rid, rnome]) => ({
-          id: rid,
-          nome: rnome,
-          cpf: "000.000.000-00",
-          ativo: true
-        }));
-        await upsertInBatches("responsaveis", respBatch, 250, "id");
-        respBatch.forEach(r => validRespIds.add(r.id));
-      }
-
-      // Auto-upsert missing usuarios into Supabase
-      const userMapToUpsert = new Map<string, string>();
-      geral.forEach(g => {
-        if (g.usuario_id) {
-          userMapToUpsert.set(g.usuario_id, g.usuario_nome || `Usuário ${g.usuario_id}`);
-        }
-      });
-      if (userMapToUpsert.size > 0) {
-        const userBatch = Array.from(userMapToUpsert.entries()).map(([uid, unome]) => {
-          const cleanName = unome.split(" ")[0] || unome || "Operador";
-          const sanitized = uid.toLowerCase().replace(/[^a-z0-9]/g, "_");
-          return {
-            id: uid,
-            nome: cleanName,
-            nome_curto: cleanName,
-            nome_completo: unome,
-            email: `${sanitized}@detran.local`,
-            login: sanitized,
-            perfil: "Operador",
-            ativo: true
-          };
-        });
-        await upsertInBatches("usuarios", userBatch, 250, "id");
-        userBatch.forEach(u => validUserIds.add(u.id));
-      }
-
       const payload = geral.map(g => ({
         id: g.id || `cnh-${g.ordem}`,
         ordem: g.ordem,
@@ -5237,6 +5335,76 @@ export async function syncLocalToSupabase(
     log(`ℹ️ Aviso em 'orgao_config': ${err.message}`);
   }
 
+  // 11. Sincronizar Lotes de CNHs
+  try {
+    const lotesList = await getLotes();
+    const activeLotes = lotesList.filter(l => !deletedLoteIds.has(l.id));
+    if (activeLotes.length > 0) {
+      log("📦 Sincronizando tabela 'lotes'...");
+      const payload = activeLotes.map(l => ({
+        id: l.id,
+        numero: Number(l.numero) || 0,
+        data_recebimento: l.data_recebimento ? l.data_recebimento.split("T")[0] : new Date().toISOString().split("T")[0],
+        documentos_impressos: Number(l.documentos_impressos) || 0,
+        pdf_nome: l.pdf_nome || null,
+        pdf_url: l.pdf_url || null,
+        pdf_tamanho: l.pdf_tamanho !== undefined ? l.pdf_tamanho : null,
+        observacao: l.observacao || null,
+        usuario_id: l.usuario_id || null,
+        usuario_nome: l.usuario_nome || null,
+        created_at: l.created_at || new Date().toISOString(),
+        updated_at: l.updated_at || new Date().toISOString()
+      }));
+      const synced = await upsertInBatches("lotes", payload, 50);
+      log(`✅ Tabela 'lotes' sincronizada (${synced} registros).`);
+      totalSynced += synced;
+    } else {
+      log("ℹ️ Tabela 'lotes' local não possui registros para enviar.");
+    }
+  } catch (err: any) {
+    log(`❌ Erro em 'lotes': ${err.message}`);
+    errors.push(`lotes: ${err.message}`);
+  }
+
+  // 12. Sincronizar Declarações
+  try {
+    const declaracoesList = getStoredList<Declaracao>("declaracoes", []);
+    const activeDecl = declaracoesList.filter(d => !deletedDeclIds.has(d.id));
+    if (activeDecl.length > 0) {
+      log("📦 Sincronizando tabela 'declaracoes'...");
+      const payload = activeDecl.map(d => ({
+        id: d.id,
+        numero: d.numero,
+        ano: Number(d.ano) || new Date().getFullYear(),
+        data_emissao: d.data_emissao || new Date().toISOString().split("T")[0],
+        procurador_id: d.procurador_id || null,
+        procurador_nome: d.procurador_nome,
+        procurador_cpf: d.procurador_cpf,
+        procurador_telefone: d.procurador_telefone || null,
+        procurador_endereco: d.procurador_endereco || null,
+        texto_declaracao: d.texto_declaracao,
+        condutores: d.condutores,
+        cidade: d.cidade || "Itaituba",
+        uf: d.uf || "PA",
+        gerente_nome: d.gerente_nome || null,
+        gerente_cargo: d.gerente_cargo || null,
+        gerente_unidade: d.gerente_unidade || null,
+        gerente_portaria: d.gerente_portaria || null,
+        observacao: d.observacao || null,
+        usuario_id: d.usuario_id || null,
+        usuario_nome: d.usuario_nome || null,
+        created_at: d.created_at || new Date().toISOString(),
+        updated_at: d.updated_at || new Date().toISOString()
+      }));
+      const synced = await upsertInBatches("declaracoes", payload, 100);
+      log(`✅ Tabela 'declaracoes' sincronizada (${synced} registros).`);
+      totalSynced += synced;
+    }
+  } catch (err: any) {
+    log(`❌ Erro em 'declaracoes': ${err.message}`);
+    errors.push(`declaracoes: ${err.message}`);
+  }
+
   if (errors.length === 0) {
     log("✨ Sincronização Local -> Supabase concluída com sucesso total!");
   } else {
@@ -5275,7 +5443,9 @@ export async function syncSupabaseToLocal(
     { name: "geral_cnhs", key: "geral", orderCol: "ordem", asc: false },
     { name: "historico_movimentacoes", key: "historico", orderCol: "data_hora", asc: false },
     { name: "auditoria", key: "auditoria", orderCol: "data_hora", asc: false },
-    { name: "acessos_cidadao", key: "acessos_cidadao", orderCol: "data_hora", asc: false }
+    { name: "acessos_cidadao", key: "acessos_cidadao", orderCol: "data_hora", asc: false },
+    { name: "lotes", key: "lotes", orderCol: "data_recebimento", asc: false },
+    { name: "declaracoes", key: "declaracoes", orderCol: "created_at", asc: false }
   ];
 
   for (const item of tables) {
@@ -5297,10 +5467,57 @@ export async function syncSupabaseToLocal(
           // Atualiza tanto localStorage quanto IndexedDB sem disparar re-upload em loop
           saveStoredList("geral", filteredData);
           await saveLocalGeralCNHsBulk(filteredData, true);
+        } else if (item.key === "lotes") {
+          const deletedLoteSet = getDeletedIds("lotes");
+          filteredData = data.filter((l: any) => !deletedLoteSet.has(l.id));
+          saveStoredList("lotes", filteredData);
+          try {
+            if (dexieDb.lotes) {
+              await dexieDb.lotes.clear();
+              await dexieDb.lotes.bulkPut(filteredData);
+            }
+          } catch (e) {
+            console.warn("Erro ao salvar lotes no Dexie:", e);
+          }
+          notifyDataSync("lotes");
+        } else if (item.key === "declaracoes") {
+          const deletedDeclSet = getDeletedIds("declaracoes");
+          filteredData = data.filter((d: any) => !deletedDeclSet.has(d.id));
+          saveStoredList("declaracoes", filteredData);
+          notifyDataSync("declaracoes");
         } else if (item.key === "acessos_cidadao") {
           if (typeof window !== "undefined") {
             localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(filteredData.slice(0, 500)));
           }
+        } else if (item.key === "usuarios") {
+          const { users: sanitizedUsers, repairedCount } = repairCorruptedUsuarios(filteredData);
+          saveStoredList("usuarios", sanitizedUsers);
+          if (repairedCount > 0) {
+            log(`🛠️ Restauradas credenciais de ${repairedCount} usuário(s) que estavam com e-mail/login alterados.`);
+            const payloadToFix = sanitizedUsers.map((u) => ({
+              id: u.id,
+              nome: u.nome,
+              nome_curto: u.nome_curto || u.nome,
+              email: u.email,
+              login: u.login,
+              senha: u.senha || "detran@123",
+              perfil: u.perfil || "Operador",
+              permissoes: u.permissoes || getPermissoesPadrao("Operador"),
+              ativo: u.ativo !== false,
+              created_at: u.created_at || new Date().toISOString()
+            }));
+            upsertInBatches("usuarios", payloadToFix, 100, "id").catch((e) =>
+              console.warn("Erro ao atualizar usuários reparados no Supabase:", e)
+            );
+          }
+          notifyDataSync("usuarios");
+        } else if (item.key === "responsaveis") {
+          const sanitizedResp = filteredData.map((r: any) => ({
+            ...r,
+            cpf: r.cpf === "000.000.000-00" ? "" : (r.cpf || "")
+          }));
+          saveStoredList("responsaveis", sanitizedResp);
+          notifyDataSync("responsaveis");
         } else {
           saveStoredList(item.key, filteredData);
         }
