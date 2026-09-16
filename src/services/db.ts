@@ -32,7 +32,12 @@ import {
   getLocalGeralCNHs,
   syncGeralWithSupabase
 } from "./dexieDb";
-import { uploadLogoToSupabaseStorage, loadOrgaoConfigFromSupabase } from "./orgaoService";
+import { 
+  uploadLogoToSupabaseStorage, 
+  loadOrgaoConfigFromSupabase,
+  getOrgaoConfig,
+  saveOrgaoConfig
+} from "./orgaoService";
 import { trackEgress } from "./egressMonitorService";
 
 // Verificação de credenciais Supabase reais via variáveis de ambiente VITE_ ou utilitário
@@ -587,22 +592,33 @@ export async function idbSet(key: string, val: any): Promise<void> {
 }
 
 let isIdbInitialized = false;
-export async function initStorage(): Promise<void> {
-  if (isIdbInitialized) return;
+export async function initStorage(force = false): Promise<void> {
+  if (isIdbInitialized && !force) return;
   const keys = [
-    "usuarios", "responsaveis", "memorandos", "candidatos", "geral", "historico", "auditoria", "mapeamento", "declaracoes", "lotes",
+    "usuarios", "responsaveis", "memorandos", "candidatos", "geral", "historico", "auditoria", "mapeamento", "declaracoes", "lotes", "imagens",
     "deleted_memorandos", "deleted_candidatos", "deleted_geral", "deleted_responsaveis", "deleted_declaracoes", "deleted_lotes"
   ];
   for (const k of keys) {
     try {
       const idbVal = await idbGet<any[]>(`detran_cnh_${k}`);
-      if (idbVal && Array.isArray(idbVal)) {
+      if (idbVal && Array.isArray(idbVal) && idbVal.length > 0) {
         memoryStore[k] = idbVal;
       }
     } catch (e) {
       console.warn(`Aviso ao carregar ${k} do IndexedDB:`, e);
     }
   }
+
+  // Carregar também logs do cidadão se persistidos em IndexedDB
+  try {
+    const idbAcessos = await idbGet<any[]>("detran_acessos_cidadao_logs");
+    if (idbAcessos && Array.isArray(idbAcessos) && idbAcessos.length > 0) {
+      memoryStore["acessos_cidadao"] = idbAcessos;
+    }
+  } catch (e) {
+    console.warn("Aviso ao carregar logs de cidadão do IndexedDB:", e);
+  }
+
   isIdbInitialized = true;
 }
 
@@ -2162,7 +2178,16 @@ export async function createDeclaracao(
 
   if (isSupabaseConfigured()) {
     try {
-      const { error } = await supabase.from("declaracoes").insert([nova]);
+      let declPayload: any = { ...nova };
+      let { error } = await supabase.from("declaracoes").insert([declPayload]);
+      if (error && (error.message?.includes("procurador_telefone") || error.message?.includes("procurador_fone") || error.message?.includes("column"))) {
+        if (declPayload.procurador_telefone) {
+          declPayload.procurador_fone = declPayload.procurador_telefone;
+          delete declPayload.procurador_telefone;
+        }
+        const retry = await supabase.from("declaracoes").insert([declPayload]);
+        error = retry.error;
+      }
       if (error) {
         console.warn("Aviso ao salvar declaração no Supabase (será mantido localmente):", error.message);
       }
@@ -2213,7 +2238,19 @@ export async function updateDeclaracao(
 
   if (isSupabaseConfigured()) {
     try {
-      await supabase.from("declaracoes").update(atualizado).eq("id", id);
+      let declPayload: any = { ...atualizado };
+      let { error } = await supabase.from("declaracoes").update(declPayload).eq("id", id);
+      if (error && (error.message?.includes("procurador_telefone") || error.message?.includes("procurador_fone") || error.message?.includes("column"))) {
+        if (declPayload.procurador_telefone) {
+          declPayload.procurador_fone = declPayload.procurador_telefone;
+          delete declPayload.procurador_telefone;
+        }
+        const retry = await supabase.from("declaracoes").update(declPayload).eq("id", id);
+        error = retry.error;
+      }
+      if (error) {
+        console.warn("Aviso ao atualizar declaração no Supabase:", error.message);
+      }
     } catch (e) {
       console.warn("Aviso ao atualizar declaração no Supabase:", e);
     }
@@ -2353,7 +2390,13 @@ export async function createLote(
 
   if (isSupabaseConfigured()) {
     try {
-      const { error } = await supabase.from("lotes").insert([novo]);
+      let lotePayload: any = { ...novo };
+      let { error } = await supabase.from("lotes").insert([lotePayload]);
+      if (error && (error.message?.includes("pdf_tamanho") || error.message?.includes("column"))) {
+        delete lotePayload.pdf_tamanho;
+        const retry = await supabase.from("lotes").insert([lotePayload]);
+        error = retry.error;
+      }
       if (error) {
         console.warn("Aviso ao salvar lote no Supabase (mantido localmente):", error.message);
       }
@@ -2422,9 +2465,18 @@ export async function updateLote(
 
   if (isSupabaseConfigured()) {
     try {
-      await supabase.from("lotes").update(atualizado).eq("id", id);
+      let updatePayload: any = { ...atualizado };
+      let { error } = await supabase.from("lotes").update(updatePayload).eq("id", id);
+      if (error && (error.message?.includes("pdf_tamanho") || error.message?.includes("column"))) {
+        delete updatePayload.pdf_tamanho;
+        const retry = await supabase.from("lotes").update(updatePayload).eq("id", id);
+        error = retry.error;
+      }
+      if (error) {
+        console.warn("Aviso ao atualizar lote no Supabase:", error.message);
+      }
     } catch (e) {
-      console.warn("Aviso ao atualizar lote no Supabase:", e);
+      console.warn("Erro ao atualizar lote no Supabase:", e);
     }
   }
 
@@ -2683,11 +2735,18 @@ export function getMaxAcessoCidadaoNumero(): number {
 }
 
 export function getAcessosCidadaoLogs(): AcessoCidadaoLog[] {
+  if (memoryStore["acessos_cidadao"] && Array.isArray(memoryStore["acessos_cidadao"]) && memoryStore["acessos_cidadao"].length > 0) {
+    return memoryStore["acessos_cidadao"] as AcessoCidadaoLog[];
+  }
   if (typeof window === "undefined") return [];
   const stored = localStorage.getItem("detran_acessos_cidadao_logs");
   if (stored) {
     try {
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        memoryStore["acessos_cidadao"] = parsed;
+        return parsed;
+      }
     } catch {
       // fallback
     }
@@ -2695,11 +2754,14 @@ export function getAcessosCidadaoLogs(): AcessoCidadaoLog[] {
 
   const seeded = generateSeedAcessosCidadaoLogs();
   if (typeof window !== "undefined") {
-    localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(seeded));
+    try {
+      localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(seeded));
+    } catch {}
     const maxSeed = seeded.reduce((m, s) => Math.max(m, s.numero || 0), seeded.length);
     localStorage.setItem("detran_acessos_cidadao_max_numero", maxSeed.toString());
     localStorage.setItem("detran_public_search_count", maxSeed.toString());
   }
+  memoryStore["acessos_cidadao"] = seeded;
   return seeded;
 }
 
@@ -4721,6 +4783,8 @@ export interface SyncStatusItem {
 }
 
 export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
+  await initStorage();
+
   const collections = [
     { key: "usuarios", label: "Usuários do Sistema", tableName: "usuarios" },
     { key: "responsaveis", label: "Responsáveis e CFCs", tableName: "responsaveis" },
@@ -4742,11 +4806,15 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
   for (const item of collections) {
     let localCount = 0;
     if (item.key === "acessos_cidadao") {
-      localCount = getAcessosCidadaoLogs().length;
+      const logs = getAcessosCidadaoLogs();
+      const idbLogs = await idbGet<any[]>("detran_acessos_cidadao_logs");
+      localCount = Math.max(logs.length, idbLogs && Array.isArray(idbLogs) ? idbLogs.length : 0);
     } else if (item.key === "orgao") {
       localCount = 1;
     } else if (item.key === "imagens") {
-      localCount = 0;
+      const cfg = getOrgaoConfig();
+      const localImgs = getStoredList<any>("imagens", []);
+      localCount = Math.max(localImgs.length, cfg?.logo ? 1 : 0);
     } else if (item.key === "lotes") {
       try {
         if (dexieDb.lotes) {
@@ -4758,13 +4826,26 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
         localCount = getStoredList("lotes", []).length;
       }
     } else if (item.key === "declaracoes") {
-      localCount = getStoredList("declaracoes", []).length;
+      const deletedDeclIds = getDeletedIds("declaracoes");
+      localCount = getStoredList<Declaracao>("declaracoes", []).filter(d => !deletedDeclIds.has(d.id)).length;
     } else if (item.key === "geral") {
       try {
         localCount = await dexieDb.geral.count();
       } catch {
         localCount = getStoredList(item.key, []).length;
       }
+    } else if (item.key === "historico") {
+      const memList = memoryStore["historico"] && Array.isArray(memoryStore["historico"]) ? memoryStore["historico"].length : 0;
+      const idbHist = await idbGet<any[]>("detran_cnh_historico");
+      const idbLen = idbHist && Array.isArray(idbHist) ? idbHist.length : 0;
+      const storedLen = getStoredList("historico", []).length;
+      localCount = Math.max(memList, idbLen, storedLen);
+    } else if (item.key === "auditoria") {
+      const memList = memoryStore["auditoria"] && Array.isArray(memoryStore["auditoria"]) ? memoryStore["auditoria"].length : 0;
+      const idbAud = await idbGet<any[]>("detran_cnh_auditoria");
+      const idbLen = idbAud && Array.isArray(idbAud) ? idbAud.length : 0;
+      const storedLen = getStoredList("auditoria", []).length;
+      localCount = Math.max(memList, idbLen, storedLen);
     } else {
       localCount = getStoredList(item.key, []).length;
     }
@@ -4775,9 +4856,35 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
 
     if (isSupabaseConfigured()) {
       try {
-        const { count, error } = await supabase
+        let count: number | null = null;
+        let error: any = null;
+
+        // 1. Tenta consulta HEAD rápida
+        const headRes = await supabase
           .from(item.tableName)
           .select("*", { count: "exact", head: true });
+        
+        count = headRes.count;
+        error = headRes.error;
+
+        // 2. Se HEAD retornar count nulo sem erro explícito (típico de PostgREST ou proxies que descartam Content-Range no HEAD),
+        // faz consulta fallback com limit 1
+        if (!error && count === null) {
+          const limitRes = await supabase
+            .from(item.tableName)
+            .select(item.tableName === "orgao_config" ? "id" : "id", { count: "exact" })
+            .limit(1);
+          
+          if (limitRes.error && limitRes.error.message?.includes("id")) {
+            const fallbackStar = await supabase.from(item.tableName).select("*", { count: "exact" }).limit(1);
+            count = fallbackStar.count;
+            error = fallbackStar.error;
+          } else {
+            count = limitRes.count;
+            error = limitRes.error;
+          }
+        }
+
         if (!error && count !== null) {
           supCount = count;
           status = localCount === supCount ? 'synced' : 'pending';
@@ -4785,9 +4892,15 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
           status = 'error';
           if (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('schema')) {
             lastError = `Tabela '${item.tableName}' não criada no Supabase. Execute o script SQL no editor Supabase.`;
+          } else if (error.code === '42501' || error.message?.includes('permission') || error.message?.includes('policy') || error.message?.includes('denied')) {
+            lastError = `Acesso restrito (RLS) em '${item.tableName}'. Habilite as políticas públicas ou permissões no Supabase.`;
           } else {
             lastError = error.message;
           }
+        } else {
+          // Se não houve erro mas a contagem retornou nula, a tabela existe e está vazia
+          supCount = 0;
+          status = localCount === 0 ? 'synced' : 'pending';
         }
       } catch (err: any) {
         status = 'error';
@@ -4908,8 +5021,67 @@ async function upsertInBatches(
 
     if (error) {
       console.warn(`Aviso no upsert em '${tableName}': ${error.message}. Iniciando recuperação...`);
-      // Recuperação 1: Se for geral_cnhs, remover foreign keys nulas ou problemáticas
       let recovered = false;
+
+      // Recuperação 1: Detecção automática de coluna ausente na tabela remota do Supabase (ex: pdf_tamanho, procurador_telefone)
+      const missingColMatch = error.message?.match(/Could not find the '([^']+)' column/i);
+      if (missingColMatch && missingColMatch[1]) {
+        const missingCol = missingColMatch[1];
+        console.warn(`Adaptando payload para '${tableName}': removendo coluna ausente '${missingCol}' e tentando novamente...`);
+        const adaptedBatch = batch.map((item: any) => {
+          const copy = { ...item };
+          delete copy[missingCol];
+          // Caso específico: se for procurador_telefone ausente, tentar procurador_fone se ainda não estiver definido
+          if (missingCol === "procurador_telefone" && item.procurador_telefone && !copy.procurador_fone) {
+            copy.procurador_fone = item.procurador_telefone;
+          }
+          return copy;
+        });
+        const { error: adaptErr } = await supabase.from(tableName).upsert(adaptedBatch, { onConflict });
+        if (!adaptErr) {
+          count += adaptedBatch.length;
+          recovered = true;
+          if (onProgress) onProgress(count, payload.length);
+          continue;
+        }
+      }
+
+      // Recuperação 2: Se for lotes e houver erro de coluna ou pdf_tamanho
+      if (tableName === "lotes" && !recovered) {
+        const cleanLotes = batch.map((item: any) => {
+          const copy = { ...item };
+          delete copy.pdf_tamanho;
+          return copy;
+        });
+        const { error: loteErr } = await supabase.from(tableName).upsert(cleanLotes, { onConflict });
+        if (!loteErr) {
+          count += cleanLotes.length;
+          recovered = true;
+          if (onProgress) onProgress(count, payload.length);
+          continue;
+        }
+      }
+
+      // Recuperação 3: Se for declaracoes e houver erro de telefone ou condutores
+      if (tableName === "declaracoes" && !recovered) {
+        const cleanDecl = batch.map((item: any) => {
+          const copy = { ...item };
+          if (copy.procurador_telefone && !copy.procurador_fone) {
+            copy.procurador_fone = copy.procurador_telefone;
+          }
+          delete copy.procurador_telefone;
+          return copy;
+        });
+        const { error: declErr } = await supabase.from(tableName).upsert(cleanDecl, { onConflict });
+        if (!declErr) {
+          count += cleanDecl.length;
+          recovered = true;
+          if (onProgress) onProgress(count, payload.length);
+          continue;
+        }
+      }
+
+      // Recuperação 4: Se for geral_cnhs, remover foreign keys nulas ou problemáticas
       if (tableName === "geral_cnhs") {
         const safeBatch = batch.map((item: any) => ({
           ...item,
@@ -4940,11 +5112,22 @@ async function upsertInBatches(
         }
       }
 
-      // Recuperação 2: Inserção item a item para isolar registros problemáticos sem abortar a sincronização
+      // Recuperação 5: Inserção item a item para isolar registros problemáticos sem abortar a sincronização
       if (!recovered) {
         for (const singleItem of batch) {
           try {
-            const { error: singleErr } = await supabase.from(tableName).upsert([singleItem], { onConflict });
+            let { error: singleErr } = await supabase.from(tableName).upsert([singleItem], { onConflict });
+            if (singleErr) {
+              // Tenta limpar campos extras
+              const itemCopy = { ...singleItem };
+              if (tableName === "lotes") delete itemCopy.pdf_tamanho;
+              if (tableName === "declaracoes") {
+                if (itemCopy.procurador_telefone) itemCopy.procurador_fone = itemCopy.procurador_telefone;
+                delete itemCopy.procurador_telefone;
+              }
+              const retrySingle = await supabase.from(tableName).upsert([itemCopy], { onConflict });
+              singleErr = retrySingle.error;
+            }
             if (!singleErr) {
               count++;
             } else {
@@ -5015,6 +5198,8 @@ export async function syncLocalToSupabase(
     }
   }
 
+  await initStorage();
+
   // Pré-carregar listas locais para validar chaves estrangeiras de forma estrita
   const rawUsuarios = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
   const { users: usuarios, repairedCount } = repairCorruptedUsuarios(rawUsuarios);
@@ -5029,8 +5214,14 @@ export async function syncLocalToSupabase(
     (c) => !deletedCandIds.has(c.id) && !deletedMemoIds.has(c.memorando_id)
   );
   const geral = memoryStore["geral"] && memoryStore["geral"].length > 0 ? memoryStore["geral"] : await getGeralCNHs();
-  const hist = getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO);
-  const aud = getStoredList<Auditoria>("auditoria", SEED_AUDITORIA);
+  
+  const idbHist = await idbGet<HistoricoMovimentacao[]>("detran_cnh_historico");
+  const localHist = getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO);
+  const hist = (idbHist && idbHist.length > localHist.length) ? idbHist : localHist;
+
+  const idbAud = await idbGet<Auditoria[]>("detran_cnh_auditoria");
+  const localAud = getStoredList<Auditoria>("auditoria", SEED_AUDITORIA);
+  const aud = (idbAud && idbAud.length > localAud.length) ? idbAud : localAud;
 
   const validUserIds = new Set(usuarios.map(u => u.id));
   const validRespIds = new Set(resp.map(r => r.id));
@@ -5405,6 +5596,45 @@ export async function syncLocalToSupabase(
     errors.push(`declaracoes: ${err.message}`);
   }
 
+  // 13. Sincronizar Imagens e Anexos (Logomarca Oficial e Anexos)
+  try {
+    const cfg = getOrgaoConfig();
+    const storedImgs = getStoredList<any>("imagens", []);
+    const imgPayload: any[] = [...storedImgs];
+    if (cfg && cfg.logo && !imgPayload.some(img => img.id === "logo_orgao")) {
+      imgPayload.push({
+        id: "logo_orgao",
+        tabela_ref: "orgao_config",
+        registro_id: "default",
+        nome: "Logomarca Oficial DETRAN",
+        tipo: "logo",
+        dados_base64: cfg.logo.startsWith("data:image/") ? cfg.logo : null,
+        url_publica: cfg.logo.startsWith("http") ? cfg.logo : null,
+        created_at: new Date().toISOString()
+      });
+    }
+    if (imgPayload.length > 0) {
+      log(`📦 Sincronizando 'imagens_sync' (${imgPayload.length} registro(s))...`);
+      const payload = imgPayload.map(img => ({
+        id: img.id || (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `img-${Date.now()}`),
+        tabela_ref: img.tabela_ref || "orgao_config",
+        registro_id: img.registro_id || "default",
+        nome: img.nome || "Anexo",
+        tipo: img.tipo || "imagem",
+        tamanho: img.tamanho || (img.dados_base64 ? img.dados_base64.length : null),
+        dados_base64: img.dados_base64 || null,
+        url_publica: img.url_publica || null,
+        usuario_id: cleanFK(img.usuario_id, validUserIds),
+        created_at: img.created_at || new Date().toISOString()
+      }));
+      const synced = await upsertInBatches("imagens_sync", payload, 25);
+      log(`✅ Tabela 'imagens_sync' sincronizada (${synced} registros).`);
+      totalSynced += synced;
+    }
+  } catch (err: any) {
+    log(`ℹ️ Aviso em 'imagens_sync': ${err.message}`);
+  }
+
   if (errors.length === 0) {
     log("✨ Sincronização Local -> Supabase concluída com sucesso total!");
   } else {
@@ -5445,7 +5675,8 @@ export async function syncSupabaseToLocal(
     { name: "auditoria", key: "auditoria", orderCol: "data_hora", asc: false },
     { name: "acessos_cidadao", key: "acessos_cidadao", orderCol: "data_hora", asc: false },
     { name: "lotes", key: "lotes", orderCol: "data_recebimento", asc: false },
-    { name: "declaracoes", key: "declaracoes", orderCol: "created_at", asc: false }
+    { name: "declaracoes", key: "declaracoes", orderCol: "created_at", asc: false },
+    { name: "imagens_sync", key: "imagens", orderCol: "created_at", asc: false }
   ];
 
   for (const item of tables) {
@@ -5486,8 +5717,30 @@ export async function syncSupabaseToLocal(
           saveStoredList("declaracoes", filteredData);
           notifyDataSync("declaracoes");
         } else if (item.key === "acessos_cidadao") {
+          memoryStore["acessos_cidadao"] = filteredData;
           if (typeof window !== "undefined") {
-            localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(filteredData.slice(0, 500)));
+            try {
+              localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(filteredData.slice(0, 1000)));
+            } catch {}
+            idbSet("detran_acessos_cidadao_logs", filteredData).catch(() => {});
+          }
+        } else if (item.key === "historico") {
+          saveStoredList("historico", filteredData);
+          idbSet("detran_cnh_historico", filteredData).catch(() => {});
+          notifyDataSync("historico");
+        } else if (item.key === "auditoria") {
+          saveStoredList("auditoria", filteredData);
+          idbSet("detran_cnh_auditoria", filteredData).catch(() => {});
+          notifyDataSync("auditoria");
+        } else if (item.key === "imagens") {
+          saveStoredList("imagens", filteredData);
+          const logoItem = filteredData.find((img: any) => img.id === "logo_orgao" || img.tipo === "logo");
+          if (logoItem && (logoItem.dados_base64 || logoItem.url_publica)) {
+            const curCfg = getOrgaoConfig();
+            if (curCfg && !curCfg.logo) {
+              curCfg.logo = logoItem.url_publica || logoItem.dados_base64;
+              saveOrgaoConfig(curCfg);
+            }
           }
         } else if (item.key === "usuarios") {
           const { users: sanitizedUsers, repairedCount } = repairCorruptedUsuarios(filteredData);
@@ -5576,6 +5829,218 @@ export async function syncBiDirectional(
     success: errors.length === 0,
     totalCount: pullRes.pulledCount,
     errors
+  };
+}
+
+// Sincronização pontual de uma única tabela selecionada
+export async function syncSingleTable(
+  tableKey: string,
+  onLog?: (msg: string) => void
+): Promise<{ success: boolean; message: string; localCount: number; remoteCount: number }> {
+  if (!isSupabaseConfigured()) {
+    throw new Error("Supabase não está configurado.");
+  }
+  const log = (m: string) => {
+    if (onLog) onLog(`[${new Date().toLocaleTimeString()}] ${m}`);
+  };
+
+  await initStorage(true);
+
+  const tableMap: Record<string, { tableName: string; orderCol?: string; asc?: boolean }> = {
+    usuarios: { tableName: "usuarios", orderCol: "id", asc: true },
+    responsaveis: { tableName: "responsaveis", orderCol: "id", asc: true },
+    mapeamento: { tableName: "mapeamento_localizacao", orderCol: "id", asc: true },
+    memorandos: { tableName: "memorandos", orderCol: "id", asc: true },
+    candidatos: { tableName: "candidatos", orderCol: "id", asc: true },
+    geral: { tableName: "geral_cnhs", orderCol: "ordem", asc: false },
+    lotes: { tableName: "lotes", orderCol: "data_recebimento", asc: false },
+    declaracoes: { tableName: "declaracoes", orderCol: "created_at", asc: false },
+    historico: { tableName: "historico_movimentacoes", orderCol: "data_hora", asc: false },
+    auditoria: { tableName: "auditoria", orderCol: "data_hora", asc: false },
+    acessos_cidadao: { tableName: "acessos_cidadao", orderCol: "data_hora", asc: false },
+    orgao: { tableName: "orgao_config" },
+    imagens: { tableName: "imagens_sync", orderCol: "created_at", asc: false }
+  };
+
+  const info = tableMap[tableKey];
+  if (!info) {
+    throw new Error(`Tabela '${tableKey}' não reconhecida.`);
+  }
+
+  log(`🚀 Iniciando sincronização individual da tabela '${info.tableName}'...`);
+
+  // PASSO 1: Enviar local para Supabase
+  if (tableKey === "lotes") {
+    const lotesList = await getLotes();
+    const deletedLoteIds = getDeletedIds("lotes");
+    const activeLotes = lotesList.filter(l => !deletedLoteIds.has(l.id));
+    if (activeLotes.length > 0) {
+      log(`📦 Enviando ${activeLotes.length} lotes para o Supabase...`);
+      const payload = activeLotes.map(l => ({
+        id: l.id,
+        numero: Number(l.numero) || 0,
+        data_recebimento: l.data_recebimento ? l.data_recebimento.split("T")[0] : new Date().toISOString().split("T")[0],
+        documentos_impressos: Number(l.documentos_impressos) || 0,
+        pdf_nome: l.pdf_nome || null,
+        pdf_url: l.pdf_url || null,
+        pdf_tamanho: l.pdf_tamanho !== undefined ? l.pdf_tamanho : null,
+        observacao: l.observacao || null,
+        usuario_id: l.usuario_id || null,
+        usuario_nome: l.usuario_nome || null,
+        created_at: l.created_at || new Date().toISOString(),
+        updated_at: l.updated_at || new Date().toISOString()
+      }));
+      await upsertInBatches("lotes", payload, 50);
+      log(`✅ Lotes enviados com sucesso.`);
+    }
+  } else if (tableKey === "declaracoes") {
+    const declList = getStoredList<Declaracao>("declaracoes", []);
+    const deletedDeclIds = getDeletedIds("declaracoes");
+    const activeDecl = declList.filter(d => !deletedDeclIds.has(d.id));
+    if (activeDecl.length > 0) {
+      log(`📦 Enviando ${activeDecl.length} declarações para o Supabase...`);
+      const payload = activeDecl.map(d => ({
+        id: d.id,
+        numero: d.numero,
+        ano: Number(d.ano) || new Date().getFullYear(),
+        data_emissao: d.data_emissao || new Date().toISOString().split("T")[0],
+        procurador_id: d.procurador_id || null,
+        procurador_nome: d.procurador_nome,
+        procurador_cpf: d.procurador_cpf,
+        procurador_telefone: d.procurador_telefone || null,
+        procurador_endereco: d.procurador_endereco || null,
+        texto_declaracao: d.texto_declaracao,
+        condutores: d.condutores,
+        cidade: d.cidade || "Itaituba",
+        uf: d.uf || "PA",
+        gerente_nome: d.gerente_nome || null,
+        gerente_cargo: d.gerente_cargo || null,
+        gerente_unidade: d.gerente_unidade || null,
+        gerente_portaria: d.gerente_portaria || null,
+        observacao: d.observacao || null,
+        usuario_id: d.usuario_id || null,
+        usuario_nome: d.usuario_nome || null,
+        created_at: d.created_at || new Date().toISOString(),
+        updated_at: d.updated_at || new Date().toISOString()
+      }));
+      await upsertInBatches("declaracoes", payload, 50);
+      log(`✅ Declarações enviadas com sucesso.`);
+    }
+  } else if (tableKey === "orgao") {
+    log("📦 Sincronizando dados institucionais do órgão...");
+    const cfg: any = getOrgaoConfig() || {};
+    const payload = [{
+      id: "default",
+      governo: cfg.governo || "GOVERNO DO ESTADO DO PARÁ",
+      secretaria: cfg.secretaria || "SECRETARIA DE ESTADO DE SEGURQUIA PÚBLICA",
+      orgao: cfg.orgao || "AGÊNCIA DE ITAITUBA",
+      sigla: cfg.sigla || "AGÊNCIA ITAITUBA",
+      origem_padrao: cfg.origem_padrao || "DA AGÊNCIA DO DETRAN DE ITAITUBA-PA",
+      destino_padrao: cfg.destino_padrao || "PARA AGÊNCIA DO DETRAN DE SANTARÉM-PA",
+      cidade_uf: cfg.cidade_uf || "Itaituba - PA",
+      telefone: cfg.telefone || "(91) 3214-0000",
+      email: cfg.email || "protocolo@detran.pa.gov.br",
+      endereco: cfg.endereco || "Av. Rodovia BR 316, Km 03 - Belém / PA",
+      subtitulo_relatorio: cfg.subtitulo_relatorio || "COORDENADORIA DE HABILITAÇÃO & PROTOCOLO GERAL DE CNHs",
+      logo: cfg.logo || "",
+      updated_at: new Date().toISOString()
+    }];
+    await upsertInBatches("orgao_config", payload, 10);
+  } else if (tableKey === "imagens") {
+    const cfg = getOrgaoConfig();
+    const storedImgs = getStoredList<any>("imagens", []);
+    const imgPayload: any[] = [...storedImgs];
+    if (cfg && cfg.logo && !imgPayload.some(img => img.id === "logo_orgao")) {
+      imgPayload.push({
+        id: "logo_orgao",
+        tabela_ref: "orgao_config",
+        registro_id: "default",
+        nome: "Logomarca Oficial DETRAN",
+        tipo: "logo",
+        dados_base64: cfg.logo.startsWith("data:image/") ? cfg.logo : null,
+        url_publica: cfg.logo.startsWith("http") ? cfg.logo : null,
+        created_at: new Date().toISOString()
+      });
+    }
+    if (imgPayload.length > 0) {
+      log(`📦 Enviando ${imgPayload.length} imagem(ns) / anexo(s) para o Supabase...`);
+      await upsertInBatches("imagens_sync", imgPayload, 20);
+    }
+  } else if (tableKey === "acessos_cidadao") {
+    const logs = getAcessosCidadaoLogs();
+    if (logs.length > 0) {
+      log(`📦 Enviando ${logs.length} logs de cidadão para o Supabase...`);
+      await upsertInBatches("acessos_cidadao", logs, 200);
+    }
+  }
+
+  // PASSO 2: Baixar do Supabase e sincronizar localmente
+  log(`📥 Baixando versão consolidada de '${info.tableName}' do Supabase...`);
+  const remoteData = await fetchAllRowsFromSupabase(info.tableName, 1000, info.orderCol, info.asc, true);
+
+  if (tableKey === "lotes") {
+    const deletedLoteSet = getDeletedIds("lotes");
+    const filtered = (remoteData || []).filter((l: any) => !deletedLoteSet.has(l.id));
+    saveStoredList("lotes", filtered);
+    if (dexieDb.lotes) {
+      await dexieDb.lotes.clear();
+      await dexieDb.lotes.bulkPut(filtered);
+    }
+    notifyDataSync("lotes");
+  } else if (tableKey === "declaracoes") {
+    const deletedDeclSet = getDeletedIds("declaracoes");
+    const filtered = (remoteData || []).filter((d: any) => !deletedDeclSet.has(d.id));
+    saveStoredList("declaracoes", filtered);
+    notifyDataSync("declaracoes");
+  } else if (tableKey === "orgao") {
+    await loadOrgaoConfigFromSupabase();
+  } else if (tableKey === "imagens") {
+    saveStoredList("imagens", remoteData || []);
+    const logoItem = (remoteData || []).find((img: any) => img.id === "logo_orgao" || img.tipo === "logo");
+    if (logoItem && (logoItem.dados_base64 || logoItem.url_publica)) {
+      const curCfg = getOrgaoConfig();
+      if (curCfg && !curCfg.logo) {
+        curCfg.logo = logoItem.url_publica || logoItem.dados_base64;
+        saveOrgaoConfig(curCfg);
+      }
+    }
+  } else if (tableKey === "acessos_cidadao") {
+    memoryStore["acessos_cidadao"] = remoteData || [];
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify((remoteData || []).slice(0, 1000)));
+      } catch {}
+      idbSet("detran_acessos_cidadao_logs", remoteData || []).catch(() => {});
+    }
+  } else if (tableKey === "historico") {
+    saveStoredList("historico", remoteData || []);
+    await idbSet("detran_cnh_historico", remoteData || []);
+    notifyDataSync("historico");
+  } else if (tableKey === "auditoria") {
+    saveStoredList("auditoria", remoteData || []);
+    await idbSet("detran_cnh_auditoria", remoteData || []);
+    notifyDataSync("auditoria");
+  } else if (tableKey === "geral") {
+    saveStoredList("geral", remoteData || []);
+    await saveLocalGeralCNHsBulk(remoteData || [], true);
+  } else {
+    saveStoredList(tableKey, remoteData || []);
+    notifyDataSync(tableKey);
+  }
+
+  const finalRemoteCount = (remoteData || []).length;
+  let finalLocalCount = finalRemoteCount;
+  if (tableKey === "lotes" && dexieDb.lotes) {
+    finalLocalCount = await dexieDb.lotes.count();
+  }
+
+  log(`🎉 Sincronização de '${info.tableName}' finalizada: Local (${finalLocalCount}) = Supabase (${finalRemoteCount}).`);
+
+  return {
+    success: true,
+    message: `Tabela '${info.tableName}' sincronizada com sucesso.`,
+    localCount: finalLocalCount,
+    remoteCount: finalRemoteCount
   };
 }
 

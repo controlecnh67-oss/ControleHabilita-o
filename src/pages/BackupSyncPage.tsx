@@ -33,6 +33,7 @@ import {
   syncLocalToSupabase, 
   syncSupabaseToLocal, 
   syncBiDirectional,
+  syncSingleTable,
   resetDemoData,
   SyncStatusItem
 } from "../services/db";
@@ -359,6 +360,11 @@ CREATE INDEX IF NOT EXISTS idx_lotes_numero ON public.lotes(numero);
 CREATE INDEX IF NOT EXISTS idx_lotes_data_recebimento ON public.lotes(data_recebimento DESC);
 CREATE INDEX IF NOT EXISTS idx_declaracoes_numero ON public.declaracoes(numero);
 
+-- Garantir colunas compatíveis em bancos legados
+ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS pdf_tamanho BIGINT;
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS procurador_telefone VARCHAR(50);
+ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS procurador_fone VARCHAR(50);
+
 -- 15. HABILITAR ROW LEVEL SECURITY (RLS)
 ALTER TABLE public.usuarios ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.responsaveis ENABLE ROW LEVEL SECURITY;
@@ -536,6 +542,7 @@ USING (bucket_id = 'app_images');
   const [syncSpreadsheetToSupabase, setSyncSpreadsheetToSupabase] = useState<boolean>(true);
   const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
   const [isImportingSpreadsheet, setIsImportingSpreadsheet] = useState<boolean>(false);
+  const [syncingTableKey, setSyncingTableKey] = useState<string | null>(null);
 
   const isConnected = isSupabaseConfigured();
   const supabaseUrl = creds.url;
@@ -688,6 +695,29 @@ USING (bucket_id = 'app_images');
       addLog(`❌ Erro fatal durante a unificação: ${err.message}`);
     } finally {
       setIsSyncingBiDirectional(false);
+      await loadStats();
+    }
+  };
+
+  const handleSyncSingleTable = async (key: string, label: string) => {
+    if (!isConnected) {
+      setShowConfigModal(true);
+      setLogs(["⚠️ Supabase não configurado. Por favor, insira a URL e Chave ANON no painel para ativar a sincronização."]);
+      return;
+    }
+    setSyncingTableKey(key);
+    addLog(`=== SINCRONIZANDO INDIVIDUALMENTE: ${label.toUpperCase()} ===`);
+    try {
+      const res = await syncSingleTable(key, (msg) => addLog(msg));
+      if (res.success) {
+        addLog(`🎉 Tabela '${label}' sincronizada! Local (${res.localCount}) e Supabase (${res.remoteCount}) alinhados.`);
+      } else {
+        addLog(`⚠️ Aviso em '${label}': ${res.message}`);
+      }
+    } catch (err: any) {
+      addLog(`❌ Erro ao sincronizar '${label}': ${err.message}`);
+    } finally {
+      setSyncingTableKey(null);
       await loadStats();
     }
   };
@@ -1171,14 +1201,29 @@ END $$;`;
                       )}
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <button
-                        onClick={() => handleExportTableExcel(item.key, item.label)}
-                        className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 rounded-lg text-[11px] font-semibold transition-all inline-flex items-center gap-1 border border-emerald-200 dark:border-emerald-800 cursor-pointer"
-                        title={`Baixar ${item.label} em Excel`}
-                      >
-                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                        <span>Excel</span>
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => handleSyncSingleTable(item.key, item.label)}
+                          disabled={syncingTableKey === item.key || !isConnected}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all inline-flex items-center gap-1 border cursor-pointer ${
+                            isPending || isError
+                              ? "bg-blue-600 hover:bg-blue-700 text-white border-blue-600 shadow-xs"
+                              : "bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/50 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800"
+                          } disabled:opacity-50`}
+                          title={`Sincronizar exclusivamente a tabela ${item.label}`}
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${syncingTableKey === item.key ? "animate-spin" : ""}`} />
+                          <span>{syncingTableKey === item.key ? "Sincronizando..." : "Sincronizar"}</span>
+                        </button>
+                        <button
+                          onClick={() => handleExportTableExcel(item.key, item.label)}
+                          className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 rounded-lg text-[11px] font-semibold transition-all inline-flex items-center gap-1 border border-emerald-200 dark:border-emerald-800 cursor-pointer"
+                          title={`Baixar ${item.label} em Excel`}
+                        >
+                          <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                          <span>Excel</span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
