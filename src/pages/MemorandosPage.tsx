@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { 
   FileText, 
   Plus, 
@@ -20,7 +20,10 @@ import {
   RotateCcw,
   RefreshCw,
   Cloud,
-  CloudOff
+  CloudOff,
+  Clock,
+  BarChart3,
+  Hash
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -74,6 +77,7 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "Em elaboração" | "Remetido" | "meus">("all");
   const [selectedMemo, setSelectedMemo] = useState<Memorando | null>(null);
   const [candidatos, setCandidatos] = useState<Candidato[]>([]);
   const [loadingCands, setLoadingCands] = useState(false);
@@ -794,13 +798,40 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
     }
   };
 
+  const metricas = useMemo(() => {
+    const total = memorandos.length;
+    const emElaboracao = memorandos.filter((m) => m.status === "Em elaboração").length;
+    const remetidos = memorandos.filter((m) => m.status === "Remetido").length;
+    const totalCandidatos = memorandos.reduce((acc, m) => acc + (m.candidatos_count || 0), 0);
+    const meusMemorandos = user ? memorandos.filter((m) => m.usuario_id === user.id).length : 0;
+    const mediaPorMemo = total > 0 ? (totalCandidatos / total).toFixed(1) : "0.0";
+
+    return {
+      total,
+      emElaboracao,
+      percentEmElaboracao: total > 0 ? Math.round((emElaboracao / total) * 100) : 0,
+      remetidos,
+      percentRemetidos: total > 0 ? Math.round((remetidos / total) * 100) : 0,
+      totalCandidatos,
+      meusMemorandos,
+      percentMeus: total > 0 ? Math.round((meusMemorandos / total) * 100) : 0,
+      mediaPorMemo,
+    };
+  }, [memorandos, user]);
+
   const normSearch = normalizeSearch(searchTerm);
-  const filteredMemos = memorandos.filter(
-    (m) =>
-      !normSearch ||
+  const filteredMemos = memorandos.filter((m) => {
+    if (statusFilter === "Em elaboração" && m.status !== "Em elaboração") return false;
+    if (statusFilter === "Remetido" && m.status !== "Remetido") return false;
+    if (statusFilter === "meus" && (!user || m.usuario_id !== user.id)) return false;
+
+    if (!normSearch) return true;
+    return (
       normalizeSearch(m.numero).includes(normSearch) ||
-      normalizeSearch(m.remessa).includes(normSearch)
-  );
+      normalizeSearch(m.remessa).includes(normSearch) ||
+      (m.usuario_nome && normalizeSearch(m.usuario_nome).includes(normSearch))
+    );
+  });
 
   const isMyMemo = Boolean(user && selectedMemo && selectedMemo.usuario_id === user.id);
 
@@ -871,6 +902,162 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
         </div>
       </div>
 
+      {/* Cards de Métricas Superiores */}
+      <div id="memorandos-metrics-cards" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {/* Card 1: Total de Memorandos */}
+        <div
+          id="metric-card-total-memorandos"
+          onClick={() => setStatusFilter("all")}
+          className={`p-4 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
+            statusFilter === "all"
+              ? "bg-blue-50/70 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800 shadow-xs"
+              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-700"
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+              Total Memos
+            </span>
+            <div className="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-300 flex items-center justify-center">
+              <FileText className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+            {metricas.total}
+          </div>
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 flex items-center justify-between">
+            <span>Remessas cadastradas</span>
+            <span className="font-semibold text-blue-600 dark:text-blue-400">100%</span>
+          </div>
+        </div>
+
+        {/* Card 2: Em Elaboração */}
+        <div
+          id="metric-card-em-elaboracao"
+          onClick={() => setStatusFilter((prev) => (prev === "Em elaboração" ? "all" : "Em elaboração"))}
+          className={`p-4 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
+            statusFilter === "Em elaboração"
+              ? "bg-amber-50/80 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 shadow-xs ring-2 ring-amber-500/20"
+              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-amber-300 dark:hover:border-amber-700"
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+              Em Elaboração
+            </span>
+            <div className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-900/50 text-amber-600 dark:text-amber-300 flex items-center justify-center">
+              <Clock className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+            {metricas.emElaboracao}
+          </div>
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 flex items-center justify-between">
+            <span>Aguardando remessa</span>
+            <span className="font-bold text-amber-600 dark:text-amber-400">{metricas.percentEmElaboracao}%</span>
+          </div>
+        </div>
+
+        {/* Card 3: Remetidos */}
+        <div
+          id="metric-card-remetidos"
+          onClick={() => setStatusFilter((prev) => (prev === "Remetido" ? "all" : "Remetido"))}
+          className={`p-4 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
+            statusFilter === "Remetido"
+              ? "bg-indigo-50/80 dark:bg-indigo-950/40 border-indigo-300 dark:border-indigo-700 shadow-xs ring-2 ring-indigo-500/20"
+              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-700"
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+              Remetidos
+            </span>
+            <div className="w-7 h-7 rounded-lg bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-300 flex items-center justify-center">
+              <Send className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+            {metricas.remetidos}
+          </div>
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 flex items-center justify-between">
+            <span>CNHs no protocolo</span>
+            <span className="font-bold text-indigo-600 dark:text-indigo-400">{metricas.percentRemetidos}%</span>
+          </div>
+        </div>
+
+        {/* Card 4: Total de CNHs */}
+        <div
+          id="metric-card-total-cnhs"
+          onClick={() => setStatusFilter("all")}
+          className="p-4 rounded-2xl border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-emerald-300 dark:hover:border-emerald-700 transition-all cursor-pointer relative overflow-hidden group"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+              Total CNHs
+            </span>
+            <div className="w-7 h-7 rounded-lg bg-emerald-100 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-300 flex items-center justify-center">
+              <Users className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+            {metricas.totalCandidatos}
+          </div>
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 flex items-center justify-between">
+            <span>Candidatos vinculados</span>
+            <span className="font-bold text-emerald-600 dark:text-emerald-400">Total</span>
+          </div>
+        </div>
+
+        {/* Card 5: Meus Memorandos */}
+        <div
+          id="metric-card-meus-memos"
+          onClick={() => setStatusFilter((prev) => (prev === "meus" ? "all" : "meus"))}
+          className={`p-4 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
+            statusFilter === "meus"
+              ? "bg-purple-50/80 dark:bg-purple-950/40 border-purple-300 dark:border-purple-700 shadow-xs ring-2 ring-purple-500/20"
+              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-purple-300 dark:hover:border-purple-700"
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+              Meus Memos
+            </span>
+            <div className="w-7 h-7 rounded-lg bg-purple-100 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300 flex items-center justify-center">
+              <User className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+            {metricas.meusMemorandos}
+          </div>
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 flex items-center justify-between">
+            <span>Criados por você</span>
+            <span className="font-bold text-purple-600 dark:text-purple-400">{metricas.percentMeus}%</span>
+          </div>
+        </div>
+
+        {/* Card 6: Média por Memorando */}
+        <div
+          id="metric-card-media-cnhs"
+          className="p-4 rounded-2xl border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 transition-all relative overflow-hidden"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+              Média / Remessa
+            </span>
+            <div className="w-7 h-7 rounded-lg bg-teal-100 dark:bg-teal-900/50 text-teal-600 dark:text-teal-300 flex items-center justify-center">
+              <BarChart3 className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+            {metricas.mediaPorMemo}
+          </div>
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 flex items-center justify-between">
+            <span>CNHs / Memorando</span>
+            <span className="font-semibold text-teal-600 dark:text-teal-400">Média</span>
+          </div>
+        </div>
+      </div>
+
       {message && (
         <div
           className={`p-4 rounded-2xl text-xs font-medium flex items-center justify-between animate-fadeIn border ${
@@ -900,10 +1087,27 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
         
         {/* Esquerda: Lista de Memorandos */}
         <div className="lg:col-span-5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col overflow-hidden max-h-[680px]">
-          <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 flex items-center justify-between">
+          <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 flex items-center justify-between gap-2">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
               Memorandos Cadastrados ({filteredMemos.length})
             </h3>
+            {statusFilter !== "all" && (
+              <button
+                id="btn-clear-status-filter"
+                onClick={() => setStatusFilter("all")}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors cursor-pointer"
+                title="Remover filtro"
+              >
+                <span>
+                  {statusFilter === "Em elaboração"
+                    ? "Em Elaboração"
+                    : statusFilter === "Remetido"
+                    ? "Remetidos"
+                    : "Meus Memos"}
+                </span>
+                <X className="w-3 h-3" />
+              </button>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 space-y-2.5">

@@ -18,6 +18,7 @@ import { ConsultaPublicaPage } from "./pages/ConsultaPublicaPage";
 import { AcessosCidadaoPage } from "./pages/AcessosCidadaoPage";
 import { RelatoriosPage } from "./pages/RelatoriosPage";
 import { DeclaracoesPage } from "./pages/DeclaracoesPage";
+import { CandidatosPage } from "./pages/CandidatosPage";
 import { isTabAllowedForProfile, NavTab } from "./types";
 import { loadOrgaoConfigFromSupabase } from "./services/orgaoService";
 import { isSupabaseConfigured, subscribeToMultipleSupabaseRealtime } from "./services/supabase";
@@ -258,6 +259,7 @@ const MainLayout: React.FC = () => {
           <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col">
             {activeTab === "dashboard" && isTabAllowedForProfile("dashboard", user?.perfil, user?.permissoes) && <DashboardPage />}
             {activeTab === "geral" && isTabAllowedForProfile("geral", user?.perfil, user?.permissoes) && <GeralPage />}
+            {activeTab === "candidatos" && isTabAllowedForProfile("candidatos", user?.perfil, user?.permissoes) && <CandidatosPage />}
             {activeTab === "memorandos" && isTabAllowedForProfile("memorandos", user?.perfil, user?.permissoes) && <MemorandosPage onNavigateToGeral={() => setActiveTab("geral")} />}
             {activeTab === "declaracao" && isTabAllowedForProfile("declaracao", user?.perfil, user?.permissoes) && <DeclaracoesPage />}
             {activeTab === "acessos_cidadao" && isTabAllowedForProfile("acessos_cidadao", user?.perfil, user?.permissoes) && <AcessosCidadaoPage />}

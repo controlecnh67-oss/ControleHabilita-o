@@ -6,6 +6,7 @@ export type PerfilAcesso = PerfilUsuario;
 export type NavTab = 
   | "dashboard" 
   | "geral" 
+  | "candidatos"
   | "memorandos" 
   | "declaracao"
   | "acessos_cidadao"
@@ -40,6 +41,13 @@ export function isTabAllowedForProfile(
         permissoes.includes("cnh:receber") ||
         permissoes.includes("cnh:entregar") ||
         permissoes.includes("cnh:editar")
+      );
+    }
+    if (tab === "candidatos") {
+      return (
+        permissoes.includes("candidatos:visualizar") ||
+        permissoes.includes("geral:visualizar") ||
+        permissoes.includes("memorandos:criar")
       );
     }
     if (tab === "memorandos") {
@@ -91,13 +99,13 @@ export function isTabAllowedForProfile(
   // Fallback padrão se não houver array de permissões customizadas
   switch (perfil) {
     case "Supervisor":
-      return ["dashboard", "geral", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento", "historico", "auditoria", "orgao"].includes(tab);
+      return ["dashboard", "geral", "candidatos", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento", "historico", "auditoria", "orgao"].includes(tab);
 
     case "Operador":
-      return ["dashboard", "geral", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento"].includes(tab);
+      return ["dashboard", "geral", "candidatos", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento"].includes(tab);
 
     case "Consulta":
-      return ["dashboard", "geral", "declaracao", "acessos_cidadao", "relatorios", "historico", "auditoria"].includes(tab);
+      return ["dashboard", "geral", "candidatos", "declaracao", "acessos_cidadao", "relatorios", "historico", "auditoria"].includes(tab);
 
     default:
       return false;
@@ -167,7 +175,14 @@ export const PERMISSOES_SISTEMA: PermissaoItem[] = [
     description: "Permite modificar dados manuais ou remover registros de CNH do sistema" 
   },
 
-  // 3. Memorandos e Remessas
+  // 3. Memorandos e Candidatos
+  { 
+    id: "candidatos:visualizar", 
+    label: "Aba Candidatos - Visualizar e Filtrar", 
+    category: "Remessas e Memorandos", 
+    description: "Permite acessar a aba Candidatos com métricas, busca avançada e tabela personalizada",
+    isTab: true
+  },
   { 
     id: "memorandos:criar", 
     label: "Aba Memorandos - Criar Remessas", 

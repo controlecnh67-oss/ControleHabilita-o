@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { 
   LayoutDashboard, 
   FolderArchive, 
+  UserCheck,
   FileText, 
   FileCheck,
   Users, 
@@ -70,6 +71,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navItems = [
     { id: "dashboard" as NavTab, label: "Dashboard", icon: LayoutDashboard },
     { id: "geral" as NavTab, label: "Protocolo Geral (CNHs)", icon: FolderArchive },
+    { id: "candidatos" as NavTab, label: "Candidatos", icon: UserCheck },
     { id: "memorandos" as NavTab, label: "Memorandos e Remessas", icon: FileText },
     { id: "declaracao" as NavTab, label: "Declaração", icon: FileCheck },
     { id: "acessos_cidadao" as NavTab, label: "Consulta Cidadão (App)", icon: Smartphone },
