@@ -26,6 +26,7 @@ import { subscribeToSupabaseRealtime } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
 import { MapaArquivoFisicoCard } from "../components/MapaArquivoFisicoCard";
+import { DEFAULT_GAVETAS, DEFAULT_REPARTICOES } from "../lib/constants";
 
 type SubTabMapeamento = "mapa_fisico" | "regras";
 
@@ -411,12 +412,18 @@ export const MapeamentoPage: React.FC = () => {
                           {/* Coluna Gaveta */}
                           <td className="py-3 px-6 font-medium text-slate-900 dark:text-white">
                             {isEditing ? (
-                              <input
-                                type="text"
+                              <select
                                 value={editGaveta}
                                 onChange={(e) => setEditGaveta(e.target.value)}
-                                className="w-full px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-blue-500 outline-hidden"
-                              />
+                                className="w-full px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-blue-500 outline-hidden cursor-pointer"
+                              >
+                                {editGaveta && !DEFAULT_GAVETAS.includes(editGaveta as any) && (
+                                  <option value={editGaveta}>{editGaveta}</option>
+                                )}
+                                {DEFAULT_GAVETAS.map((g) => (
+                                  <option key={g} value={g}>{g}</option>
+                                ))}
+                              </select>
                             ) : (
                               <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-200">
                                 {item.gaveta}
@@ -427,12 +434,18 @@ export const MapeamentoPage: React.FC = () => {
                           {/* Coluna Repartição */}
                           <td className="py-3 px-6 font-medium text-slate-900 dark:text-white">
                             {isEditing ? (
-                              <input
-                                type="text"
+                              <select
                                 value={editReparticao}
                                 onChange={(e) => setEditReparticao(e.target.value)}
-                                className="w-full px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-blue-500 outline-hidden"
-                              />
+                                className="w-full px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-blue-500 outline-hidden cursor-pointer"
+                              >
+                                {editReparticao && !DEFAULT_REPARTICOES.includes(editReparticao as any) && (
+                                  <option value={editReparticao}>{editReparticao}</option>
+                                )}
+                                {DEFAULT_REPARTICOES.map((r) => (
+                                  <option key={r} value={r}>{r}</option>
+                                ))}
+                              </select>
                             ) : (
                               <span className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300">
                                 {item.reparticao}
@@ -530,28 +543,32 @@ export const MapeamentoPage: React.FC = () => {
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 Gaveta Destino <span className="text-rose-500">*</span>
               </label>
-              <input
-                type="text"
+              <select
                 value={newGaveta}
                 onChange={(e) => setNewGaveta(e.target.value)}
-                placeholder="ex: Gaveta 4"
                 required
-                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden transition-all"
-              />
+                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden transition-all cursor-pointer"
+              >
+                {DEFAULT_GAVETAS.map((g) => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
+              </select>
             </div>
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 Repartição / Subdivisão <span className="text-rose-500">*</span>
               </label>
-              <input
-                type="text"
+              <select
                 value={newReparticao}
                 onChange={(e) => setNewReparticao(e.target.value)}
-                placeholder="ex: Repartição 8"
                 required
-                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden transition-all"
-              />
+                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden transition-all cursor-pointer"
+              >
+                {DEFAULT_REPARTICOES.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
             </div>
           </div>
 

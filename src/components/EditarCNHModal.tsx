@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Modal } from "./ui/Modal";
 import { GeralCNH, SituacaoGeral } from "../types";
 import { formatCPF } from "../lib/utils";
+import { DEFAULT_GAVETAS, DEFAULT_REPARTICOES } from "../lib/constants";
 
 interface EditarCNHModalProps {
   isOpen: boolean;
@@ -21,9 +22,27 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
   const [situacao, setSituacao] = useState<SituacaoGeral>("Remetida");
   const [gaveta, setGaveta] = useState("");
   const [reparticao, setReparticao] = useState("");
+  const [isCustomGaveta, setIsCustomGaveta] = useState(false);
+  const [isCustomReparticao, setIsCustomReparticao] = useState(false);
   const [observacao, setObservacao] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+
+  const gavetaOptions = useMemo(() => {
+    const list = [...DEFAULT_GAVETAS];
+    if (cnh?.gaveta && !list.includes(cnh.gaveta)) {
+      list.unshift(cnh.gaveta);
+    }
+    return list;
+  }, [cnh?.gaveta]);
+
+  const reparticaoOptions = useMemo(() => {
+    const list = [...DEFAULT_REPARTICOES];
+    if (cnh?.reparticao && !list.includes(cnh.reparticao)) {
+      list.unshift(cnh.reparticao);
+    }
+    return list;
+  }, [cnh?.reparticao]);
 
   useEffect(() => {
     if (isOpen && cnh) {
@@ -32,6 +51,8 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
       setSituacao(cnh.situacao);
       setGaveta(cnh.gaveta || "");
       setReparticao(cnh.reparticao || "");
+      setIsCustomGaveta(false);
+      setIsCustomReparticao(false);
       setObservacao(cnh.observacao || "");
       setErrors({});
       setSubmitting(false);
@@ -166,30 +187,110 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
         </div>
 
         <div className="grid grid-cols-2 gap-3">
+          {/* Campo: Gaveta (Dropdown) */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Gaveta
-            </label>
-            <input
-              type="text"
-              value={gaveta}
-              onChange={(e) => setGaveta(e.target.value)}
-              placeholder="ex: Gaveta 1"
-              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
-            />
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Gaveta
+              </label>
+              {isCustomGaveta && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCustomGaveta(false);
+                    setGaveta(cnh.gaveta || "");
+                  }}
+                  className="text-[10px] text-blue-600 hover:text-blue-700 dark:text-blue-400 font-bold hover:underline cursor-pointer"
+                >
+                  Voltar p/ lista
+                </button>
+              )}
+            </div>
+
+            {isCustomGaveta ? (
+              <input
+                type="text"
+                value={gaveta}
+                onChange={(e) => setGaveta(e.target.value)}
+                placeholder="ex: Gaveta 1"
+                autoFocus
+                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+              />
+            ) : (
+              <select
+                value={gaveta}
+                onChange={(e) => {
+                  if (e.target.value === "__custom__") {
+                    setIsCustomGaveta(true);
+                    setGaveta("");
+                  } else {
+                    setGaveta(e.target.value);
+                  }
+                }}
+                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden cursor-pointer"
+              >
+                <option value="">Selecione a Gaveta...</option>
+                {gavetaOptions.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+                <option value="__custom__">✏️ Outra gaveta (digitar)...</option>
+              </select>
+            )}
           </div>
 
+          {/* Campo: Repartição (Dropdown) */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Repartição
-            </label>
-            <input
-              type="text"
-              value={reparticao}
-              onChange={(e) => setReparticao(e.target.value)}
-              placeholder="ex: Repartição 1"
-              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
-            />
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Repartição
+              </label>
+              {isCustomReparticao && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCustomReparticao(false);
+                    setReparticao(cnh.reparticao || "");
+                  }}
+                  className="text-[10px] text-blue-600 hover:text-blue-700 dark:text-blue-400 font-bold hover:underline cursor-pointer"
+                >
+                  Voltar p/ lista
+                </button>
+              )}
+            </div>
+
+            {isCustomReparticao ? (
+              <input
+                type="text"
+                value={reparticao}
+                onChange={(e) => setReparticao(e.target.value)}
+                placeholder="ex: Repartição 1"
+                autoFocus
+                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+              />
+            ) : (
+              <select
+                value={reparticao}
+                onChange={(e) => {
+                  if (e.target.value === "__custom__") {
+                    setIsCustomReparticao(true);
+                    setReparticao("");
+                  } else {
+                    setReparticao(e.target.value);
+                  }
+                }}
+                className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden cursor-pointer"
+              >
+                <option value="">Selecione a Repartição...</option>
+                {reparticaoOptions.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+                <option value="__custom__">✏️ Outra repartição (digitar)...</option>
+              </select>
+            )}
           </div>
         </div>
 

@@ -76,6 +76,7 @@ import { EditarCNHModal } from "../components/EditarCNHModal";
 import { LotesSubTab } from "../components/geral/LotesSubTab";
 import { downloadCNHFichaPDF, buildCNHShareableText } from "../services/cnhFichaPdfService";
 import { cn, formatCPF, formatPhone, formatDateTime, normalizeSearch, matchDigitsSafe } from "../lib/utils";
+import { DEFAULT_GAVETAS, DEFAULT_REPARTICOES } from "../lib/constants";
 
 // Helper para exibir Gaveta e Repartição de forma compacta (apenas número/código) na tabela
 const cleanGavetaText = (text?: string) => {
@@ -1855,14 +1856,20 @@ export const GeralPage: React.FC = () => {
                     {visibleColumns.gaveta && (
                       <td className="py-2 px-4" onClick={(e) => quickEditMode && e.stopPropagation()}>
                         {quickEditMode ? (
-                          <input
-                            type="text"
-                            placeholder="Gaveta / Local"
+                          <select
                             value={c.gaveta || ""}
                             onChange={(e) => handleQuickEditCell(c.id, "gaveta", e.target.value)}
                             onClick={(e) => e.stopPropagation()}
-                            className="w-24 px-2 py-1 text-xs bg-amber-50/70 dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold"
-                          />
+                            className="w-28 px-2 py-1 text-xs bg-amber-50/70 dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold cursor-pointer"
+                          >
+                            <option value="">(Sem gaveta)</option>
+                            {c.gaveta && !DEFAULT_GAVETAS.includes(c.gaveta as any) && (
+                              <option value={c.gaveta}>{c.gaveta}</option>
+                            )}
+                            {DEFAULT_GAVETAS.map((g) => (
+                              <option key={g} value={g}>{g}</option>
+                            ))}
+                          </select>
                         ) : c.gaveta && c.gaveta.trim() ? (
                           <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-50 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 font-semibold text-[11px]" title={`Gaveta: ${c.gaveta}`}>
                             <FolderArchive className="w-3.5 h-3.5 text-blue-500 shrink-0" />
@@ -1878,14 +1885,20 @@ export const GeralPage: React.FC = () => {
                     {visibleColumns.reparticao && (
                       <td className="py-2 px-4" onClick={(e) => quickEditMode && e.stopPropagation()}>
                         {quickEditMode ? (
-                          <input
-                            type="text"
-                            placeholder="Repartição"
+                          <select
                             value={c.reparticao || ""}
                             onChange={(e) => handleQuickEditCell(c.id, "reparticao", e.target.value)}
                             onClick={(e) => e.stopPropagation()}
-                            className="w-28 px-2 py-1 text-xs bg-amber-50/70 dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold"
-                          />
+                            className="w-28 px-2 py-1 text-xs bg-amber-50/70 dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold cursor-pointer"
+                          >
+                            <option value="">(Sem repartição)</option>
+                            {c.reparticao && !DEFAULT_REPARTICOES.includes(c.reparticao as any) && (
+                              <option value={c.reparticao}>{c.reparticao}</option>
+                            )}
+                            {DEFAULT_REPARTICOES.map((r) => (
+                              <option key={r} value={r}>{r}</option>
+                            ))}
+                          </select>
                         ) : c.reparticao && c.reparticao.trim() ? (
                           <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 font-semibold text-[11px]" title={`Repartição: ${c.reparticao}`}>
                             <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
