@@ -42,6 +42,7 @@ import autoTable from "jspdf-autotable";
 
 // Estrutura do candidato enriquecido com dados do memorando e CNH correspondente
 export interface CandidatoEnriquecido extends Candidato {
+  sequencia_geral?: number; // Nova sequência numérica única da CNH/candidato na tabela
   memorando_numero?: string;
   memorando_remessa?: string;
   memorando_status?: "Em elaboração" | "Remetido" | string;
@@ -89,8 +90,8 @@ const DEFAULT_COLUMNS: ColumnVisibility = {
 };
 
 const COLUMN_DEFINITIONS: { key: keyof ColumnVisibility; label: string; description: string }[] = [
-  { key: "index", label: "Item (#)", description: "Ordem / posição no memorando" },
-  { key: "nome", label: "Nome do Candidato", description: "Nome completo do titular" },
+  { key: "index", label: "Nº Sequencial (#)", description: "Nova sequência numérica única de cada CNH na tabela" },
+  { key: "nome", label: "Nome do Candidato", description: "Nome completo do titular e ordem da CNH" },
   { key: "cpf", label: "CPF", description: "Cadastro de Pessoa Física" },
   { key: "pa", label: "Processo (PA)", description: "Processo Administrativo / Registro CNH" },
   { key: "telefone", label: "Telefone / Contato", description: "Número de celular para contato" },
@@ -105,7 +106,7 @@ const COLUMN_DEFINITIONS: { key: keyof ColumnVisibility; label: string; descript
 
 const LOCAL_STORAGE_COLS_KEY = "detran_candidatos_cols_v1";
 
-type SortField = "nome" | "cpf" | "pa" | "telefone" | "memorando" | "created_at" | "situacao";
+type SortField = "seq" | "nome" | "cpf" | "pa" | "telefone" | "memorando" | "created_at" | "situacao";
 type SortDirection = "asc" | "desc";
 
 export const CandidatosPage: React.FC = () => {
@@ -244,31 +245,91 @@ export const CandidatosPage: React.FC = () => {
     };
   }, [loadData]);
 
-  // Cruzamento dos dados para enriquecer os candidatos
+  // Cruzamento dos dados para enriquecer os candidatos (visão geral da tabela filha de memorandos)
   const candidatosEnriquecidos = useMemo<CandidatoEnriquecido[]>(() => {
+    // 1. Mapeamento de memorandos por ID
     const memoMap = new Map<string, Memorando>();
     memorandos.forEach((m) => {
       memoMap.set(m.id, m);
     });
 
-    // Mapeamento de CNHs por candidato_id e fallback por CPF
+    // 2. Mapeamento estrito de CNHs para evitar QUALQUER duplicidade na tabela geral
+    // Uma CNH física só pode estar vinculada a exatamente um candidato.
+    const assignedCnhIds = new Set<string>();
+
+    // Indexação primária por candidato_id
     const cnhByCandId = new Map<string, GeralCNH>();
-    const cnhByCpf = new Map<string, GeralCNH>();
+    // Indexação por memorando_id + cpf limpo
+    const cnhByMemoAndCpf = new Map<string, GeralCNH>();
+    // Indexação por memorando_id + PA limpo
+    const cnhByMemoAndPa = new Map<string, GeralCNH>();
+    // CNHs avulsas (sem memorando_id) por CPF
+    const cnhAvulsaByCpf = new Map<string, GeralCNH>();
+    const cnhAvulsaByPa = new Map<string, GeralCNH>();
+
     geralCNHs.forEach((c) => {
       if (c.candidato_id) {
         cnhByCandId.set(c.candidato_id, c);
       }
-      if (c.cpf) {
-        const clean = c.cpf.replace(/\D/g, "");
-        if (clean) cnhByCpf.set(clean, c);
+      const cleanCpf = c.cpf ? c.cpf.replace(/\D/g, "") : "";
+      const cleanPa = c.pa ? c.pa.replace(/\D/g, "") : "";
+
+      if (c.memorando_id) {
+        if (cleanCpf) cnhByMemoAndCpf.set(`${c.memorando_id}_${cleanCpf}`, c);
+        if (cleanPa) cnhByMemoAndPa.set(`${c.memorando_id}_${cleanPa}`, c);
+      } else {
+        if (cleanCpf) cnhAvulsaByCpf.set(cleanCpf, c);
+        if (cleanPa) cnhAvulsaByPa.set(cleanPa, c);
       }
     });
 
-    return candidatos.map((cand) => {
+    // Deduplicação estrita de candidatos por ID para a listagem geral
+    const seenCandIds = new Set<string>();
+    const candsValidos = candidatos.filter((cand) => {
+      if (!cand.id || seenCandIds.has(cand.id)) return false;
+      seenCandIds.add(cand.id);
+      return true;
+    });
+
+    return candsValidos.map((cand, index) => {
       const memo = memoMap.get(cand.memorando_id);
       const cleanCpf = cand.cpf ? cand.cpf.replace(/\D/g, "") : "";
-      const cnh = cnhByCandId.get(cand.id) || (cleanCpf ? cnhByCpf.get(cleanCpf) : undefined);
+      const cleanPa = cand.pa ? cand.pa.replace(/\D/g, "") : "";
 
+      // Busca estrita e exclusiva da CNH associada
+      let cnh: GeralCNH | undefined = undefined;
+
+      // 1ª Prioridade: Vinculação direta por candidato_id
+      const directCnh = cnhByCandId.get(cand.id);
+      if (directCnh && !assignedCnhIds.has(directCnh.id)) {
+        cnh = directCnh;
+      }
+
+      // 2ª Prioridade: Vinculação por memorando_id + CPF ou PA
+      if (!cnh && cand.memorando_id) {
+        const memoCnh = (cleanCpf && cnhByMemoAndCpf.get(`${cand.memorando_id}_${cleanCpf}`)) ||
+                        (cleanPa && cnhByMemoAndPa.get(`${cand.memorando_id}_${cleanPa}`));
+        if (memoCnh && !assignedCnhIds.has(memoCnh.id)) {
+          cnh = memoCnh;
+        }
+      }
+
+      // 3ª Prioridade: Apenas se o memorando está Remetido e existir CNH avulsa não reclamada
+      if (!cnh && memo?.status === "Remetido") {
+        const avulsa = (cleanCpf && cnhAvulsaByCpf.get(cleanCpf)) ||
+                       (cleanPa && cnhAvulsaByPa.get(cleanPa));
+        if (avulsa && !assignedCnhIds.has(avulsa.id)) {
+          cnh = avulsa;
+        }
+      }
+
+      // Se encontrou uma CNH válida, marca o ID como já atribuído
+      if (cnh) {
+        assignedCnhIds.add(cnh.id);
+      }
+
+      // Determinação segura da situação:
+      // Se o candidato está em memorando em elaboração e não tem CNH emitida, NUNCA herda CNH de outro lote
       let situacaoCNH: SituacaoGeral | "Aguardando Envio" = "Aguardando Envio";
       if (cnh) {
         situacaoCNH = cnh.situacao;
@@ -278,6 +339,7 @@ export const CandidatosPage: React.FC = () => {
 
       return {
         ...cand,
+        sequencia_geral: index + 1,
         memorando_numero: memo?.numero || "Sem memorando",
         memorando_remessa: cand.remessa || memo?.remessa || "—",
         memorando_status: memo?.status || "Em elaboração",
@@ -413,13 +475,17 @@ export const CandidatosPage: React.FC = () => {
     filterTelefone,
   ]);
 
-  // Ordenação
+  // Ordenação com atribuição da nova sequência numérica
   const candidatosOrdenados = useMemo(() => {
-    return [...candidatosFiltrados].sort((a, b) => {
+    const sorted = [...candidatosFiltrados].sort((a, b) => {
       let valA: any = "";
       let valB: any = "";
 
       switch (sortField) {
+        case "seq":
+          valA = a.sequencia_geral || 0;
+          valB = b.sequencia_geral || 0;
+          break;
         case "nome":
           valA = a.nome.toLowerCase();
           valB = b.nome.toLowerCase();
@@ -457,6 +523,12 @@ export const CandidatosPage: React.FC = () => {
       if (valA > valB) return sortDirection === "asc" ? 1 : -1;
       return 0;
     });
+
+    // Atribuição de nova sequência numérica contínua para cada CNH na visão geral
+    return sorted.map((cand, idx) => ({
+      ...cand,
+      sequencia_geral: idx + 1
+    }));
   }, [candidatosFiltrados, sortField, sortDirection]);
 
   // Paginação
@@ -536,7 +608,8 @@ export const CandidatosPage: React.FC = () => {
     if (candidatosOrdenados.length === 0) return;
 
     const dataToExport = candidatosOrdenados.map((c, idx) => ({
-      "#": c.numero || idx + 1,
+      "Nº Sequencial (#)": idx + 1,
+      "Item no Memo": c.numero || "—",
       Nome: c.nome,
       CPF: formatCPF(c.cpf),
       "Processo (PA)": c.pa || "—",
@@ -544,9 +617,11 @@ export const CandidatosPage: React.FC = () => {
       Memorando: c.memorando_numero || "—",
       Remessa: c.memorando_remessa || "—",
       "Status Memorando": c.memorando_status || "—",
+      "Ordem CNH": c.cnh_ordem ? `#${c.cnh_ordem}` : "Sem CNH gerada",
       "Situação Protocolo": c.cnh_situacao || "—",
       Gaveta: c.cnh_gaveta || "—",
       Repartição: c.cnh_reparticao || "—",
+      "Responsável / CFC": c.cnh_responsavel_nome || "—",
       "Data Cadastro": formatDateTime(c.created_at),
     }));
 
@@ -562,7 +637,8 @@ export const CandidatosPage: React.FC = () => {
     if (candidatosOrdenados.length === 0) return;
 
     const headers = [
-      "Item",
+      "Seq_Geral",
+      "Item_Memo",
       "Nome",
       "CPF",
       "PA",
@@ -570,6 +646,7 @@ export const CandidatosPage: React.FC = () => {
       "Memorando",
       "Remessa",
       "Status_Memo",
+      "Ordem_CNH",
       "Situacao_CNH",
       "Gaveta",
       "Reparticao",
@@ -577,7 +654,8 @@ export const CandidatosPage: React.FC = () => {
     ];
 
     const rows = candidatosOrdenados.map((c, idx) => [
-      `"${c.numero || idx + 1}"`,
+      `"${idx + 1}"`,
+      `"${c.numero || ""}"`,
       `"${(c.nome || "").replace(/"/g, '""')}"`,
       `"${formatCPF(c.cpf)}"`,
       `"${c.pa || ""}"`,
@@ -585,6 +663,7 @@ export const CandidatosPage: React.FC = () => {
       `"${c.memorando_numero || ""}"`,
       `"${c.memorando_remessa || ""}"`,
       `"${c.memorando_status || ""}"`,
+      `"${c.cnh_ordem ? `#${c.cnh_ordem}` : ""}"`,
       `"${c.cnh_situacao || ""}"`,
       `"${c.cnh_gaveta || ""}"`,
       `"${c.cnh_reparticao || ""}"`,
@@ -618,25 +697,26 @@ export const CandidatosPage: React.FC = () => {
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     doc.text(
-      `Relatório de Candidatos Cadastrados • Emitido em: ${formatDateTime(new Date())}`,
+      `Visão Geral de Candidatos e CNHs (Tabela Filha de Memorandos) • Emitido em: ${formatDateTime(new Date())}`,
       14,
       22
     );
 
     const tableData = candidatosOrdenados.map((c, idx) => [
-      c.numero || (idx + 1).toString(),
+      String(idx + 1).padStart(2, "0"),
       c.nome,
       formatCPF(c.cpf),
       c.pa || "—",
       c.telefone ? formatPhone(c.telefone) : "—",
       c.memorando_numero || "—",
-      c.memorando_remessa || "—",
+      c.numero ? `Item ${c.numero}` : "—",
+      c.cnh_ordem ? `#${c.cnh_ordem}` : "—",
       c.cnh_situacao || "—",
       c.cnh_gaveta ? `${c.cnh_gaveta} / ${c.cnh_reparticao || ""}` : "—",
     ]);
 
     autoTable(doc, {
-      head: [["#", "Nome", "CPF", "PA", "Telefone", "Memorando", "Remessa", "Situação", "Localização"]],
+      head: [["#", "Nome", "CPF", "PA", "Telefone", "Memorando", "Item Memo", "Ordem CNH", "Situação", "Localização"]],
       body: tableData,
       startY: 28,
       styles: { fontSize: 8, cellPadding: 2 },
@@ -1299,7 +1379,24 @@ export const CandidatosPage: React.FC = () => {
               <thead>
                 <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider select-none">
                   {columns.index && (
-                    <th className="py-3 px-4 w-12 text-center">#</th>
+                    <th
+                      onClick={() => handleSort("seq")}
+                      className="py-3 px-4 w-16 text-center cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                      title="Ordenar pela nova sequência numérica única"
+                    >
+                      <div className="flex items-center justify-center gap-1">
+                        <span>#</span>
+                        {sortField === "seq" ? (
+                          sortDirection === "asc" ? (
+                            <ArrowUp className="w-3 h-3 text-blue-600" />
+                          ) : (
+                            <ArrowDown className="w-3 h-3 text-blue-600" />
+                          )
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-40" />
+                        )}
+                      </div>
+                    </th>
                   )}
 
                   {columns.nome && (
@@ -1461,7 +1558,7 @@ export const CandidatosPage: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
                 {paginatedCandidatos.map((cand, idx) => {
-                  const itemNumber = cand.numero || (currentPage - 1) * pageSize + idx + 1;
+                  const seqGeral = cand.sequencia_geral || (currentPage - 1) * pageSize + idx + 1;
                   const cleanTel = cand.telefone ? cand.telefone.replace(/\D/g, "") : "";
                   const waNumber = cleanTel.startsWith("55") ? cleanTel : `55${cleanTel}`;
 
@@ -1471,10 +1568,12 @@ export const CandidatosPage: React.FC = () => {
                       onClick={() => setSelectedCandidato(cand)}
                       className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors cursor-pointer group"
                     >
-                      {/* 1. Item (#) */}
+                      {/* 1. Item (#) - Nova sequência contínua única */}
                       {columns.index && (
-                        <td className="py-3 px-4 text-center font-mono font-bold text-slate-400 group-hover:text-blue-600">
-                          {itemNumber}
+                        <td className="py-3 px-4 text-center font-mono">
+                          <span className="inline-flex items-center justify-center min-w-[30px] px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-bold text-xs group-hover:bg-blue-50 group-hover:border-blue-200 group-hover:text-blue-700 dark:group-hover:bg-blue-950/60 dark:group-hover:border-blue-800 dark:group-hover:text-blue-300 transition-colors">
+                            {String(seqGeral).padStart(2, "0")}
+                          </span>
                         </td>
                       )}
 
@@ -1489,11 +1588,20 @@ export const CandidatosPage: React.FC = () => {
                               <span className="font-bold text-slate-900 dark:text-white tracking-tight truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                                 {cand.nome}
                               </span>
-                              {cand.cnh_ordem && (
-                                <span className="text-[10px] text-slate-400">
-                                  Ordem CNH: #{cand.cnh_ordem}
-                                </span>
-                              )}
+                              <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                                {cand.numero && (
+                                  <span>Memo #{cand.numero}</span>
+                                )}
+                                {cand.cnh_ordem ? (
+                                  <span className="text-blue-600 dark:text-blue-400 font-medium">
+                                    • CNH #{cand.cnh_ordem}
+                                  </span>
+                                ) : (
+                                  <span className="text-amber-600 dark:text-amber-400">
+                                    • Aguardando Envio
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </td>
@@ -1769,13 +1877,25 @@ export const CandidatosPage: React.FC = () => {
                 <h3 className="text-base font-bold text-slate-900 dark:text-white tracking-tight truncate">
                   {selectedCandidato.nome}
                 </h3>
-                <div className="flex items-center gap-2 mt-0.5">
+                <div className="flex items-center flex-wrap gap-2 mt-1">
                   <span className="text-slate-500 dark:text-slate-400 font-mono font-medium">
                     CPF: {formatCPF(selectedCandidato.cpf)}
                   </span>
+                  <span className="px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300 font-bold text-[10px]">
+                    Nº Seq: #{String(selectedCandidato.sequencia_geral || 1).padStart(2, "0")}
+                  </span>
                   {selectedCandidato.numero && (
-                    <span className="px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-[10px]">
-                      Item #{selectedCandidato.numero}
+                    <span className="px-2 py-0.5 rounded-md bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-[10px]">
+                      Item Memo: #{selectedCandidato.numero}
+                    </span>
+                  )}
+                  {selectedCandidato.cnh_ordem ? (
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 font-bold text-[10px]">
+                      Ordem CNH: #{selectedCandidato.cnh_ordem}
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 font-semibold text-[10px]">
+                      Aguardando Remessa
                     </span>
                   )}
                 </div>

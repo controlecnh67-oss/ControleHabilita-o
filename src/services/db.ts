@@ -46,11 +46,24 @@ export function isSupabaseConnected(): boolean {
 }
 
 // Disparar evento global de sincronização para atualizar todas as abas e componentes
-export function notifyDataSync(type: string = "all") {
+export function notifyDataSync(type: string = "all", fromRemote: boolean = false) {
   invalidateSupabaseCache(type === "all" ? undefined : type);
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("detran_sync_updated", { detail: { type, timestamp: Date.now() } }));
+    window.dispatchEvent(new CustomEvent("detran_sync_updated", { detail: { type, fromRemote, timestamp: Date.now() } }));
+    if (!fromRemote && typeof (window as any).__detranBroadcastMutation === "function") {
+      try {
+        (window as any).__detranBroadcastMutation(type, "sync");
+      } catch {}
+    }
   }
+}
+
+export function cleanFK(id?: string | null, validSet?: Set<string>): string | null {
+  if (!id || typeof id !== "string") return null;
+  const trimmed = id.trim();
+  if (trimmed === "") return null;
+  if (validSet && !validSet.has(trimmed)) return null;
+  return trimmed;
 }
 
 function toValidUUID(id?: string | null): string | null {
@@ -623,7 +636,7 @@ export async function initStorage(force = false): Promise<void> {
 }
 
 // Helper para obter/salvar com cache em memória e IndexedDB + LocalStorage
-function getStoredList<T extends { id?: string }>(key: string, seed: T[]): T[] {
+export function getStoredList<T extends { id?: string }>(key: string, seed: T[]): T[] {
   const deletedIds = getDeletedIds(key);
   let list: T[] = [];
 
@@ -661,7 +674,7 @@ function getStoredList<T extends { id?: string }>(key: string, seed: T[]): T[] {
   return list;
 }
 
-function saveStoredList<T>(key: string, data: T[]): void {
+export function saveStoredList<T>(key: string, data: T[]): void {
   memoryStore[key] = data;
   idbSet(`detran_cnh_${key}`, data).catch(() => {});
   try {
@@ -1379,6 +1392,8 @@ export async function getCandidatosAll(): Promise<Candidato[]> {
   const deletedMemoIds = getDeletedIds("memorandos");
   const deletedCandIds = getDeletedIds("candidatos");
 
+  let rawCands: Candidato[] = [];
+
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<Candidato>("candidatos", 1000, "created_at", false);
@@ -1397,17 +1412,30 @@ export async function getCandidatosAll(): Promise<Candidato[]> {
             telefone: (r.telefone && r.telefone.trim() !== "") ? r.telefone : (loc?.telefone || "")
           };
         });
-        const merged = [...validRemoteWithTelefone, ...localOnly];
-        saveStoredList("candidatos", merged);
-        return merged;
+        rawCands = [...validRemoteWithTelefone, ...localOnly];
+        saveStoredList("candidatos", rawCands);
       }
     } catch (err) {
       console.warn("Aviso ao buscar candidatos no Supabase:", err);
     }
   }
-  return getStoredList<Candidato>("candidatos", SEED_CANDIDATOS).filter(
-    (c) => !deletedCandIds.has(c.id) && !deletedMemoIds.has(c.memorando_id)
-  );
+
+  if (rawCands.length === 0) {
+    rawCands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS).filter(
+      (c) => !deletedCandIds.has(c.id) && !deletedMemoIds.has(c.memorando_id)
+    );
+  }
+
+  // Deduplicação estrita de candidatos por ID único para visão geral da tabela filha
+  const seenIds = new Set<string>();
+  const deduplicated: Candidato[] = [];
+  for (const c of rawCands) {
+    if (!c.id || seenIds.has(c.id)) continue;
+    seenIds.add(c.id);
+    deduplicated.push(c);
+  }
+
+  return deduplicated;
 }
 
 export async function getMemorandos(): Promise<Memorando[]> {
@@ -2551,10 +2579,33 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
     }
   }
 
+  // Deduplicar CNHs por ID único e assegurar ordem numérica estritamente única para cada CNH
+  const seenCnhIds = new Set<string>();
+  const seenCnhOrdens = new Set<number>();
+  let currentMaxOrdem = rawList.reduce((max, item) => Math.max(max, item.ordem || 0), 0);
+
+  const cleanRawList: GeralCNH[] = [];
+  for (const c of rawList) {
+    if (!c.id || seenCnhIds.has(c.id)) continue;
+    seenCnhIds.add(c.id);
+
+    let finalOrdem = c.ordem;
+    if (!finalOrdem || isNaN(finalOrdem) || seenCnhOrdens.has(finalOrdem)) {
+      currentMaxOrdem++;
+      finalOrdem = currentMaxOrdem;
+    }
+    seenCnhOrdens.add(finalOrdem);
+
+    cleanRawList.push({
+      ...c,
+      ordem: finalOrdem
+    });
+  }
+
   const seedByOrdem = new Map(SEED_GERAL.map((s) => [s.ordem, s]));
   const seedById = new Map(SEED_GERAL.map((s) => [s.id, s]));
 
-  const list = rawList.map((c) => {
+  const list = cleanRawList.map((c) => {
     const seed = seedByOrdem.get(c.ordem) || seedById.get(c.id);
     const dataMov = c.data_movimento || c.created_at || (c as any).criado_em || (seed ? seed.data_movimento : undefined);
     const usrId = c.usuario_id || (seed ? seed.usuario_id : undefined);
@@ -5870,7 +5921,134 @@ export async function syncSingleTable(
   log(`🚀 Iniciando sincronização individual da tabela '${info.tableName}'...`);
 
   // PASSO 1: Enviar local para Supabase
-  if (tableKey === "lotes") {
+  if (tableKey === "usuarios") {
+    const usuarios = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+    if (usuarios.length > 0) {
+      log(`📦 Enviando ${usuarios.length} usuários para o Supabase...`);
+      const payload = usuarios.map(u => ({
+        id: u.id || "11111111-1111-1111-1111-111111111111",
+        nome: u.nome,
+        nome_curto: u.nome_curto,
+        fone: u.fone || null,
+        email: u.email,
+        funcao: u.funcao || null,
+        setor: u.setor || "Protocolo",
+        login: u.login,
+        senha: u.senha || "detran@123",
+        permissoes: u.permissoes,
+        perfil: u.perfil,
+        ativo: u.ativo !== false,
+        created_at: u.created_at || new Date().toISOString()
+      }));
+      await upsertInBatches("usuarios", payload, 250);
+      log(`✅ Usuários enviados com sucesso.`);
+    }
+  } else if (tableKey === "responsaveis") {
+    const resp = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+    if (resp.length > 0) {
+      log(`📦 Enviando ${resp.length} responsáveis para o Supabase...`);
+      const payload = resp.map(r => ({
+        id: r.id || "e2335b1e",
+        nome: r.nome,
+        cpf: r.cpf || "",
+        telefone: r.telefone || null,
+        registro: r.registro || null,
+        observacao: r.observacao || null,
+        ativo: r.ativo !== false,
+        created_at: r.created_at || new Date().toISOString()
+      }));
+      await upsertInBatches("responsaveis", payload, 250);
+      log(`✅ Responsáveis enviados com sucesso.`);
+    }
+  } else if (tableKey === "mapeamento") {
+    const mapList = getStoredList<MapeamentoLocalizacao>("mapeamento", SEED_MAPEAMENTO);
+    if (mapList.length > 0) {
+      log(`📦 Enviando ${mapList.length} mapeamentos para o Supabase...`);
+      const payload = mapList.map(m => ({
+        id: m.id || `map-${(m.inicial || "A").toLowerCase()}`,
+        inicial: m.inicial,
+        gaveta: m.gaveta,
+        reparticao: m.reparticao,
+        ativo: m.ativo !== false
+      }));
+      await upsertInBatches("mapeamento_localizacao", payload, 250);
+      log(`✅ Mapeamento enviado com sucesso.`);
+    }
+  } else if (tableKey === "memorandos") {
+    const deletedMemoIds = getDeletedIds("memorandos");
+    const mems = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS).filter(m => !deletedMemoIds.has(m.id));
+    const validUserIds = new Set((getStoredList<Usuario>("usuarios", SEED_USUARIOS)).map(u => u.id));
+    if (mems.length > 0) {
+      log(`📦 Enviando ${mems.length} memorandos para o Supabase...`);
+      const payload = mems.map(m => ({
+        id: m.id || `memo-${m.numero}`,
+        numero: m.numero,
+        status: m.status,
+        usuario_id: cleanFK(m.usuario_id, validUserIds),
+        usuario_nome: m.usuario_nome || null,
+        remessa: m.remessa || null,
+        candidatos_count: m.candidatos_count || 0,
+        created_at: m.created_at || new Date().toISOString()
+      }));
+      await upsertInBatches("memorandos", payload, 250);
+      log(`✅ Memorandos enviados com sucesso.`);
+    }
+  } else if (tableKey === "candidatos") {
+    const deletedCandIds = getDeletedIds("candidatos");
+    const deletedMemoIds = getDeletedIds("memorandos");
+    const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS).filter(
+      c => !deletedCandIds.has(c.id) && !deletedMemoIds.has(c.memorando_id)
+    );
+    const mems = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
+    const validMemoIds = new Set(mems.map(m => m.id));
+    if (cands.length > 0) {
+      log(`📦 Enviando ${cands.length} candidatos para o Supabase...`);
+      const payload = cands.map(c => ({
+        id: c.id || `cand-${c.memorando_id}-${c.numero || "01"}`,
+        memorando_id: cleanFK(c.memorando_id, validMemoIds),
+        numero: c.numero || null,
+        nome: c.nome,
+        cpf: c.cpf,
+        telefone: c.telefone || null,
+        remessa: c.remessa || null,
+        created_at: c.created_at || new Date().toISOString()
+      }));
+      await upsertInBatches("candidatos", payload, 250);
+      log(`✅ Candidatos enviados com sucesso.`);
+    }
+  } else if (tableKey === "geral") {
+    const geral = memoryStore["geral"] && memoryStore["geral"].length > 0 ? memoryStore["geral"] : await getGeralCNHs();
+    const validMemoIds = new Set((getStoredList<Memorando>("memorandos", SEED_MEMORANDOS)).map(m => m.id));
+    const validCandIds = new Set((getStoredList<Candidato>("candidatos", SEED_CANDIDATOS)).map(c => c.id));
+    const validUserIds = new Set((getStoredList<Usuario>("usuarios", SEED_USUARIOS)).map(u => u.id));
+    const validRespIds = new Set((getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS)).map(r => r.id));
+    if (geral.length > 0) {
+      log(`📦 Enviando ${geral.length} registros de CNHs para o Supabase...`);
+      const payload = geral.map(g => ({
+        id: g.id || `cnh-${g.ordem}`,
+        ordem: g.ordem,
+        memorando_id: cleanFK(g.memorando_id, validMemoIds),
+        candidato_id: cleanFK(g.candidato_id, validCandIds),
+        nome: g.nome,
+        cpf: g.cpf,
+        gaveta: g.gaveta || "",
+        reparticao: g.reparticao || "",
+        situacao: g.situacao,
+        responsavel_id: cleanFK(g.responsavel_id, validRespIds),
+        responsavel_nome: g.responsavel_nome || null,
+        data_movimento: g.data_movimento || new Date().toISOString(),
+        usuario_id: cleanFK(g.usuario_id, validUserIds),
+        usuario_nome: g.usuario_nome || null,
+        memorando_numero: g.memorando_numero || null,
+        remessa: g.remessa || null,
+        observacao: g.observacao || null,
+        created_at: g.created_at || new Date().toISOString(),
+        updated_at: g.updated_at || g.data_movimento || new Date().toISOString()
+      }));
+      await upsertInBatches("geral_cnhs", payload, 250);
+      log(`✅ Registros de CNHs enviados com sucesso.`);
+    }
+  } else if (tableKey === "lotes") {
     const lotesList = await getLotes();
     const deletedLoteIds = getDeletedIds("lotes");
     const activeLotes = lotesList.filter(l => !deletedLoteIds.has(l.id));
@@ -5925,6 +6103,54 @@ export async function syncSingleTable(
       }));
       await upsertInBatches("declaracoes", payload, 50);
       log(`✅ Declarações enviadas com sucesso.`);
+    }
+  } else if (tableKey === "historico") {
+    const idbHist = await idbGet<HistoricoMovimentacao[]>("detran_cnh_historico");
+    const localHist = getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO);
+    const hist = (idbHist && idbHist.length > localHist.length) ? idbHist : localHist;
+    const geral = memoryStore["geral"] && memoryStore["geral"].length > 0 ? memoryStore["geral"] : await getGeralCNHs();
+    const validGeralIds = new Set(geral.map(g => g.id));
+    const validUserIds = new Set((getStoredList<Usuario>("usuarios", SEED_USUARIOS)).map(u => u.id));
+    const validRespIds = new Set((getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS)).map(r => r.id));
+    if (hist.length > 0) {
+      log(`📦 Enviando ${hist.length} movimentações de histórico para o Supabase...`);
+      const payload = hist.map(h => ({
+        id: toValidUUID(h.id) || (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : (toValidUUID(`hist-${h.geral_id}-${Math.random()}`) || "00000000-0000-4000-8000-" + Date.now().toString(16).padStart(12, "0").slice(-12))),
+        geral_id: cleanFK(h.geral_id, validGeralIds),
+        geral_ordem: h.geral_ordem || null,
+        geral_nome: h.geral_nome || null,
+        situacao_anterior: h.situacao_anterior || null,
+        situacao_nova: h.situacao_nova,
+        responsavel_id: cleanFK(h.responsavel_id, validRespIds),
+        responsavel_nome: h.responsavel_nome || null,
+        usuario_id: cleanFK(h.usuario_id, validUserIds),
+        usuario_nome: h.usuario_nome || null,
+        observacao: h.observacao || null,
+        data_hora: h.data_hora || new Date().toISOString()
+      })).filter(h => h.geral_id !== null);
+      await upsertInBatches("historico_movimentacoes", payload, 250);
+      log(`✅ Histórico enviado com sucesso.`);
+    }
+  } else if (tableKey === "auditoria") {
+    const idbAud = await idbGet<Auditoria[]>("detran_cnh_auditoria");
+    const localAud = getStoredList<Auditoria>("auditoria", SEED_AUDITORIA);
+    const aud = (idbAud && idbAud.length > localAud.length) ? idbAud : localAud;
+    const validUserIds = new Set((getStoredList<Usuario>("usuarios", SEED_USUARIOS)).map(u => u.id));
+    if (aud.length > 0) {
+      log(`📦 Enviando ${aud.length} registros de auditoria para o Supabase...`);
+      const payload = aud.map(a => ({
+        id: toValidUUID(a.id) || (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : (toValidUUID(`aud-${a.registro_id}-${Math.random()}`) || "00000000-0000-4000-8000-" + Date.now().toString(16).padStart(12, "0").slice(-12))),
+        tabela: a.tabela,
+        registro_id: a.registro_id || "",
+        acao: a.acao,
+        usuario_id: cleanFK(a.usuario_id, validUserIds),
+        usuario_nome: a.usuario_nome || null,
+        dados_antigos: (a as any).dados_antigos ? JSON.stringify((a as any).dados_antigos) : (a.valores_anteriores ? JSON.stringify(a.valores_anteriores) : null),
+        dados_novos: (a as any).dados_novos ? JSON.stringify((a as any).dados_novos) : (a.valores_novos ? JSON.stringify(a.valores_novos) : null),
+        data_hora: a.data_hora || new Date().toISOString()
+      }));
+      await upsertInBatches("auditoria", payload, 250);
+      log(`✅ Auditoria enviada com sucesso.`);
     }
   } else if (tableKey === "orgao") {
     log("📦 Sincronizando dados institucionais do órgão...");
@@ -5987,6 +6213,16 @@ export async function syncSingleTable(
       await dexieDb.lotes.bulkPut(filtered);
     }
     notifyDataSync("lotes");
+  } else if (tableKey === "memorandos") {
+    const deletedMemoSet = getDeletedIds("memorandos");
+    const filtered = (remoteData || []).filter((m: any) => !deletedMemoSet.has(m.id));
+    saveStoredList("memorandos", filtered);
+    notifyDataSync("memorandos");
+  } else if (tableKey === "candidatos") {
+    const deletedCandSet = getDeletedIds("candidatos");
+    const filtered = (remoteData || []).filter((c: any) => !deletedCandSet.has(c.id));
+    saveStoredList("candidatos", filtered);
+    notifyDataSync("candidatos");
   } else if (tableKey === "declaracoes") {
     const deletedDeclSet = getDeletedIds("declaracoes");
     const filtered = (remoteData || []).filter((d: any) => !deletedDeclSet.has(d.id));
@@ -6032,6 +6268,16 @@ export async function syncSingleTable(
   let finalLocalCount = finalRemoteCount;
   if (tableKey === "lotes" && dexieDb.lotes) {
     finalLocalCount = await dexieDb.lotes.count();
+  } else if (tableKey === "geral") {
+    finalLocalCount = await dexieDb.geral.count();
+  } else if (tableKey === "memorandos") {
+    finalLocalCount = getStoredList("memorandos", []).length;
+  } else if (tableKey === "candidatos") {
+    finalLocalCount = getStoredList("candidatos", []).length;
+  } else if (tableKey === "historico") {
+    finalLocalCount = (await idbGet<any[]>("detran_cnh_historico"))?.length || getStoredList("historico", []).length;
+  } else if (tableKey === "auditoria") {
+    finalLocalCount = (await idbGet<any[]>("detran_cnh_auditoria"))?.length || getStoredList("auditoria", []).length;
   }
 
   log(`🎉 Sincronização de '${info.tableName}' finalizada: Local (${finalLocalCount}) = Supabase (${finalRemoteCount}).`);

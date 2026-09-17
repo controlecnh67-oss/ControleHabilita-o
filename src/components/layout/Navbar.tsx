@@ -18,13 +18,15 @@ import {
   Lock,
   Mail,
   Phone,
-  UserCheck
+  UserCheck,
+  RefreshCw
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { Badge } from "../ui/Badge";
 import { Modal } from "../ui/Modal";
 import { isSupabaseConnected, resetDemoData, updateUsuario } from "../../services/db";
 import { getOrgaoConfig } from "../../services/orgaoService";
+import { useAutoSync, reconcilePendingDifferences } from "../../services/autoSyncService";
 import { cn } from "../../lib/utils";
 
 interface NavbarProps {
@@ -34,6 +36,7 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }) => {
   const { user, logout, timeRemaining, loginAsProfile, updateCurrentUser } = useAuth();
+  const autoSyncState = useAutoSync();
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [showDbInfo, setShowDbInfo] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -175,11 +178,34 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
 
       {/* Direita: Conexão DB, Tema, Perfil Logado */}
       <div className="flex items-center gap-2 md:gap-3">
+        {/* Botão e Indicador de Sincronização Automática Multi-Máquina */}
+        {isSupabaseConnected() && (
+          <button
+            onClick={() => reconcilePendingDifferences(true)}
+            disabled={autoSyncState.status === "syncing"}
+            title={
+              autoSyncState.status === "syncing"
+                ? "Sincronizando tabelas automaticamente com o banco..."
+                : `Sincronização Automática Ativa. Inserções em outras máquinas refletem aqui em tempo real. Clique para forçar conferência geral agora.`
+            }
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-all border cursor-pointer ${
+              autoSyncState.status === "syncing"
+                ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800 animate-pulse"
+                : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 dark:text-emerald-300 dark:border-emerald-800"
+            }`}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${autoSyncState.status === "syncing" ? "animate-spin text-blue-600" : "text-emerald-600 dark:text-emerald-400"}`} />
+            <span className="text-[11px]">
+              {autoSyncState.status === "syncing" ? "Sincronizando..." : "Auto-Sync Ativo"}
+            </span>
+          </button>
+        )}
+
         {/* Badge de Status DB / Modo Demo */}
         <div className="relative">
           <button
             onClick={() => setShowDbInfo(!showDbInfo)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-all border ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-all border cursor-pointer ${
               isSupabaseConnected()
                 ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800"
                 : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800"
@@ -204,13 +230,40 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
               </div>
               
               {isSupabaseConnected() ? (
-                <div className="flex items-start gap-2.5 text-xs text-slate-600 dark:text-slate-300 py-1">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-semibold text-slate-900 dark:text-white">Conectado ao Supabase</p>
-                    <p className="text-[11px] text-slate-500 mt-0.5">
-                      PostgreSQL e Row Level Security (RLS) ativos.
+                <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300 py-1">
+                  <div className="flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-slate-900 dark:text-white">Conectado ao Supabase</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        PostgreSQL e Row Level Security (RLS) ativos.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-[11px] text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        Auto-Sync Multi-Máquina
+                      </span>
+                      <span className="text-[10px] font-semibold text-blue-700 dark:text-blue-300">
+                        {autoSyncState.status === "syncing" ? "Sincronizando..." : "Ativo"}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-blue-700 dark:text-blue-300 mt-1">
+                      Todas as inserções, edições e exclusões feitas em qualquer computador conectado são propagadas automaticamente sem necessidade de cliques manuais.
                     </p>
+                    <button
+                      onClick={() => {
+                        reconcilePendingDifferences(true);
+                      }}
+                      disabled={autoSyncState.status === "syncing"}
+                      className="mt-2 w-full py-1 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${autoSyncState.status === "syncing" ? "animate-spin" : ""}`} />
+                      <span>Sincronizar Todas as Tabelas Agora</span>
+                    </button>
                   </div>
                 </div>
               ) : (

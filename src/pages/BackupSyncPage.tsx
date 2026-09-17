@@ -47,6 +47,7 @@ import {
   isSupabaseConfigured 
 } from "../services/supabase";
 import { GoogleDriveBackupCard } from "../components/GoogleDriveBackupCard";
+import { useAutoSync, reconcilePendingDifferences } from "../services/autoSyncService";
 
 export const BackupSyncPage: React.FC = () => {
   const [stats, setStats] = useState<SyncStatusItem[]>([]);
@@ -543,12 +544,21 @@ USING (bucket_id = 'app_images');
   const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
   const [isImportingSpreadsheet, setIsImportingSpreadsheet] = useState<boolean>(false);
   const [syncingTableKey, setSyncingTableKey] = useState<string | null>(null);
+  const [isAutoReconciling, setIsAutoReconciling] = useState<boolean>(false);
 
   const isConnected = isSupabaseConfigured();
   const supabaseUrl = creds.url;
+  const autoSyncState = useAutoSync();
 
   useEffect(() => {
     loadStats();
+    const handleSyncUpdated = () => {
+      loadStats();
+    };
+    window.addEventListener("detran_sync_updated", handleSyncUpdated);
+    return () => {
+      window.removeEventListener("detran_sync_updated", handleSyncUpdated);
+    };
   }, []);
 
   useEffect(() => {
@@ -556,6 +566,25 @@ USING (bucket_id = 'app_images');
       logsEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [logs]);
+
+  const handleReconcileAllTables = async () => {
+    if (!isConnected) {
+      setShowConfigModal(true);
+      setLogs(["⚠️ Supabase não configurado. Por favor, insira a URL e Chave ANON no painel para ativar a sincronização."]);
+      return;
+    }
+    setIsAutoReconciling(true);
+    addLog("🚀 Disparando reconciliação automática de todas as tabelas com o banco de dados...");
+    try {
+      await reconcilePendingDifferences(true);
+      addLog("✨ Ciclo de sincronização automática de todas as tabelas finalizado com sucesso!");
+    } catch (err: any) {
+      addLog(`❌ Erro durante a reconciliação automática: ${err.message}`);
+    } finally {
+      setIsAutoReconciling(false);
+      await loadStats();
+    }
+  };
 
   const handleSaveCredentials = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1129,15 +1158,57 @@ END $$;`;
 
       {/* Tabela de Totais e Status por Entidade */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs">
+        {/* Painel de Sincronização Automática Integrada */}
+        <div className="p-4 bg-gradient-to-r from-blue-50 via-indigo-50 to-emerald-50 dark:from-slate-800/80 dark:via-blue-950/40 dark:to-slate-800/80 border-b border-slate-200 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="flex h-2.5 w-2.5 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              </span>
+              <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                Sincronização Automática Multi-Máquinas Ativa
+              </h3>
+              <span className="text-[10px] px-2 py-0.5 rounded-md font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                {autoSyncState.status === "syncing" ? "Sincronizando..." : "Tempo Real (WebSocket + Delta Sync)"}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-600 dark:text-slate-300">
+              Ao inserir ou alterar dados em qualquer computador ou aba, a atualização é refletida automaticamente em todas as máquinas abertas.
+              {autoSyncState.lastSyncTime && (
+                <span className="ml-1 text-slate-500 dark:text-slate-400">
+                  (Última sincronização do ciclo: {autoSyncState.lastSyncTime.toLocaleTimeString()})
+                </span>
+              )}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleReconcileAllTables}
+              disabled={isAutoReconciling || autoSyncState.status === "syncing" || !isConnected}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-xs cursor-pointer disabled:opacity-50"
+              title="Executa a verificação e alinhamento automático de todas as tabelas pendentes sem precisar forçar uma a uma"
+            >
+              <RefreshCw className={`w-4 h-4 ${isAutoReconciling || autoSyncState.status === "syncing" ? "animate-spin" : ""}`} />
+              <span>
+                {isAutoReconciling || autoSyncState.status === "syncing"
+                  ? "Sincronizando Todas as Tabelas..."
+                  : "Sincronizar Todas as Tabelas Automaticamente"}
+              </span>
+            </button>
+          </div>
+        </div>
+
         <div className="p-4 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+            <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
               Contagem e Status por Tabela
-            </h3>
+            </h4>
           </div>
           <span className="text-[11px] text-slate-500 font-medium">
-            Comparativo Armazenamento Local vs Banco de Dados Supabase
+            Comparativo Armazenamento Local vs Banco de Dados Supabase (Atualização Contínua)
           </span>
         </div>
 

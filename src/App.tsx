@@ -25,6 +25,7 @@ import { isSupabaseConfigured, subscribeToMultipleSupabaseRealtime } from "./ser
 import { checkAndRunDailyGoogleDriveBackup } from "./services/googleDriveService";
 import { dexieDb, normalizeCNHRecord, notifySyncUpdated, syncGeralWithSupabase } from "./services/dexieDb";
 import { notifyDataSync, invalidateSupabaseCache } from "./services/db";
+import { initAutoSyncService } from "./services/autoSyncService";
 
 const MainLayout: React.FC = () => {
   const { user, isAuthenticated, isLoading, timeRemaining, logout } = useAuth();
@@ -42,6 +43,11 @@ const MainLayout: React.FC = () => {
     if (isSupabaseConfigured()) {
       loadOrgaoConfigFromSupabase().catch(() => {});
     }
+    // Inicializa o motor de sincronização automática contínua e realtime multi-máquina
+    const cleanupAutoSync = initAutoSyncService();
+    return () => {
+      cleanupAutoSync();
+    };
   }, []);
 
   // Sincronização em Tempo Real (Supabase Realtime) e Heartbeat Multi-Máquina
