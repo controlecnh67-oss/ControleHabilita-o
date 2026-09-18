@@ -30,7 +30,8 @@ import {
   deleteLocalGeralCNH,
   deleteLocalGeralCNHsBulk,
   getLocalGeralCNHs,
-  syncGeralWithSupabase
+  syncGeralWithSupabase,
+  deduplicateCNHRecords
 } from "./dexieDb";
 import { 
   uploadLogoToSupabaseStorage, 
@@ -3488,22 +3489,8 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
     }
   }
 
-  // Deduplicar CNHs por ID único preservando RIGOROSAMENTE o número de ordem original do banco de dados (Supabase)
-  const seenCnhIds = new Set<string>();
-  const cleanRawList: GeralCNH[] = [];
-  for (const c of rawList) {
-    if (!c.id || seenCnhIds.has(c.id)) continue;
-    seenCnhIds.add(c.id);
-
-    // Garante que a ordem seja um número válido positivo sem sobrescrever valores existentes do banco
-    const parsedOrdem = Number(c.ordem);
-    const validOrdem = !isNaN(parsedOrdem) && parsedOrdem > 0 ? parsedOrdem : 0;
-
-    cleanRawList.push({
-      ...c,
-      ordem: validOrdem
-    });
-  }
+  // Deduplicar CNHs rigorosamente por Ordem, CPF e ID único, preservando a ordem original do banco
+  const { cleanList: cleanRawList } = deduplicateCNHRecords(rawList);
 
   // Obtenção rápida de dados de apoio da memória local/cache (evita requisições remotas síncronas bloqueantes)
   const usuarios = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
@@ -6952,7 +6939,8 @@ export async function syncSingleTable(
       log(`✅ Candidatos enviados com sucesso.`);
     }
   } else if (tableKey === "geral") {
-    const geral = memoryStore["geral"] && memoryStore["geral"].length > 0 ? memoryStore["geral"] : await getGeralCNHs();
+    const rawGeral = await getLocalGeralCNHs();
+    const { cleanList: geral } = deduplicateCNHRecords(rawGeral);
     const validMemoIds = new Set((getStoredList<Memorando>("memorandos", SEED_MEMORANDOS)).map(m => m.id));
     const validCandIds = new Set((getStoredList<Candidato>("candidatos", SEED_CANDIDATOS)).map(c => c.id));
     const validUserIds = new Set((getStoredList<Usuario>("usuarios", SEED_USUARIOS)).map(u => u.id));
@@ -7147,22 +7135,22 @@ export async function syncSingleTable(
       await dexieDb.lotes.clear();
       await dexieDb.lotes.bulkPut(filtered);
     }
-    notifyDataSync("lotes");
+    notifyDataSync("lotes", true);
   } else if (tableKey === "memorandos") {
     const deletedMemoSet = getDeletedIds("memorandos");
     const filtered = (remoteData || []).filter((m: any) => !deletedMemoSet.has(m.id));
     saveStoredList("memorandos", filtered);
-    notifyDataSync("memorandos");
+    notifyDataSync("memorandos", true);
   } else if (tableKey === "candidatos") {
     const deletedCandSet = getDeletedIds("candidatos");
     const filtered = (remoteData || []).filter((c: any) => !deletedCandSet.has(c.id));
     saveStoredList("candidatos", filtered);
-    notifyDataSync("candidatos");
+    notifyDataSync("candidatos", true);
   } else if (tableKey === "declaracoes") {
     const deletedDeclSet = getDeletedIds("declaracoes");
     const filtered = (remoteData || []).filter((d: any) => !deletedDeclSet.has(d.id));
     saveStoredList("declaracoes", filtered);
-    notifyDataSync("declaracoes");
+    notifyDataSync("declaracoes", true);
   } else if (tableKey === "orgao") {
     await loadOrgaoConfigFromSupabase();
   } else if (tableKey === "imagens") {
@@ -7186,17 +7174,18 @@ export async function syncSingleTable(
   } else if (tableKey === "historico") {
     saveStoredList("historico", remoteData || []);
     await idbSet("detran_cnh_historico", remoteData || []);
-    notifyDataSync("historico");
+    notifyDataSync("historico", true);
   } else if (tableKey === "auditoria") {
     saveStoredList("auditoria", remoteData || []);
     await idbSet("detran_cnh_auditoria", remoteData || []);
-    notifyDataSync("auditoria");
+    notifyDataSync("auditoria", true);
   } else if (tableKey === "geral") {
     saveStoredList("geral", remoteData || []);
     await saveLocalGeralCNHsBulk(remoteData || [], true);
+    notifyDataSync("geral", true);
   } else {
     saveStoredList(tableKey, remoteData || []);
-    notifyDataSync(tableKey);
+    notifyDataSync(tableKey, true);
   }
 
   const finalRemoteCount = (remoteData || []).length;

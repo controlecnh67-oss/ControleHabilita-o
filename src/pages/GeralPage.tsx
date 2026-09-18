@@ -65,7 +65,7 @@ import {
   getLotes,
   restoreResponsaveisInfoAndDatabase
 } from "../services/db";
-import { syncGeralWithSupabase, dexieDb, normalizeCNHRecord } from "../services/dexieDb";
+import { syncGeralWithSupabase, dexieDb, normalizeCNHRecord, deduplicateCNHRecords } from "../services/dexieDb";
 import { getPublicShareUrl, subscribeToSupabaseRealtime } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
@@ -567,10 +567,13 @@ export const GeralPage: React.FC = () => {
     }
   };
 
+  const fetchDebounceTimerRef = useRef<any>(null);
+
   const fetchDados = async () => {
     try {
       const [dataCnhs, dataResp] = await Promise.all([getGeralCNHs(), getResponsaveis()]);
-      setCnhs(dataCnhs);
+      const { cleanList } = deduplicateCNHRecords(dataCnhs);
+      setCnhs(cleanList);
       setResponsaveis(dataResp);
     } catch (err) {
       console.error("Erro ao buscar CNHs no protocolo:", err);
@@ -579,12 +582,21 @@ export const GeralPage: React.FC = () => {
     }
   };
 
+  const debouncedFetchDados = () => {
+    if (fetchDebounceTimerRef.current) {
+      clearTimeout(fetchDebounceTimerRef.current);
+    }
+    fetchDebounceTimerRef.current = setTimeout(() => {
+      fetchDados();
+    }, 350);
+  };
+
   const handleOcrSuccess = (updatedCount: number, totalExtracted: number) => {
     setMessage({
       type: "success",
       text: `✅ Sucesso! ${updatedCount} CNH(s) tiveram o status alterado de REMETIDA para RECEBIDA com gavetas e repartições alocadas automaticamente (Total no documento: ${totalExtracted}).`,
     });
-    fetchDados();
+    debouncedFetchDados();
   };
 
   const handleExcelRecebidasSuccess = (updatedCount: number, totalExtracted: number) => {
@@ -592,7 +604,7 @@ export const GeralPage: React.FC = () => {
       type: "success",
       text: `✅ Sucesso! ${updatedCount} CNH(s) tiveram o status alterado de REMETIDA para RECEBIDA a partir da planilha Excel com gavetas e repartições alocadas automaticamente (Total na planilha: ${totalExtracted}).`,
     });
-    fetchDados();
+    debouncedFetchDados();
   };
 
   const handleDuplicatasSuccess = (deletedCount: number, groupsFixedCount: number) => {
@@ -600,7 +612,7 @@ export const GeralPage: React.FC = () => {
       type: "success",
       text: `🧹 Varredura concluída com sucesso! ${deletedCount} registro(s) duplicados foram excluídos e auditados em ${groupsFixedCount} grupo(s).`,
     });
-    fetchDados();
+    debouncedFetchDados();
   };
 
   const updateLotesCount = async () => {
@@ -617,7 +629,7 @@ export const GeralPage: React.FC = () => {
 
     // 2. Sincronização silenciosa inicial com Supabase em segundo plano
     syncGeralWithSupabase(false).then(() => {
-      fetchDados();
+      debouncedFetchDados();
     });
 
     // 3. Assinar Realtime do Supabase para refletir instantaneamente movimentações de outros computadores sem polling
@@ -629,33 +641,26 @@ export const GeralPage: React.FC = () => {
         } else if (payload?.new?.id) {
           const norm = normalizeCNHRecord(payload.new);
           await dexieDb.geral.put(norm);
-          setCnhs((prev) => {
-            const exists = prev.some((c) => c.id === norm.id);
-            if (exists) {
-              return prev.map((c) => (c.id === norm.id ? { ...c, ...norm } : c));
-            } else {
-              return [norm, ...prev].sort((a, b) => b.ordem - a.ordem);
-            }
-          });
+          debouncedFetchDados();
         }
       } catch (e) {
         console.warn("Aviso ao processar evento Realtime de geral_cnhs:", e);
+        debouncedFetchDados();
       }
-      fetchDados();
     });
 
     const unsubRealtimeHist = subscribeToSupabaseRealtime("historico_movimentacoes", () => {
-      syncGeralWithSupabase(false).then(() => fetchDados());
+      debouncedFetchDados();
     });
 
     const unsubRealtimeResp = subscribeToSupabaseRealtime("responsaveis", () => {
-      fetchDados();
+      debouncedFetchDados();
     });
 
     const handleSync = (e: Event) => {
       const customEvt = e as CustomEvent;
       if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "geral") {
-        fetchDados();
+        debouncedFetchDados();
       }
       if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "lotes") {
         updateLotesCount();
@@ -666,6 +671,7 @@ export const GeralPage: React.FC = () => {
     window.addEventListener("storage", handleSync);
 
     return () => {
+      if (fetchDebounceTimerRef.current) clearTimeout(fetchDebounceTimerRef.current);
       unsubRealtimeGeral();
       unsubRealtimeHist();
       unsubRealtimeResp();

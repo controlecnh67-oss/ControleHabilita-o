@@ -197,8 +197,20 @@ export function normalizeCNHRecord(item: any): GeralCNH {
     ? String(item.reparticao).trim()
     : (seed && seed.reparticao ? String(seed.reparticao).trim() : "");
 
+  const cleanCpfDigits = finalCpf.replace(/\D/g, "");
+  let resolvedId = (item.id && String(item.id).trim() !== "") ? String(item.id).trim() : (seed ? seed.id : undefined);
+  if (!resolvedId) {
+    if (finalOrdem > 0) {
+      resolvedId = `cnh-ordem-${finalOrdem}`;
+    } else if (cleanCpfDigits.length === 11) {
+      resolvedId = `cnh-cpf-${cleanCpfDigits}`;
+    } else {
+      resolvedId = `cnh-anon-${finalNome ? finalNome.toLowerCase().replace(/\W/g, "") : Date.now()}`;
+    }
+  }
+
   return {
-    id: item.id || (seed ? seed.id : undefined) || `cnh-${finalOrdem || Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+    id: resolvedId,
     ordem: finalOrdem,
     memorando_id: item.memorando_id || undefined,
     candidato_id: item.candidato_id || undefined,
@@ -222,6 +234,133 @@ export function normalizeCNHRecord(item: any): GeralCNH {
     created_at: item.created_at || dataMov || (seed ? seed.created_at : now),
     updated_at: item.updated_at || dataMov || item.created_at || now
   };
+}
+
+/**
+ * Deduplica CNHs garantindo que cada Ordem (quando > 0) e cada CPF válido (11 dígitos)
+ * existam apenas UMA vez no conjunto de dados. Em caso de duplicata, prioriza
+ * o registro com melhor estado/completude (Entregue > Recebida > Remetida > Pendente, com Gaveta, com CPF, etc.).
+ */
+export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]; duplicateIds: string[] } {
+  if (!list || list.length <= 1) {
+    return { cleanList: list || [], duplicateIds: [] };
+  }
+
+  const scoreRecord = (r: GeralCNH): number => {
+    let score = 0;
+    if (r.situacao === "Entregue") score += 100;
+    else if (r.situacao === "Recebida") score += 80;
+    else if (r.situacao === "Remetida") score += 50;
+    else score += 20;
+
+    const cpfDigits = (r.cpf || "").replace(/\D/g, "");
+    if (cpfDigits.length === 11) score += 40;
+    if (r.gaveta && r.gaveta.trim()) score += 20;
+    if (r.reparticao && r.reparticao.trim()) score += 10;
+    if (r.responsavel_id || r.responsavel_nome) score += 15;
+    if (r.observacao && r.observacao.trim()) score += 10;
+    // UUID v4 ganha preferência sobre chaves sintéticas temporárias
+    if (r.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(r.id)) score += 10;
+    if (r.updated_at) {
+      try {
+        score += Math.min(new Date(r.updated_at).getTime() / 1e12, 10);
+      } catch {}
+    }
+    return score;
+  };
+
+  const byOrdem = new Map<number, GeralCNH>();
+  const byCpf = new Map<string, GeralCNH>();
+  const duplicateIdsSet = new Set<string>();
+  const keptIdMap = new Map<string, GeralCNH>();
+
+  for (const item of list) {
+    if (!item || !item.id) continue;
+    const parsedOrdem = Number(item.ordem);
+    const validOrdem = !isNaN(parsedOrdem) && parsedOrdem > 0 ? parsedOrdem : 0;
+    const cpfDigits = (item.cpf || "").replace(/\D/g, "");
+    const hasValidOrdem = validOrdem > 0;
+    const hasValidCpf = cpfDigits.length === 11;
+
+    let conflictingRecord: GeralCNH | undefined;
+
+    if (hasValidOrdem && byOrdem.has(validOrdem)) {
+      conflictingRecord = byOrdem.get(validOrdem);
+    } else if (hasValidCpf && byCpf.has(cpfDigits)) {
+      conflictingRecord = byCpf.get(cpfDigits);
+    } else if (keptIdMap.has(item.id)) {
+      conflictingRecord = keptIdMap.get(item.id);
+    }
+
+    if (conflictingRecord) {
+      const currentScore = scoreRecord(item);
+      const existingScore = scoreRecord(conflictingRecord);
+
+      if (currentScore > existingScore) {
+        // O registro atual tem maior qualidade ou é mais recente
+        duplicateIdsSet.add(conflictingRecord.id);
+        keptIdMap.delete(conflictingRecord.id);
+        keptIdMap.set(item.id, { ...item, ordem: validOrdem });
+        if (hasValidOrdem) byOrdem.set(validOrdem, item);
+        if (hasValidCpf) byCpf.set(cpfDigits, item);
+      } else {
+        // Mantém o registro já selecionado
+        duplicateIdsSet.add(item.id);
+      }
+    } else {
+      keptIdMap.set(item.id, { ...item, ordem: validOrdem });
+      if (hasValidOrdem) byOrdem.set(validOrdem, item);
+      if (hasValidCpf) byCpf.set(cpfDigits, item);
+    }
+  }
+
+  const cleanList = Array.from(keptIdMap.values()).sort((a, b) => (b.ordem || 0) - (a.ordem || 0));
+  const duplicateIds = Array.from(duplicateIdsSet).filter(id => !keptIdMap.has(id));
+
+  return { cleanList, duplicateIds };
+}
+
+/**
+ * Saneia e deduplica profundamente a base geral local (IndexedDB e localStorage)
+ */
+export async function cleanAndDeduplicateGeralTable(): Promise<{ totalCleaned: number; duplicatesRemoved: number }> {
+  try {
+    const allRecords = await dexieDb.geral.toArray();
+    if (!allRecords || allRecords.length <= 1) {
+      return { totalCleaned: allRecords.length, duplicatesRemoved: 0 };
+    }
+
+    const { cleanList, duplicateIds } = deduplicateCNHRecords(allRecords);
+
+    if (duplicateIds.length > 0) {
+      console.log(`🧹 [Dexie Saneamento] Expurgando ${duplicateIds.length} registros duplicados locais...`);
+      await dexieDb.geral.bulkDelete(duplicateIds);
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("detran_cnh_geral", JSON.stringify(cleanList.slice(0, 1000)));
+        } catch {}
+      }
+
+      // Se o Supabase estiver configurado, expurga as duplicatas redundantes também da nuvem
+      if (isSupabaseConfigured()) {
+        (async () => {
+          try {
+            for (let i = 0; i < duplicateIds.length; i += 50) {
+              const chunk = duplicateIds.slice(i, i + 50);
+              await supabase.from("geral_cnhs").delete().in("id", chunk);
+            }
+          } catch (e) {
+            console.warn("Aviso ao sincronizar limpeza de duplicatas no Supabase:", e);
+          }
+        })().catch(() => {});
+      }
+    }
+
+    return { totalCleaned: cleanList.length, duplicatesRemoved: duplicateIds.length };
+  } catch (err) {
+    console.warn("Erro ao sanear base geral:", err);
+    return { totalCleaned: 0, duplicatesRemoved: 0 };
+  }
 }
 
 let lastSyncTriggerTime = 0;
@@ -319,6 +458,8 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
             hasMore = false;
           }
         }
+
+        await cleanAndDeduplicateGeralTable();
 
         const syncTime = new Date().toISOString();
         const duration = Date.now() - startTime;
@@ -449,11 +590,22 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
  * Funções do CRUD e Persistência no IndexedDB + Supabase
  */
 
-// Obter todos os registros da tabela geral do IndexedDB
+// Obter todos os registros da tabela geral do IndexedDB com deduplicação rigorosa
 export async function getLocalGeralCNHs(): Promise<GeralCNH[]> {
   try {
     const list = await dexieDb.geral.orderBy("ordem").reverse().toArray();
-    return list;
+    const { cleanList, duplicateIds } = deduplicateCNHRecords(list);
+
+    // Se detectou registros duplicados locais, limpa em background
+    if (duplicateIds.length > 0) {
+      dexieDb.geral.bulkDelete(duplicateIds).catch(() => {});
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("detran_cnh_geral", JSON.stringify(cleanList.slice(0, 1000)));
+        } catch {}
+      }
+    }
+    return cleanList;
   } catch (err) {
     console.warn("Erro ao buscar no IndexedDB:", err);
     return [];
@@ -463,7 +615,7 @@ export async function getLocalGeralCNHs(): Promise<GeralCNH[]> {
 // Disparar evento global de sincronização
 export function notifySyncUpdated(type: string = "geral") {
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("detran_sync_updated", { detail: { type, timestamp: Date.now() } }));
+    window.dispatchEvent(new CustomEvent("detran_sync_updated", { detail: { type, fromRemote: true, timestamp: Date.now() } }));
   }
 }
 
@@ -471,6 +623,17 @@ export function notifySyncUpdated(type: string = "geral") {
 export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
   const normalized = normalizeCNHRecord(record);
   normalized.updated_at = new Date().toISOString();
+
+  // Limpa possíveis registros locais conflitantes com o mesmo número de ordem mas ID diferente
+  if (normalized.ordem > 0) {
+    try {
+      const existingWithSameOrdem = await dexieDb.geral.where("ordem").equals(normalized.ordem).toArray();
+      const idsToDelete = existingWithSameOrdem.filter((e) => e.id !== normalized.id).map((e) => e.id);
+      if (idsToDelete.length > 0) {
+        await dexieDb.geral.bulkDelete(idsToDelete);
+      }
+    } catch {}
+  }
 
   // 1. Salva no IndexedDB imediatamente
   await dexieDb.geral.put(normalized);
@@ -572,13 +735,18 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
     return norm;
   });
 
-  // Save to Dexie
-  await dexieDb.geral.bulkPut(normalized);
+  const { cleanList, duplicateIds } = deduplicateCNHRecords(normalized);
+
+  // Salva no Dexie os registros deduplicados
+  await dexieDb.geral.bulkPut(cleanList);
+  if (duplicateIds.length > 0) {
+    await dexieDb.geral.bulkDelete(duplicateIds).catch(() => {});
+  }
 
   // Save to Supabase (somente se não for download da nuvem)
   if (!skipRemote && isSupabaseConfigured()) {
     try {
-      const payloads = normalized.map((r) => ({
+      const payloads = cleanList.map((r) => ({
         id: r.id,
         ordem: r.ordem,
         nome: r.nome,

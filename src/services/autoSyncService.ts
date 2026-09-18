@@ -119,8 +119,7 @@ export function broadcastTableMutation(
     }
   }
 
-  // 3. Agendar reconciliação automática suave após inserção local
-  scheduleDebouncedReconciliation(1500);
+  // 3. Mutação já salva localmente e propagada via broadcast; não dispara varredura completa desnecessária
 }
 
 if (typeof window !== "undefined") {
@@ -230,13 +229,24 @@ async function handleIncomingMutation(data: TableMutationEvent) {
   }
 }
 
+let lastReconciliationTime = 0;
+const RECONCILIATION_COOLDOWN_MS = 60000; // Mínimo de 60 segundos entre reconciliações automáticas
+
 /**
  * Reconcilia automaticamente todas as tabelas pendentes em segundo plano.
  * Elimina a necessidade de clicar manualmente tabela por tabela.
  */
 export async function reconcilePendingDifferences(forceFull: boolean = false): Promise<void> {
+  const now = Date.now();
   if (isReconciling || !isSupabaseConfigured()) return;
+
+  // Proteção contra looping e consumo de quota: respeita o cooldown a menos que o usuário clique explicitamente em Forçar
+  if (!forceFull && now - lastReconciliationTime < RECONCILIATION_COOLDOWN_MS) {
+    return;
+  }
+
   isReconciling = true;
+  lastReconciliationTime = now;
   updateState({ status: "syncing", lastMessage: "Verificando tabelas automáticas..." });
 
   try {
@@ -389,35 +399,16 @@ export function initAutoSyncService(): () => void {
     }
   }
 
-  // 3. Ouvinte global de alterações locais (disparado por notifyDataSync)
-  const handleLocalSyncEvent = (e: any) => {
-    const detail = e.detail;
-    if (detail && detail.type) {
-      // Se não for evento disparado por recepção remota, agenda upload automático
-      if (!detail.fromRemote) {
-        scheduleDebouncedReconciliation(1800);
-      }
+  // 3. Ouvintes passivos para reconciliação ao retomar conexão (com cooldown)
+  const handleFocus = () => {
+    if (typeof document === "undefined" || document.visibilityState === "visible") {
+      reconcilePendingDifferences(false).catch(() => {});
     }
   };
 
   if (typeof window !== "undefined") {
-    window.addEventListener("detran_sync_updated", handleLocalSyncEvent);
-
-    // Sincronizar ao voltar para a aba do navegador
-    const handleFocus = () => {
-      if (typeof document === "undefined" || document.visibilityState === "visible") {
-        reconcilePendingDifferences(false).catch(() => {});
-      }
-    };
     window.addEventListener("focus", handleFocus);
     window.addEventListener("online", handleFocus);
-
-    // Loop contínuo de verificação a cada 25 segundos
-    autoSyncTimer = setInterval(() => {
-      if (typeof document === "undefined" || document.visibilityState === "visible") {
-        reconcilePendingDifferences(false).catch(() => {});
-      }
-    }, 25000);
   }
 
   // Função de limpeza / descarte
@@ -439,7 +430,8 @@ export function initAutoSyncService(): () => void {
       autoSyncChannel = null;
     }
     if (typeof window !== "undefined") {
-      window.removeEventListener("detran_sync_updated", handleLocalSyncEvent);
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("online", handleFocus);
     }
   };
 }
