@@ -76,7 +76,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "declaracao" as NavTab, label: "Declaração", icon: FileCheck },
     { id: "acessos_cidadao" as NavTab, label: "Consulta Cidadão (App)", icon: Smartphone },
     { id: "relatorios" as NavTab, label: "Relatórios Setoriais", icon: BarChart3 },
-    { id: "responsaveis" as NavTab, label: "Responsáveis e CFCs", icon: Users },
+    { id: "responsaveis" as NavTab, label: "Responsáveis", icon: Users },
     { id: "mapeamento" as NavTab, label: "Mapeamento (A-Z)", icon: MapPin },
     { id: "historico" as NavTab, label: "Histórico de Movimento", icon: History },
     { id: "auditoria" as NavTab, label: "Auditoria do Sistema", icon: ShieldAlert },

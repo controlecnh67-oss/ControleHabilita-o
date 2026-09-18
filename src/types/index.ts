@@ -224,12 +224,12 @@ export const PERMISSOES_SISTEMA: PermissaoItem[] = [
     isTab: true
   },
 
-  // 6. Responsáveis e CFCs
+  // 6. Responsáveis
   { 
     id: "responsaveis:gerenciar", 
-    label: "Aba Responsáveis e CFCs", 
+    label: "Aba Responsáveis", 
     category: "Cadastros & Configurações", 
-    description: "Permite cadastrar, editar e desativar despachantes, CFCs e procuradores",
+    description: "Permite cadastrar, editar e gerenciar responsáveis (Titular, Despachante e Procurador)",
     isTab: true
   },
 
@@ -331,9 +331,12 @@ export function getPermissoesPadrao(perfil: PerfilUsuario): string[] {
   }
 }
 
+export type TipoResponsavel = "Titular" | "Despachante" | "Procurador";
+
 export interface Responsavel {
   id: string;
   nome: string;
+  tipo?: TipoResponsavel;
   cpf?: string;
   telefone?: string;
   registro?: string;
@@ -452,9 +455,20 @@ export const UsuarioSchema = z.object({
 });
 
 export const ResponsavelSchema = z.object({
-  nome: z.string().min(2, "Nome é obrigatório"),
-  cpf: z.string().optional(),
-  telefone: z.string().optional(),
+  nome: z.string().min(2, "Nome ou Razão Social é obrigatório"),
+  tipo: z.enum(["Titular", "Despachante", "Procurador"]).default("Despachante"),
+  cpf: z.string()
+    .min(1, "CPF ou CNPJ é obrigatório por padrão")
+    .refine((val) => {
+      const d = val.replace(/\D/g, "");
+      return d.length === 11 || d.length === 14;
+    }, "Informe um CPF válido (11 dígitos) ou CNPJ válido (14 dígitos)"),
+  telefone: z.string()
+    .min(1, "Telefone de contato é obrigatório por padrão")
+    .refine((val) => {
+      const d = val.replace(/\D/g, "");
+      return d.length >= 10 && d.length <= 11;
+    }, "Informe um telefone válido com DDD (10 ou 11 dígitos)"),
   registro: z.string().optional(),
   observacao: z.string().optional(),
   ativo: z.boolean().default(true),

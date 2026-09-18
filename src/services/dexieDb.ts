@@ -2,6 +2,27 @@ import Dexie, { Table } from "dexie";
 import { GeralCNH, Lote } from "../types";
 import { supabase, isSupabaseConfigured } from "./supabase";
 import { trackEgress } from "./egressMonitorService";
+import cnhSeedData from "../data/cnhSeedData.json";
+
+// Índices rápidos para recuperação de dados de semente (ground truth)
+const seedByOrdem = new Map<number, any>();
+const seedById = new Map<string, any>();
+const seedByNormNome = new Map<string, any>();
+
+function getNormalizedSeedName(name: string): string {
+  return String(name || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
+}
+
+for (const s of (cnhSeedData as any[])) {
+  if (s.ordem) seedByOrdem.set(Number(s.ordem), s);
+  if (s.id) seedById.set(String(s.id), s);
+  if (s.nome) seedByNormNome.set(getNormalizedSeedName(s.nome), s);
+}
 
 export interface SyncStats {
   status: "synced" | "syncing" | "error" | "offline";
@@ -125,29 +146,53 @@ export function normalizeCNHRecord(item: any): GeralCNH {
     dataMov = now;
   }
 
+  const seed = (item.ordem ? seedByOrdem.get(Number(item.ordem)) : undefined)
+    || (item.id ? seedById.get(String(item.id)) : undefined)
+    || (item.nome ? seedByNormNome.get(getNormalizedSeedName(item.nome)) : undefined);
+
+  const finalCpf = (item.cpf && String(item.cpf).trim() !== "")
+    ? String(item.cpf).trim()
+    : (seed && seed.cpf && String(seed.cpf).trim() !== "" ? String(seed.cpf).trim() : "");
+
+  const finalUsrId = (item.usuario_id && item.usuario_id !== "sistema")
+    ? item.usuario_id
+    : (seed && seed.usuario_id ? seed.usuario_id : (item.usuario_id || "sistema"));
+
+  const finalUsrNome = (item.usuario_nome && item.usuario_nome !== "Agente DETRAN" && item.usuario_nome !== "sistema" && item.usuario_nome !== "-")
+    ? item.usuario_nome
+    : (seed && seed.usuario_nome ? seed.usuario_nome : (item.usuario_nome || item.usuario || (situacao === "Entregue" ? "Agente DETRAN" : "-")));
+
+  const finalGaveta = (item.gaveta && String(item.gaveta).trim() !== "")
+    ? String(item.gaveta).trim()
+    : (seed && seed.gaveta ? String(seed.gaveta).trim() : "");
+
+  const finalReparticao = (item.reparticao && String(item.reparticao).trim() !== "")
+    ? String(item.reparticao).trim()
+    : (seed && seed.reparticao ? String(seed.reparticao).trim() : "");
+
   return {
-    id: item.id || `cnh-${item.ordem || Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-    ordem: Number(item.ordem) || 0,
+    id: item.id || (seed ? seed.id : undefined) || `cnh-${item.ordem || Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+    ordem: Number(item.ordem) || (seed ? Number(seed.ordem) : 0),
     memorando_id: item.memorando_id || undefined,
     candidato_id: item.candidato_id || undefined,
     pa: item.pa !== undefined && item.pa !== null ? String(item.pa).trim() : undefined,
-    nome: item.nome || "",
-    cpf: item.cpf || "",
-    telefone: item.telefone !== undefined && item.telefone !== null ? String(item.telefone) : "",
+    nome: item.nome || (seed ? seed.nome : ""),
+    cpf: finalCpf,
+    telefone: item.telefone !== undefined && item.telefone !== null ? String(item.telefone) : (seed && seed.telefone ? String(seed.telefone) : ""),
     notificado_whatsapp: item.notificado_whatsapp !== undefined ? Boolean(item.notificado_whatsapp) : undefined,
     notificado_at: item.notificado_at || undefined,
-    gaveta: item.gaveta || "",
-    reparticao: item.reparticao || "",
+    gaveta: finalGaveta,
+    reparticao: finalReparticao,
     situacao: situacao,
-    responsavel_id: item.responsavel_id || undefined,
-    responsavel_nome: item.responsavel_nome || item.responsavel || undefined,
+    responsavel_id: item.responsavel_id || (seed ? seed.responsavel_id : undefined),
+    responsavel_nome: item.responsavel_nome || item.responsavel || (seed ? seed.responsavel_nome : undefined),
     data_movimento: dataMov,
-    usuario_id: item.usuario_id || "sistema",
-    usuario_nome: item.usuario_nome || item.usuario || "Agente DETRAN",
+    usuario_id: finalUsrId,
+    usuario_nome: finalUsrNome,
     memorando_numero: item.memorando_numero || undefined,
     remessa: item.remessa || undefined,
-    observacao: item.observacao || item.obs || undefined,
-    created_at: item.created_at || dataMov || now,
+    observacao: item.observacao || item.obs || (seed ? seed.observacao : undefined),
+    created_at: item.created_at || dataMov || (seed ? seed.created_at : now),
     updated_at: item.updated_at || dataMov || item.created_at || now
   };
 }
@@ -509,21 +554,46 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
         updated_at: r.updated_at || now
       }));
 
-      // Send in chunks of 250
-      for (let i = 0; i < payloads.length; i += 250) {
-        const chunk = payloads.slice(i, i + 250);
+      // Send in chunks of 100
+      for (let i = 0; i < payloads.length; i += 100) {
+        const chunk = payloads.slice(i, i + 100);
         const { error } = await supabase.from("geral_cnhs").upsert(chunk, { onConflict: "id" });
         trackEgress("geral_cnhs", "BATCH_UPSERT", chunk, false, 0, `Lote de ${chunk.length} CNHs salvas`);
         if (error) {
-          console.warn("Aviso ao salvar lote no Supabase, tentando sem foreign keys:", error.message);
-          const safeChunk = chunk.map((item) => ({
-            ...item,
-            responsavel_id: null,
-            usuario_id: null,
-            memorando_id: null,
-            candidato_id: null
-          }));
-          await supabase.from("geral_cnhs").upsert(safeChunk, { onConflict: "id" });
+          console.warn("Aviso ao salvar lote no Supabase, garantindo integridade de responsáveis:", error.message);
+          // 1. Assegura que todos os responsáveis referenciados no lote existam na tabela responsaveis
+          const referencedResp = chunk.filter((c) => c.responsavel_id);
+          if (referencedResp.length > 0) {
+            try {
+              const respUpserts = Array.from(new Map(referencedResp.map((c) => [c.responsavel_id!, {
+                id: c.responsavel_id!,
+                nome: c.responsavel_nome || (c.responsavel_id === "a0000000-0000-0000-0000-000000000001" ? "PROPRIETÁRIO" : "RESPONSÁVEL"),
+                ativo: true
+              }])).values());
+              await supabase.from("responsaveis").upsert(respUpserts, { onConflict: "id" });
+              // Tenta novamente enviar o lote completo com FKs intactas
+              const retryFull = await supabase.from("geral_cnhs").upsert(chunk, { onConflict: "id" });
+              if (!retryFull.error) continue;
+            } catch (rErr) {
+              console.warn("Aviso ao auto-provisionar responsáveis:", rErr);
+            }
+          }
+
+          // 2. Se ainda falhar, faz upsert item a item para isolar apenas o registro com erro, NUNCA zerando responsavel_nome
+          for (const item of chunk) {
+            const single = await supabase.from("geral_cnhs").upsert([item], { onConflict: "id" });
+            if (single.error) {
+              // Em caso de falha estrita de chave estrangeira neste item específico, mantém responsavel_nome intacto
+              const safeItem = {
+                ...item,
+                responsavel_id: null,
+                usuario_id: null,
+                memorando_id: null,
+                candidato_id: null
+              };
+              await supabase.from("geral_cnhs").upsert([safeItem], { onConflict: "id" });
+            }
+          }
         }
       }
     } catch (err) {

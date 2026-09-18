@@ -35,6 +35,7 @@ import {
   syncBiDirectional,
   syncSingleTable,
   resetDemoData,
+  deduplicateResponsaveis,
   SyncStatusItem
 } from "../services/db";
 import { Modal } from "../components/ui/Modal";
@@ -545,6 +546,7 @@ USING (bucket_id = 'app_images');
   const [isImportingSpreadsheet, setIsImportingSpreadsheet] = useState<boolean>(false);
   const [syncingTableKey, setSyncingTableKey] = useState<string | null>(null);
   const [isAutoReconciling, setIsAutoReconciling] = useState<boolean>(false);
+  const [isDeduplicatingResp, setIsDeduplicatingResp] = useState<boolean>(false);
 
   const isConnected = isSupabaseConfigured();
   const supabaseUrl = creds.url;
@@ -748,6 +750,24 @@ USING (bucket_id = 'app_images');
     } finally {
       setSyncingTableKey(null);
       await loadStats();
+    }
+  };
+
+  const handleDeduplicateResponsaveisAction = async () => {
+    setIsDeduplicatingResp(true);
+    addLog("🧹 Iniciando varredura e unificação inteligente de responsáveis duplicados...");
+    try {
+      const result = await deduplicateResponsaveis((msg) => addLog(msg));
+      if (result.removedCount > 0) {
+        addLog(`✅ Unificação concluída com sucesso! ${result.removedCount} registros duplicados foram unificados. ${result.reassignedCnhsCount} CNHs foram realinhadas.`);
+      } else {
+        addLog("✨ Nenhum responsável duplicado foi encontrado. A base já está 100% normalizada.");
+      }
+      await loadStats();
+    } catch (err: any) {
+      addLog(`❌ Erro durante unificação de responsáveis: ${err.message}`);
+    } finally {
+      setIsDeduplicatingResp(false);
     }
   };
 
@@ -1286,6 +1306,17 @@ END $$;`;
                           <RefreshCw className={`w-3.5 h-3.5 ${syncingTableKey === item.key ? "animate-spin" : ""}`} />
                           <span>{syncingTableKey === item.key ? "Sincronizando..." : "Sincronizar"}</span>
                         </button>
+                        {item.key === "responsaveis" && (
+                          <button
+                            onClick={handleDeduplicateResponsaveisAction}
+                            disabled={isDeduplicatingResp}
+                            className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 rounded-lg text-[11px] font-semibold transition-all inline-flex items-center gap-1 border border-amber-200 dark:border-amber-800 cursor-pointer disabled:opacity-50"
+                            title="Unificar duplicatas de responsáveis e realinhar CNHs entregues"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 text-amber-600 dark:text-amber-400 ${isDeduplicatingResp ? "animate-spin" : ""}`} />
+                            <span>{isDeduplicatingResp ? "Unificando..." : "Unificar"}</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => handleExportTableExcel(item.key, item.label)}
                           className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 rounded-lg text-[11px] font-semibold transition-all inline-flex items-center gap-1 border border-emerald-200 dark:border-emerald-800 cursor-pointer"

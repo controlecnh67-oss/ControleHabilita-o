@@ -19,7 +19,7 @@ import {
   Lote,
   LoteInput
 } from "../types";
-import { getInitialChar, formatDateTime } from "../lib/utils";
+import { getInitialChar, formatDateTime, normalizeSearch } from "../lib/utils";
 import { supabase, isSupabaseConfigured } from "./supabase";
 import * as XLSX from "xlsx";
 import cnhSeedData from "../data/cnhSeedData.json";
@@ -96,7 +96,7 @@ function toValidUUID(id?: string | null): string | null {
 const SEED_USUARIOS: Usuario[] = [
   {
     id: "51f76373",
-    nome: "Kaio",
+    nome: "Kaio Lohandes Gomes de Melo",
     nome_curto: "Kaio",
     fone: "(67) 99111-2222",
     email: "kaio@detran.pa.gov.br",
@@ -111,7 +111,7 @@ const SEED_USUARIOS: Usuario[] = [
   },
   {
     id: "a6708d10",
-    nome: "Dabita",
+    nome: "Dabita de Oliveira Cardoso",
     nome_curto: "Dabita",
     fone: "(67) 99222-3333",
     email: "dabita@detran.pa.gov.br",
@@ -126,13 +126,13 @@ const SEED_USUARIOS: Usuario[] = [
   },
   {
     id: "ba8dff5e",
-    nome: "Lohandes",
-    nome_curto: "Lohandes",
+    nome: "Amerson Gonçalves Bento",
+    nome_curto: "Amerson",
     fone: "(67) 99333-4444",
-    email: "lohandes@detran.pa.gov.br",
+    email: "amerson@detran.pa.gov.br",
     funcao: "Agente de Trânsito",
     setor: "Atendimento CNH",
-    login: "lohandes",
+    login: "amerson",
     senha: "detran@123",
     permissoes: getPermissoesPadrao("Operador"),
     perfil: "Operador",
@@ -141,7 +141,7 @@ const SEED_USUARIOS: Usuario[] = [
   },
   {
     id: "33aa7d87",
-    nome: "Regis",
+    nome: "Regis Reginaldo",
     nome_curto: "Regis",
     fone: "(67) 99444-5555",
     email: "regis@detran.pa.gov.br",
@@ -156,7 +156,7 @@ const SEED_USUARIOS: Usuario[] = [
   },
   {
     id: "8bc1be25",
-    nome: "Ivanilde",
+    nome: "Ivanilde Souza",
     nome_curto: "Ivanilde",
     fone: "(67) 99555-6666",
     email: "ivanilde@detran.pa.gov.br",
@@ -262,37 +262,37 @@ const SEED_USUARIOS: Usuario[] = [
 ];
 
 const SEED_RESPONSAVEIS: Responsavel[] = [
-  { id: "e2335b1e", nome: "PROPRIETÁRIO(A)", registro: "1", cpf: "", telefone: "", observacao: "Registro padrão para entrega ao próprio titular da CNH", ativo: true, created_at: new Date(Date.now() - 60 * 86400000).toISOString() },
-  { id: "d2b9952a", nome: "FRANCINEY DESPACHANTE", registro: "1522", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "f4f347f1", nome: "CLEONAR DESPCHANTE", registro: "4567", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "39de40af", nome: "BRIZOLA AUTO ESCOLA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "384b2d8c", nome: "DARLAN DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "60c09b00", nome: "MARLISSON DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "33a90e11", nome: "NATIELE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "71396f81", nome: "JOÃO PULO R MARQUES", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "97d3ad5e", nome: "AUTO ESCOLA SANTANA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "fa41cde8", nome: "ARY DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "402ee83c", nome: "BAMBAM DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "b9bfae57", nome: "MARIA EUNICE DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "1f3d321e", nome: "MOISES DESPACAHNTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "5c4f215f", nome: "GILMAR DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "772dfcfd", nome: "NEILA DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "56899764", nome: "KAIO LOHANDES", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "bb95cdf5", nome: "WALTER DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "1b5ecd73", nome: "ODON DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "ee175176", nome: "TULA DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "fa1481d9", nome: "ESPOSA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "527d4682", nome: "ELIONAI DESPACHANTE", cpf: "67079733200", registro: "52", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "c1058daa", nome: "ANTONIO WELITON RODRIGUES", cpf: "51548496200", telefone: "XXXXXX", ativo: true, created_at: new Date().toISOString() },
-  { id: "efd23bd9", nome: "NICE DESPACHANTE", cpf: "5555555", telefone: "555555", ativo: true, created_at: new Date().toISOString() },
-  { id: "7345b45d", nome: "GUSTAVO HENRIQUE SENA", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "85415cb3", nome: "SOCORRO DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "2995c099", nome: "ADAO DA ROSA NETO", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "6fb3467c", nome: "EDCARLOS LOLO", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "68b5d3ce", nome: "FERNANDO DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "a84dc2b7", nome: "JULIMAR DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "6da4b403", nome: "ED CARLOS BRAGA DOS SANTOS", cpf: "57950040220", telefone: "", ativo: true, created_at: new Date().toISOString() },
-  { id: "b7d9a27f", nome: "ANA CRISTINA CIRINO", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "a0000000-0000-0000-0000-000000000001", nome: "PROPRIETÁRIO", tipo: "Titular", registro: "", cpf: "000.000.000-00", telefone: "(93) 00000-0000", observacao: "Registro padrão intransferível para entrega ao próprio titular da CNH", ativo: true, created_at: new Date(Date.now() - 60 * 86400000).toISOString() },
+  { id: "d2b9952a", nome: "FRANCINEY DESPACHANTE", tipo: "Despachante", registro: "1522", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "f4f347f1", nome: "CLEONAR DESPCHANTE", tipo: "Despachante", registro: "4567", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "39de40af", nome: "BRIZOLA AUTO ESCOLA", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "384b2d8c", nome: "DARLAN DESPACHANTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "60c09b00", nome: "MARLISSON DESPACHANTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "33a90e11", nome: "NATIELE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "71396f81", nome: "JOÃO PULO R MARQUES", tipo: "Procurador", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "97d3ad5e", nome: "AUTO ESCOLA SANTANA", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "fa41cde8", nome: "ARY DESPACHANTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "402ee83c", nome: "BAMBAM DESPACHANTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "b9bfae57", nome: "MARIA EUNICE DESPACHANTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "1f3d321e", nome: "MOISES DESPACAHNTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "5c4f215f", nome: "GILMAR DESPACHANTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "772dfcfd", nome: "NEILA DESPACHANTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "56899764", nome: "KAIO LOHANDES", tipo: "Procurador", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "bb95cdf5", nome: "WALTER DESPACHANTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "1b5ecd73", nome: "ODON DESPACHANTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "ee175176", nome: "TULA DESPACHANTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "fa1481d9", nome: "ESPOSA", tipo: "Procurador", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "527d4682", nome: "ELIONAI DESPACHANTE", tipo: "Despachante", cpf: "67079733200", registro: "52", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "c1058daa", nome: "ANTONIO WELITON RODRIGUES", tipo: "Procurador", cpf: "51548496200", telefone: "XXXXXX", ativo: true, created_at: new Date().toISOString() },
+  { id: "efd23bd9", nome: "NICE DESPACHANTE", tipo: "Despachante", cpf: "5555555", telefone: "555555", ativo: true, created_at: new Date().toISOString() },
+  { id: "7345b45d", nome: "GUSTAVO HENRIQUE SENA", tipo: "Procurador", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "85415cb3", nome: "SOCORRO DESPACHANTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "2995c099", nome: "ADAO DA ROSA NETO", tipo: "Procurador", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "6fb3467c", nome: "EDCARLOS LOLO", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "68b5d3ce", nome: "FERNANDO DESPACHANTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "a84dc2b7", nome: "JULIMAR DESPACHANTE", tipo: "Despachante", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "6da4b403", nome: "ED CARLOS BRAGA DOS SANTOS", tipo: "Procurador", cpf: "57950040220", telefone: "", ativo: true, created_at: new Date().toISOString() },
+  { id: "b7d9a27f", nome: "ANA CRISTINA CIRINO", tipo: "Procurador", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
   { id: "9a185a18", nome: "JACKSON DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
   { id: "54a9108e", nome: "DIEGO DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
   { id: "9387e9c9", nome: "ADENIL DESPACHANTE", cpf: "", telefone: "", ativo: true, created_at: new Date().toISOString() },
@@ -1258,21 +1258,812 @@ export async function restaurarCredenciaisOficiais(): Promise<{ count: number }>
 // ============================================================================
 // MÓDULO DE RESPONSÁVEIS
 // ============================================================================
+// RESPONSÁVEIS - DEDUPLICAÇÃO, VALIDAÇÃO E CRUD
+// ============================================================================
+
+export const CANONICAL_PROPRIETARIO_ID = "a0000000-0000-0000-0000-000000000001";
+
+export function isProprietarioRecord(r?: { id?: string; nome?: string; cpf?: string } | null): boolean {
+  if (!r) return false;
+  const id = r.id || "";
+  const nomeNorm = (r.nome || "").toLowerCase().trim();
+  const cpfDigits = (r.cpf || "").replace(/\D/g, "");
+  return (
+    id === CANONICAL_PROPRIETARIO_ID ||
+    id === "e2335b1e" ||
+    nomeNorm === "proprietario" ||
+    nomeNorm === "proprietário" ||
+    nomeNorm === "proprietario(a)" ||
+    nomeNorm === "proprietário(a)" ||
+    r.cpf === "000.000.000-00" ||
+    cpfDigits === "00000000000" ||
+    cpfDigits === "00"
+  );
+}
+
+export function deduplicateResponsaveisList(list: Responsavel[]): {
+  cleaned: Responsavel[];
+  duplicateIds: string[];
+  idMap: Map<string, string>;
+} {
+  const duplicateIds: string[] = [];
+  const idMap = new Map<string, string>();
+
+  const proprietarioRecords = list.filter(isProprietarioRecord);
+  const otherRecords = list.filter((r) => !isProprietarioRecord(r));
+
+  // 1. Unificar todos os registros de Proprietário em um único registro canônico
+  const canonicalProprietario: Responsavel = {
+    id: CANONICAL_PROPRIETARIO_ID,
+    nome: "PROPRIETÁRIO",
+    tipo: "Titular",
+    registro: "",
+    cpf: "000.000.000-00",
+    telefone: "(93) 00000-0000",
+    observacao: "Registro padrão intransferível para entrega ao próprio titular da CNH",
+    ativo: true,
+    created_at: proprietarioRecords[0]?.created_at || new Date(Date.now() - 60 * 86400000).toISOString()
+  };
+
+  proprietarioRecords.forEach((r) => {
+    if (r.id !== CANONICAL_PROPRIETARIO_ID) {
+      duplicateIds.push(r.id);
+      idMap.set(r.id, CANONICAL_PROPRIETARIO_ID);
+    }
+  });
+  idMap.set("e2335b1e", CANONICAL_PROPRIETARIO_ID);
+
+  // 2. Deduplicar e mesclar os demais responsáveis por Nome, CPF e Telefone (nomes sempre em caixa alta)
+  const cleanedOthers: Responsavel[] = [];
+  const seenCpfs = new Map<string, Responsavel>();
+  const seenTels = new Map<string, Responsavel>();
+  const seenNomes = new Map<string, Responsavel>();
+
+  for (const item of otherRecords) {
+    const uppercaseNome = (item.nome || "").trim().toUpperCase();
+    const cleanCpf = (item.cpf || "").replace(/\D/g, "");
+    const cleanTel = (item.telefone || "").replace(/\D/g, "");
+    const cleanNome = normalizeSearch(uppercaseNome);
+
+    // Infere ou padroniza o tipo
+    let tipo: "Titular" | "Despachante" | "Procurador" = item.tipo || "Despachante";
+    if (!item.tipo) {
+      if (uppercaseNome.includes("PROCURADOR") || uppercaseNome.includes("PROCURAÇÃO") || uppercaseNome.includes("ESPOSA")) {
+        tipo = "Procurador";
+      } else {
+        tipo = "Despachante";
+      }
+    }
+
+    item.nome = uppercaseNome;
+    item.tipo = tipo;
+
+    const masterByNome = cleanNome ? seenNomes.get(cleanNome) : undefined;
+    const masterByCpf = cleanCpf && (cleanCpf.length === 11 || cleanCpf.length === 14) ? seenCpfs.get(cleanCpf) : undefined;
+    const masterByTel = cleanTel && cleanTel.length >= 10 ? seenTels.get(cleanTel) : undefined;
+
+    const master = masterByNome || masterByCpf || masterByTel;
+
+    if (master) {
+      duplicateIds.push(item.id);
+      idMap.set(item.id, master.id);
+      if (!master.tipo && item.tipo) master.tipo = item.tipo;
+      if (!master.observacao && item.observacao) master.observacao = item.observacao;
+      if ((!master.telefone || master.telefone.length < 8) && item.telefone) master.telefone = item.telefone;
+      if ((!master.cpf || master.cpf.length < 11) && item.cpf) master.cpf = item.cpf;
+    } else {
+      if (cleanCpf && (cleanCpf.length === 11 || cleanCpf.length === 14)) seenCpfs.set(cleanCpf, item);
+      if (cleanTel && cleanTel.length >= 10) seenTels.set(cleanTel, item);
+      if (cleanNome) seenNomes.set(cleanNome, item);
+      cleanedOthers.push(item);
+    }
+  }
+
+  const cleaned = [canonicalProprietario, ...cleanedOthers];
+  return { cleaned, duplicateIds, idMap };
+}
+
+export const KNOWN_DESPACHANTE_ORDERS = new Map<number, { id: string; nome: string }>([
+  [748, { id: "bb95cdf5", nome: "WALTER DESPACHANTE" }],
+  [757, { id: "527d4682", nome: "ELIONAI DESPACHANTE" }],
+  [762, { id: "5c4f215f", nome: "GILMAR DESPACHANTE" }],
+  [769, { id: "ee175176", nome: "TULA DESPACHANTE" }],
+  [770, { id: "39de40af", nome: "BRIZOLA AUTO ESCOLA" }],
+  [782, { id: "0db81080", nome: "REGIS" }],
+  [786, { id: "1f3d321e", nome: "MOISES DESPACAHNTE" }],
+  [791, { id: "ee175176", nome: "TULA DESPACHANTE" }],
+  [795, { id: "fa41cde8", nome: "ARY DESPACHANTE" }],
+  [804, { id: "0db81080", nome: "REGIS" }],
+  [811, { id: "fa41cde8", nome: "ARY DESPACHANTE" }],
+  [813, { id: "ee175176", nome: "TULA DESPACHANTE" }],
+  [817, { id: "868e33c3", nome: "WANDERLEIA DE SENA" }],
+  [1356, { id: "ee175176", nome: "TULA DESPACHANTE" }],
+  [1384, { id: "402ee83c", nome: "BAMBAM DESPACHANTE" }],
+  [1387, { id: "fa1481d9", nome: "ESPOSA" }],
+  [1424, { id: "2995c099", nome: "ADAO DA ROSA NETO" }],
+  [1431, { id: "402ee83c", nome: "BAMBAM DESPACHANTE" }],
+  [1442, { id: "b1597c81", nome: "PIERRE DESPACHANTE" }],
+  [1449, { id: "ee175176", nome: "TULA DESPACHANTE" }],
+  [1452, { id: "ee175176", nome: "TULA DESPACHANTE" }]
+]);
+
+export interface DuplicateGroupPreview {
+  nome: string;
+  master: Responsavel;
+  duplicates: Responsavel[];
+  reason: string;
+  affectedCnhsCount: number;
+}
+
+export interface MergePreviewData {
+  totalResponsaveis: number;
+  remainingCount: number;
+  duplicateGroups: DuplicateGroupPreview[];
+  totalDuplicates: number;
+  totalEntregues: number;
+  cnhsWithDespachante: number;
+  cnhsWithProprietario: number;
+  isSupabaseConfigured: boolean;
+}
+
+/**
+ * Realiza uma simulação/diagnóstico seguro sem alterar os dados, preparando os dados para o modal de checagem
+ */
+export async function previewMergeResponsaveis(): Promise<MergePreviewData> {
+  const currentList = await getResponsaveis();
+  const cnhs = await getLocalGeralCNHs();
+  const totalEntregues = cnhs.filter((c) => c.situacao === "Entregue").length;
+
+  const { cleaned, duplicateIds, idMap } = deduplicateResponsaveisList(currentList);
+
+  const groupsByMasterId = new Map<string, DuplicateGroupPreview>();
+
+  cleaned.forEach((master) => {
+    groupsByMasterId.set(master.id, {
+      nome: master.nome,
+      master,
+      duplicates: [],
+      reason: isProprietarioRecord(master) ? "Titular / Proprietário Padrão" : "Nome / CPF / Telefone Idênticos",
+      affectedCnhsCount: 0
+    });
+  });
+
+  currentList.forEach((r) => {
+    if (duplicateIds.includes(r.id)) {
+      const masterId = idMap.get(r.id);
+      if (masterId && groupsByMasterId.has(masterId)) {
+        groupsByMasterId.get(masterId)!.duplicates.push(r);
+      }
+    }
+  });
+
+  cnhs.forEach((c) => {
+    if (c.responsavel_id) {
+      const canonical = idMap.get(c.responsavel_id) || c.responsavel_id;
+      if (groupsByMasterId.has(canonical)) {
+        groupsByMasterId.get(canonical)!.affectedCnhsCount++;
+      }
+    }
+  });
+
+  const duplicateGroups = Array.from(groupsByMasterId.values()).filter((g) => g.duplicates.length > 0);
+
+  let cnhsWithDespachante = 0;
+  let cnhsWithProprietario = 0;
+  cnhs.forEach((c) => {
+    if (c.situacao === "Entregue") {
+      const rid = c.responsavel_id ? (idMap.get(c.responsavel_id) || c.responsavel_id) : "";
+      if (rid && rid !== CANONICAL_PROPRIETARIO_ID && rid !== "e2335b1e") {
+        cnhsWithDespachante++;
+      } else {
+        cnhsWithProprietario++;
+      }
+    }
+  });
+
+  return {
+    totalResponsaveis: currentList.length,
+    remainingCount: cleaned.length,
+    duplicateGroups,
+    totalDuplicates: duplicateIds.length,
+    totalEntregues,
+    cnhsWithDespachante,
+    cnhsWithProprietario,
+    isSupabaseConfigured: isSupabaseConfigured()
+  };
+}
+
+/**
+ * Restaura e sincroniza integralmente as informações de gaveta, repartição, responsavel_id e responsavel_nome no banco de dados e localmente
+ */
+export async function restoreResponsaveisInfoAndDatabase(
+  onLog?: (msg: string) => void
+): Promise<{
+  restoredCnhsCount: number;
+  proprietarioCnhsCount: number;
+  despachanteCnhsCount: number;
+  responsaveisCount: number;
+  gavetasReparadasCount: number;
+  cpfsReparadosCount: number;
+  usuariosReparadosCount: number;
+  supabaseSynced: boolean;
+}> {
+  const log = (m: string) => {
+    if (onLog) onLog(m);
+    console.log(`[RESTORE_DB] ${m}`);
+  };
+
+  log("Iniciando restauração integral dos dados anteriores: Gavetas, Repartições, Responsáveis e vínculos de CNHs...");
+
+  // 1. Assegura lista canônica e completa de responsáveis (incorporando todos os registros originais da semente)
+  let rawResp: Responsavel[] = [];
+  if (isSupabaseConfigured()) {
+    try {
+      const supResp = await fetchAllRowsFromSupabase<Responsavel>("responsaveis", 1000, "nome", true);
+      if (supResp && supResp.length > 0) rawResp = supResp;
+    } catch {}
+  }
+  if (rawResp.length === 0) {
+    rawResp = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+  }
+
+  // Mescla responsáveis da semente que possam ter sido excluídos acidentalmente
+  const existingRespIds = new Set(rawResp.map((r) => r.id));
+  const existingRespNames = new Set(rawResp.map((r) => normalizeSearch(r.nome)));
+  for (const s of SEED_RESPONSAVEIS) {
+    if (!existingRespIds.has(s.id) && !existingRespNames.has(normalizeSearch(s.nome))) {
+      rawResp.push(s);
+      existingRespIds.add(s.id);
+      existingRespNames.add(normalizeSearch(s.nome));
+    }
+  }
+
+  const { cleaned, idMap } = deduplicateResponsaveisList(rawResp);
+  // Garante que o Proprietário canônico está na lista
+  if (!cleaned.some((r) => r.id === CANONICAL_PROPRIETARIO_ID)) {
+    cleaned.unshift({
+      id: CANONICAL_PROPRIETARIO_ID,
+      nome: "PROPRIETÁRIO",
+      cpf: "000.000.000-00",
+      tipo: "Titular",
+      ativo: true,
+      created_at: "2024-01-01T00:00:00Z"
+    });
+  }
+
+  // Mapeamentos rápidos de responsáveis
+  const respById = new Map<string, Responsavel>();
+  const respByNorm = new Map<string, Responsavel>();
+  cleaned.forEach((r) => {
+    r.nome = r.nome.trim().toUpperCase();
+    respById.set(r.id, r);
+    const norm = normalizeSearch(r.nome);
+    if (norm) respByNorm.set(norm, r);
+  });
+
+  saveStoredList("responsaveis", cleaned);
+
+  // 2. Se Supabase estiver ativo, salva os responsáveis mestres PRIMEIRO para evitar violações de chave estrangeira
+  let supabaseSynced = false;
+  if (isSupabaseConfigured()) {
+    try {
+      log("Gravando responsáveis mestres no banco de dados Supabase...");
+      const respPayloads = cleaned.map((r) => ({
+        id: r.id,
+        nome: r.nome,
+        cpf: r.cpf || null,
+        telefone: r.telefone || null,
+        tipo: r.tipo || "Despachante",
+        ativo: r.ativo !== false,
+        created_at: r.created_at || new Date().toISOString()
+      }));
+      for (let i = 0; i < respPayloads.length; i += 100) {
+        await supabase.from("responsaveis").upsert(respPayloads.slice(i, i + 100), { onConflict: "id" });
+      }
+      log(`Responsáveis mestres gravados com sucesso no Supabase (${cleaned.length} registros).`);
+    } catch (sErr) {
+      console.warn("Aviso ao sincronizar responsáveis no Supabase:", sErr);
+    }
+  }
+
+  // 3. Lê CNHs e restaura integralmente Gaveta, Repartição, CPF, Usuário, Responsável e Vínculos
+  log("Restaurando Gavetas, Repartições, CPFs, Usuários e Responsáveis em todas as CNHs...");
+  const currentLocalCnhs = await getLocalGeralCNHs();
+  const seedByOrdem = new Map(SEED_GERAL.map((s) => [s.ordem, s]));
+  const seedById = new Map(SEED_GERAL.map((s) => [s.id, s]));
+  const seedByNormNome = new Map(SEED_GERAL.map((s) => [normalizeSearch(s.nome), s]));
+
+  // Mapa combinado de CNHs garantindo que todas as CNHs existam sem perda de campos
+  const unifiedCnhsMap = new Map<number, GeralCNH>();
+  
+  // Primeiro coloca os dados da semente
+  for (const s of SEED_GERAL) {
+    unifiedCnhsMap.set(s.ordem, { ...s });
+  }
+
+  // Depois sobrepõe com registros locais existentes (preservando rigorosamente campos não-nulos)
+  for (const c of currentLocalCnhs) {
+    if (c.ordem) {
+      const existing = unifiedCnhsMap.get(c.ordem);
+      if (existing) {
+        const preservedCpf = (c.cpf && c.cpf.trim() !== "") ? c.cpf : existing.cpf;
+        const preservedUsrId = (c.usuario_id && c.usuario_id !== "sistema") ? c.usuario_id : existing.usuario_id;
+        const preservedUsrNome = (c.usuario_nome && c.usuario_nome !== "Agente DETRAN" && c.usuario_nome !== "sistema" && c.usuario_nome !== "-")
+          ? c.usuario_nome
+          : existing.usuario_nome;
+        const preservedGaveta = (c.gaveta && c.gaveta.trim() !== "") ? c.gaveta : existing.gaveta;
+        const preservedReparticao = (c.reparticao && c.reparticao.trim() !== "") ? c.reparticao : existing.reparticao;
+
+        unifiedCnhsMap.set(c.ordem, {
+          ...existing,
+          ...c,
+          cpf: preservedCpf,
+          usuario_id: preservedUsrId,
+          usuario_nome: preservedUsrNome,
+          gaveta: preservedGaveta,
+          reparticao: preservedReparticao
+        });
+      } else {
+        unifiedCnhsMap.set(c.ordem, c);
+      }
+    }
+  }
+
+  let restoredCnhsCount = 0;
+  let gavetasReparadasCount = 0;
+  let cpfsReparadosCount = 0;
+  let usuariosReparadosCount = 0;
+  let proprietarioCnhsCount = 0;
+  let despachanteCnhsCount = 0;
+  const now = new Date().toISOString();
+
+  const cnhsToSave: GeralCNH[] = [];
+
+  for (const c of Array.from(unifiedCnhsMap.values())) {
+    const seed = seedByOrdem.get(c.ordem) || (c.id ? seedById.get(c.id) : undefined) || (c.nome ? seedByNormNome.get(normalizeSearch(c.nome)) : undefined);
+    let modified = false;
+
+    // --- RESTAURAÇÃO DE CPF ---
+    const currentCpf = c.cpf && typeof c.cpf === "string" ? c.cpf.trim() : "";
+    let targetCpf = currentCpf;
+    if (!targetCpf && seed && seed.cpf && typeof seed.cpf === "string" && seed.cpf.trim() !== "") {
+      targetCpf = seed.cpf.trim();
+    }
+    if (c.cpf !== targetCpf) {
+      c.cpf = targetCpf;
+      cpfsReparadosCount++;
+      modified = true;
+    }
+
+    // --- RESTAURAÇÃO DE USUÁRIO / OPERADOR DETRAN ---
+    const isPlaceholderUsrNome = !c.usuario_nome || c.usuario_nome === "Agente DETRAN" || c.usuario_nome === "sistema" || c.usuario_nome === "-";
+    const isPlaceholderUsrId = !c.usuario_id || c.usuario_id === "sistema";
+
+    let targetUsrId = isPlaceholderUsrId ? (seed && seed.usuario_id ? seed.usuario_id : c.usuario_id) : c.usuario_id;
+    let targetUsrNome = isPlaceholderUsrNome ? (seed && seed.usuario_nome ? seed.usuario_nome : c.usuario_nome) : c.usuario_nome;
+
+    if (c.usuario_id !== targetUsrId || c.usuario_nome !== targetUsrNome) {
+      if (targetUsrNome && targetUsrNome !== c.usuario_nome) {
+        usuariosReparadosCount++;
+      }
+      c.usuario_id = targetUsrId;
+      c.usuario_nome = targetUsrNome;
+      modified = true;
+    }
+
+    // --- RESTAURAÇÃO DE GAVETA E REPARTIÇÃO ---
+    let targetGaveta = (c.gaveta && c.gaveta.trim() !== "") ? c.gaveta : (seed && seed.gaveta ? seed.gaveta : "");
+    let targetReparticao = (c.reparticao && c.reparticao.trim() !== "") ? c.reparticao : (seed && seed.reparticao ? seed.reparticao : "");
+
+    // Se a situação for "Recebida" e ainda estiver sem gaveta ou repartição, resolve pelo mapeamento físico
+    if (c.situacao === "Recebida" && (!targetGaveta || !targetReparticao)) {
+      const char = getInitialChar(c.nome || (seed ? seed.nome : ""));
+      const m = SEED_MAPEAMENTO.find((item) => item.inicial.toUpperCase() === char && item.ativo !== false);
+      if (m) {
+        targetGaveta = targetGaveta || m.gaveta;
+        targetReparticao = targetReparticao || m.reparticao;
+      }
+    }
+
+    if (c.gaveta !== targetGaveta || c.reparticao !== targetReparticao) {
+      c.gaveta = targetGaveta;
+      c.reparticao = targetReparticao;
+      gavetasReparadasCount++;
+      modified = true;
+    }
+
+    // --- RESTAURAÇÃO DE RESPONSÁVEL (RESPONSAVEL_ID / RESPONSAVEL_NOME) ---
+    if (c.situacao === "Entregue") {
+      let targetId: string = CANONICAL_PROPRIETARIO_ID;
+      let targetNome: string = "PROPRIETÁRIO";
+
+      // Verifica se é uma das ordens conhecidas de despachante/procurador
+      if (KNOWN_DESPACHANTE_ORDERS.has(c.ordem)) {
+        const k = KNOWN_DESPACHANTE_ORDERS.get(c.ordem)!;
+        targetId = k.id;
+        targetNome = k.nome;
+      } else if (seed && seed.responsavel_id && seed.responsavel_id !== CANONICAL_PROPRIETARIO_ID && seed.responsavel_id !== "e2335b1e") {
+        targetId = seed.responsavel_id;
+        targetNome = seed.responsavel_nome || "RESPONSÁVEL";
+      } else if (seed && seed.responsavel_nome && !seed.responsavel_nome.toLowerCase().includes("propriet")) {
+        targetNome = seed.responsavel_nome.toUpperCase();
+        const normSeedR = normalizeSearch(targetNome);
+        const matchSeed = respByNorm.get(normSeedR);
+        if (matchSeed) targetId = matchSeed.id;
+      } else if (c.responsavel_id && idMap.has(c.responsavel_id)) {
+        const mappedId = idMap.get(c.responsavel_id)!;
+        const master = respById.get(mappedId);
+        targetId = mappedId;
+        targetNome = master ? master.nome : (c.responsavel_nome || "RESPONSÁVEL");
+      } else if (c.responsavel_id && respById.has(c.responsavel_id) && c.responsavel_id !== CANONICAL_PROPRIETARIO_ID && c.responsavel_id !== "e2335b1e") {
+        const master = respById.get(c.responsavel_id)!;
+        targetId = master.id;
+        targetNome = master.nome;
+      } else if (c.responsavel_nome && normalizeSearch(c.responsavel_nome)) {
+        const normR = normalizeSearch(c.responsavel_nome);
+        const matchByName = respByNorm.get(normR);
+        if (matchByName && matchByName.id !== CANONICAL_PROPRIETARIO_ID) {
+          targetId = matchByName.id;
+          targetNome = matchByName.nome;
+        } else {
+          targetId = CANONICAL_PROPRIETARIO_ID;
+          targetNome = "PROPRIETÁRIO";
+        }
+      }
+
+      if (targetId === CANONICAL_PROPRIETARIO_ID) {
+        proprietarioCnhsCount++;
+      } else {
+        despachanteCnhsCount++;
+      }
+
+      if (c.responsavel_id !== targetId || c.responsavel_nome !== targetNome) {
+        c.responsavel_id = targetId;
+        c.responsavel_nome = targetNome;
+        modified = true;
+      }
+    } else {
+      // Para CNHs Não-Entregues (Recebidas, Remetidas, Pendentes):
+      // Se a semente original continha um responsável específico, restaura
+      if (seed && (seed.responsavel_id || seed.responsavel_nome)) {
+        if (c.responsavel_id !== seed.responsavel_id || c.responsavel_nome !== seed.responsavel_nome) {
+          c.responsavel_id = seed.responsavel_id || null;
+          c.responsavel_nome = seed.responsavel_nome || null;
+          modified = true;
+        }
+      }
+    }
+
+    if (modified) {
+      c.updated_at = now;
+      restoredCnhsCount++;
+    }
+
+    cnhsToSave.push(c);
+  }
+
+  // 4. Salva localmente em Dexie e localStorage
+  await dexieDb.geral.bulkPut(cnhsToSave);
+  saveStoredList("geral", cnhsToSave);
+  notifyDataSync("geral");
+  notifyDataSync("responsaveis");
+
+  // 5. Salva no Supabase geral_cnhs com todos os campos completos
+  if (isSupabaseConfigured()) {
+    log("Gravando CNHs com Gavetas, Repartições, CPFs, Usuários e Responsáveis no banco de dados Supabase...");
+    try {
+      const payloads = cnhsToSave.map((r) => ({
+        id: r.id,
+        ordem: r.ordem,
+        nome: r.nome,
+        cpf: r.cpf,
+        telefone: r.telefone || null,
+        gaveta: r.gaveta || "",
+        reparticao: r.reparticao || "",
+        situacao: r.situacao,
+        responsavel_id: r.responsavel_id || null,
+        responsavel_nome: r.responsavel_nome || null,
+        data_movimento: r.data_movimento || null,
+        usuario_id: r.usuario_id || null,
+        usuario_nome: r.usuario_nome || null,
+        memorando_numero: r.memorando_numero || null,
+        remessa: r.remessa || null,
+        observacao: r.observacao || null,
+        created_at: r.created_at,
+        updated_at: r.updated_at || now
+      }));
+
+      for (let i = 0; i < payloads.length; i += 100) {
+        const chunk = payloads.slice(i, i + 100);
+        const { error } = await supabase.from("geral_cnhs").upsert(chunk, { onConflict: "id" });
+        if (error) {
+          console.warn("Aviso ao salvar lote restaurado:", error.message);
+          for (const item of chunk) {
+            const single = await supabase.from("geral_cnhs").upsert([item], { onConflict: "id" });
+            if (single.error) {
+              const safeItem = { ...item, responsavel_id: null };
+              await supabase.from("geral_cnhs").upsert([safeItem], { onConflict: "id" });
+            }
+          }
+        }
+      }
+      supabaseSynced = true;
+      log("Gravação de CNHs no Supabase concluída com sucesso!");
+    } catch (supErr) {
+      console.warn("Erro ao sincronizar geral_cnhs no Supabase durante restauração:", supErr);
+    }
+  }
+
+  log(`Restauração concluída: ${cpfsReparadosCount} CPFs, ${usuariosReparadosCount} usuários e ${gavetasReparadasCount} Gavetas/Repartições recuperadas, ${restoredCnhsCount} CNHs atualizadas.`);
+
+  return {
+    restoredCnhsCount,
+    proprietarioCnhsCount,
+    despachanteCnhsCount,
+    responsaveisCount: cleaned.length,
+    gavetasReparadasCount,
+    cpfsReparadosCount,
+    usuariosReparadosCount,
+    supabaseSynced
+  };
+}
+
+let isDeduplicatingInProgress = false;
+
+export async function deduplicateResponsaveis(
+  onLog?: (msg: string) => void
+): Promise<{
+  removedCount: number;
+  remainingCount: number;
+  duplicateIds: string[];
+  reassignedCnhsCount: number;
+}> {
+  if (isDeduplicatingInProgress) {
+    return { removedCount: 0, remainingCount: 0, duplicateIds: [], reassignedCnhsCount: 0 };
+  }
+  isDeduplicatingInProgress = true;
+
+  const log = (m: string) => {
+    if (onLog) onLog(m);
+  };
+
+  try {
+    log("Iniciando varredura e unificação segura de responsáveis...");
+    let rawList: Responsavel[] = [];
+    if (isSupabaseConfigured()) {
+      try {
+        const data = await fetchAllRowsFromSupabase<Responsavel>("responsaveis", 1000, "nome", true);
+        if (data && Array.isArray(data)) rawList = data;
+      } catch (err) {
+        console.warn("Aviso ao buscar responsáveis no Supabase para deduplicação:", err);
+      }
+    }
+    if (rawList.length === 0) {
+      rawList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+    }
+
+    const { cleaned, duplicateIds, idMap } = deduplicateResponsaveisList(rawList);
+
+    // Cria mapa de busca rápida por nome e ID dos responsáveis unificados
+    const respByNormName = new Map<string, Responsavel>();
+    const respById = new Map<string, Responsavel>();
+    cleaned.forEach((r) => {
+      r.nome = r.nome.trim().toUpperCase();
+      respById.set(r.id, r);
+      const norm = normalizeSearch(r.nome);
+      if (norm) respByNormName.set(norm, r);
+    });
+
+    // 1. Salva localmente a lista limpa
+    saveStoredList("responsaveis", cleaned);
+
+    // PASSO CRÍTICO A: Salva primeiro os responsáveis mestres no Supabase
+    // para que qualquer CNH possa apontar para eles sem violação de chave estrangeira
+    if (isSupabaseConfigured()) {
+      try {
+        log("Sincronizando responsáveis mestres no banco de dados Supabase...");
+        await supabase.from("responsaveis").upsert(cleaned, { onConflict: "id" });
+      } catch (supErr: any) {
+        console.warn("Erro ao sincronizar responsáveis mestres no Supabase:", supErr);
+      }
+    }
+
+    // 2. Realinha as CNHs entregues no balcão garantindo preservação de responsavel_id, responsavel_nome, CPF e Usuário
+    let reassignedCnhsCount = 0;
+    const cnhs = await getLocalGeralCNHs();
+    const updatedCnhs: GeralCNH[] = [];
+
+    const seedByOrdem = new Map(SEED_GERAL.map((s) => [s.ordem, s]));
+    const seedById = new Map(SEED_GERAL.map((s) => [s.id, s]));
+    const seedByNormNome = new Map(SEED_GERAL.map((s) => [normalizeSearch(s.nome), s]));
+
+    for (const c of cnhs) {
+      const seed = seedByOrdem.get(c.ordem) || (c.id ? seedById.get(c.id) : undefined) || (c.nome ? seedByNormNome.get(normalizeSearch(c.nome)) : undefined);
+      let modified = false;
+
+      // PRESERVAÇÃO TOTAL: Assegura que CPF, Usuário, Gaveta e Repartição NUNCA sejam perdidos
+      if ((!c.cpf || c.cpf.trim() === "") && seed && seed.cpf && seed.cpf.trim() !== "") {
+        c.cpf = seed.cpf.trim();
+        modified = true;
+      }
+      if ((!c.usuario_nome || c.usuario_nome === "Agente DETRAN" || c.usuario_nome === "sistema" || c.usuario_nome === "-") && seed && seed.usuario_nome) {
+        c.usuario_nome = seed.usuario_nome;
+        c.usuario_id = seed.usuario_id || c.usuario_id;
+        modified = true;
+      }
+      if ((!c.gaveta || c.gaveta.trim() === "") && seed && seed.gaveta) {
+        c.gaveta = seed.gaveta;
+        modified = true;
+      }
+      if ((!c.reparticao || c.reparticao.trim() === "") && seed && seed.reparticao) {
+        c.reparticao = seed.reparticao;
+        modified = true;
+      }
+
+      if (c.situacao !== "Entregue") {
+        if (modified) {
+          updatedCnhs.push(c);
+        }
+        continue;
+      }
+
+      // Ordem específica de despachante
+      if (KNOWN_DESPACHANTE_ORDERS.has(c.ordem)) {
+        const k = KNOWN_DESPACHANTE_ORDERS.get(c.ordem)!;
+        if (c.responsavel_id !== k.id || c.responsavel_nome !== k.nome) {
+          c.responsavel_id = k.id;
+          c.responsavel_nome = k.nome;
+          modified = true;
+        }
+      } else if (c.responsavel_id && idMap.has(c.responsavel_id)) {
+        // CNH apontando para ID duplicado que foi unificado
+        const canonicalId = idMap.get(c.responsavel_id)!;
+        c.responsavel_id = canonicalId;
+        const masterResp = respById.get(canonicalId);
+        if (masterResp) c.responsavel_nome = masterResp.nome;
+        modified = true;
+      } else if (
+        c.responsavel_id &&
+        respById.has(c.responsavel_id) &&
+        c.responsavel_id !== CANONICAL_PROPRIETARIO_ID &&
+        c.responsavel_id !== "e2335b1e"
+      ) {
+        const matchedById = respById.get(c.responsavel_id)!;
+        if (c.responsavel_nome !== matchedById.nome) {
+          c.responsavel_nome = matchedById.nome;
+          modified = true;
+        }
+      } else {
+        const cNorm = normalizeSearch(c.responsavel_nome || "");
+        const matchedByNome = cNorm ? respByNormName.get(cNorm) : undefined;
+
+        if (matchedByNome && matchedByNome.id !== CANONICAL_PROPRIETARIO_ID) {
+          if (c.responsavel_id !== matchedByNome.id || c.responsavel_nome !== matchedByNome.nome) {
+            c.responsavel_id = matchedByNome.id;
+            c.responsavel_nome = matchedByNome.nome;
+            modified = true;
+          }
+        } else {
+          if (c.responsavel_id !== CANONICAL_PROPRIETARIO_ID || c.responsavel_nome !== "PROPRIETÁRIO") {
+            c.responsavel_id = CANONICAL_PROPRIETARIO_ID;
+            c.responsavel_nome = "PROPRIETÁRIO";
+            modified = true;
+          }
+        }
+      }
+
+      if (modified) {
+        reassignedCnhsCount++;
+        updatedCnhs.push(c);
+      }
+    }
+
+    // PASSO CRÍTICO B: Grava as CNHs atualizadas TANTO localmente QUANTO no Supabase ANTES de deletar qualquer duplicata
+    if (updatedCnhs.length > 0) {
+      await saveLocalGeralCNHsBulk(updatedCnhs, false); // false = grava também no Supabase!
+      saveStoredList("geral", cnhs);
+      notifyDataSync("geral");
+      log(`${reassignedCnhsCount} CNH(s) atualizadas com sucesso no banco de dados.`);
+    }
+
+    // 3. Realinha declarações que apontavam para procuradores duplicados
+    try {
+      const decls = getStoredList<any>("declaracoes", []);
+      let declsMod = false;
+      decls.forEach((d) => {
+        if (d.procurador_id && idMap.has(d.procurador_id)) {
+          d.procurador_id = idMap.get(d.procurador_id)!;
+          declsMod = true;
+        }
+      });
+      if (declsMod) {
+        saveStoredList("declaracoes", decls);
+        notifyDataSync("declaracoes");
+      }
+    } catch {}
+
+    // PASSO CRÍTICO C: Somente agora que todas as CNHs apontam para o ID mestre, remove as duplicatas obsoletas do Supabase
+    if (isSupabaseConfigured() && duplicateIds.length > 0) {
+      try {
+        log(`Removendo ${duplicateIds.length} cadastro(s) duplicados obsoletos no Supabase...`);
+        for (let i = 0; i < duplicateIds.length; i += 50) {
+          const slice = duplicateIds.slice(i, i + 50);
+          await supabase.from("responsaveis").delete().in("id", slice);
+        }
+        log("Cadastros duplicados obsoletos removidos com segurança.");
+      } catch (supErr: any) {
+        console.warn("Aviso ao deletar duplicatas no Supabase:", supErr);
+      }
+    }
+
+    notifyDataSync("responsaveis");
+    log(`Mesclagem concluída! ${duplicateIds.length} duplicatas eliminadas e dados preservados.`);
+
+    return {
+      removedCount: duplicateIds.length,
+      remainingCount: cleaned.length,
+      duplicateIds,
+      reassignedCnhsCount
+    };
+  } finally {
+    isDeduplicatingInProgress = false;
+  }
+}
+
+/**
+ * Mescla responsáveis por nome e reconcilia 100% as CNHs retiradas com as entregas no balcão
+ */
+export async function mergeResponsaveisByNome(
+  onLog?: (msg: string) => void
+): Promise<{
+  removedCount: number;
+  remainingCount: number;
+  duplicateIds: string[];
+  reassignedCnhsCount: number;
+  totalEntreguesNoBalcao: number;
+  totalRetiradasConsolidadas: number;
+}> {
+  const log = (m: string) => {
+    if (onLog) onLog(m);
+  };
+  log("Iniciando mesclagem por nome e reconciliação de CNHs com o balcão...");
+  const res = await deduplicateResponsaveis(onLog);
+
+  const cnhs = await getLocalGeralCNHs();
+  const totalEntreguesNoBalcao = cnhs.filter((c) => c.situacao === "Entregue").length;
+
+  log(`Reconciliação finalizada! Total entregue no balcão: ${totalEntreguesNoBalcao}. CNHs realinhadas: ${res.reassignedCnhsCount}.`);
+
+  return {
+    ...res,
+    totalEntreguesNoBalcao,
+    totalRetiradasConsolidadas: totalEntreguesNoBalcao
+  };
+}
 
 export async function getResponsaveis(): Promise<Responsavel[]> {
+  let list: Responsavel[] = [];
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<Responsavel>("responsaveis", 1000, "nome", true);
       if (data && Array.isArray(data)) {
-        saveStoredList("responsaveis", data);
-        return data;
+        list = data;
       }
     } catch (err) {
       console.warn("Aviso ao buscar responsáveis no Supabase:", err);
     }
   }
-  return getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS).sort((a, b) =>
-    a.nome.localeCompare(b.nome)
+
+  if (list.length === 0) {
+    list = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+  }
+
+  // Deduplicação não-destrutiva em memória (apenas para exibição limpa)
+  const { cleaned } = deduplicateResponsaveisList(list);
+  saveStoredList("responsaveis", cleaned);
+
+  return cleaned.sort((a, b) =>
+    a.id === CANONICAL_PROPRIETARIO_ID ? -1 : b.id === CANONICAL_PROPRIETARIO_ID ? 1 : a.nome.localeCompare(b.nome)
   );
 }
 
@@ -1283,13 +2074,65 @@ export async function createResponsavel(
 ): Promise<Responsavel> {
   const list = await getResponsaveis();
   const cleanNewCpf = data.cpf ? data.cpf.replace(/\D/g, "") : "";
-  if (cleanNewCpf && list.some((r) => r.cpf && r.cpf.replace(/\D/g, "") === cleanNewCpf)) {
-    throw new Error("Impedir CPF duplicado: Este CPF já está cadastrado como responsável.");
+  const cleanNewTel = data.telefone ? data.telefone.replace(/\D/g, "") : "";
+  const uppercaseNome = (data.nome || "").trim().toUpperCase();
+  const normNome = normalizeSearch(uppercaseNome);
+
+  // 1. Proibir duplicar o Proprietário padrão
+  if (
+    normNome === "proprietario" ||
+    normNome === "proprietarioa" ||
+    normNome === "titular" ||
+    cleanNewCpf === "00000000000" ||
+    cleanNewCpf === "00"
+  ) {
+    throw new Error("O registro padrão 'PROPRIETÁRIO' é reservado e único no sistema. Não é permitido criar duplicatas.");
+  }
+
+  // 2. CPF ou CNPJ obrigatório por padrão
+  if (!cleanNewCpf || (cleanNewCpf.length !== 11 && cleanNewCpf.length !== 14)) {
+    throw new Error("CPF ou CNPJ é obrigatório por padrão. Informe um CPF válido (11 dígitos) ou CNPJ válido (14 dígitos).");
+  }
+
+  // 3. Telefone obrigatório por padrão
+  if (!cleanNewTel || cleanNewTel.length < 10 || cleanNewTel.length > 11) {
+    throw new Error("Telefone de contato com DDD é obrigatório por padrão. Informe um número válido (10 ou 11 dígitos).");
+  }
+
+  // 4. Bloquear duplicidade rastreando pelo CPF
+  const existingByCpf = list.find((r) => {
+    if (isProprietarioRecord(r)) return false;
+    const rCpf = (r.cpf || "").replace(/\D/g, "");
+    return rCpf.length >= 11 && rCpf === cleanNewCpf;
+  });
+  if (existingByCpf) {
+    throw new Error(`Impedir duplicidade: O CPF/CNPJ (${data.cpf}) já está cadastrado para o responsável "${existingByCpf.nome}".`);
+  }
+
+  // 5. Bloquear duplicidade rastreando pelo Telefone
+  const existingByTel = list.find((r) => {
+    if (isProprietarioRecord(r)) return false;
+    const rTel = (r.telefone || "").replace(/\D/g, "");
+    return rTel.length >= 10 && rTel === cleanNewTel;
+  });
+  if (existingByTel) {
+    throw new Error(`Impedir duplicidade: O telefone (${data.telefone}) já está cadastrado para o responsável "${existingByTel.nome}".`);
+  }
+
+  // 6. Bloquear duplicidade por Nome exato normalizado
+  const existingByName = list.find((r) => {
+    if (isProprietarioRecord(r)) return false;
+    return normalizeSearch(r.nome) === normNome;
+  });
+  if (existingByName) {
+    throw new Error(`Impedir duplicidade: Já existe um responsável cadastrado com o nome "${existingByName.nome}".`);
   }
 
   const newUuid = crypto.randomUUID();
   const novo: Responsavel = {
     ...data,
+    nome: uppercaseNome,
+    tipo: data.tipo || (isProprietarioRecord(data) ? "Titular" : "Despachante"),
     id: newUuid,
     created_at: new Date().toISOString()
   };
@@ -1330,14 +2173,51 @@ export async function updateResponsavel(
   const index = list.findIndex((r) => r.id === id);
   if (index === -1) throw new Error("Responsável não encontrado");
   const ant = list[index];
-  if (ant.nome === "Proprietário" && data.nome && data.nome !== "Proprietário") {
-    throw new Error("O registro Padrão 'Proprietário' não pode ser modificado no nome ou CPF.");
+
+  const isProp = isProprietarioRecord(ant);
+  if (isProp && data.nome && normalizeSearch(data.nome) !== "proprietario") {
+    throw new Error("O registro Padrão 'PROPRIETÁRIO' não pode ter seu nome modificado.");
   }
-  const atualizado = { ...ant, ...data };
+
+  const cleanNewCpf = data.cpf !== undefined ? data.cpf.replace(/\D/g, "") : (ant.cpf || "").replace(/\D/g, "");
+  const cleanNewTel = data.telefone !== undefined ? data.telefone.replace(/\D/g, "") : (ant.telefone || "").replace(/\D/g, "");
+  const updatedNome = data.nome !== undefined ? data.nome.trim().toUpperCase() : ant.nome.trim().toUpperCase();
+  const normNome = normalizeSearch(updatedNome);
+
+  if (!isProp) {
+    if (!cleanNewCpf || (cleanNewCpf.length !== 11 && cleanNewCpf.length !== 14)) {
+      throw new Error("CPF ou CNPJ é obrigatório por padrão (11 ou 14 dígitos).");
+    }
+    if (!cleanNewTel || cleanNewTel.length < 10 || cleanNewTel.length > 11) {
+      throw new Error("Telefone de contato com DDD é obrigatório por padrão (10 ou 11 dígitos).");
+    }
+
+    const existingByCpf = list.find((r) => r.id !== id && !isProprietarioRecord(r) && (r.cpf || "").replace(/\D/g, "") === cleanNewCpf);
+    if (existingByCpf) {
+      throw new Error(`Impedir duplicidade: O CPF/CNPJ já está cadastrado para o responsável "${existingByCpf.nome}".`);
+    }
+
+    const existingByTel = list.find((r) => r.id !== id && !isProprietarioRecord(r) && (r.telefone || "").replace(/\D/g, "") === cleanNewTel);
+    if (existingByTel) {
+      throw new Error(`Impedir duplicidade: O telefone já está cadastrado para o responsável "${existingByTel.nome}".`);
+    }
+
+    const existingByName = list.find((r) => r.id !== id && !isProprietarioRecord(r) && normalizeSearch(r.nome) === normNome);
+    if (existingByName) {
+      throw new Error(`Impedir duplicidade: Já existe outro responsável cadastrado com o nome "${existingByName.nome}".`);
+    }
+  }
+
+  const atualizado: Responsavel = {
+    ...ant,
+    ...data,
+    nome: isProp ? "PROPRIETÁRIO" : updatedNome,
+    tipo: isProp ? "Titular" : (data.tipo || ant.tipo || "Despachante"),
+  };
 
   if (isSupabaseConfigured()) {
     try {
-      const { data: updatedSup, error } = await supabase.from("responsaveis").update(data).eq("id", id).select().single();
+      const { data: updatedSup, error } = await supabase.from("responsaveis").update(atualizado).eq("id", id).select().single();
       if (!error && updatedSup) {
         const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
         const lIndex = localList.findIndex((r) => r.id === id);
@@ -1365,7 +2245,7 @@ export async function deleteResponsavel(id: string, userId: string, userNome: st
   const list = await getResponsaveis();
   const target = list.find((r) => r.id === id);
   if (!target) return;
-  if (target.nome === "Proprietário" || target.cpf === "000.000.000-00") {
+  if (isProprietarioRecord(target)) {
     throw new Error("O registro Padrão 'Proprietário' não poderá ser excluído.");
   }
 
@@ -2604,20 +3484,53 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
 
   const seedByOrdem = new Map(SEED_GERAL.map((s) => [s.ordem, s]));
   const seedById = new Map(SEED_GERAL.map((s) => [s.id, s]));
+  const seedByNormNome = new Map(SEED_GERAL.map((s) => [normalizeSearch(s.nome), s]));
+
+  const recordsToHeal: GeralCNH[] = [];
 
   const list = cleanRawList.map((c) => {
-    const seed = seedByOrdem.get(c.ordem) || seedById.get(c.id);
+    const seed = seedByOrdem.get(c.ordem) || seedById.get(c.id) || (c.nome ? seedByNormNome.get(normalizeSearch(c.nome)) : undefined);
     const dataMov = c.data_movimento || c.created_at || (c as any).criado_em || (seed ? seed.data_movimento : undefined);
-    const usrId = c.usuario_id || (seed ? seed.usuario_id : undefined);
-    const usrNome = c.usuario_nome || (seed ? seed.usuario_nome : undefined);
+    
+    const usrId = (c.usuario_id && c.usuario_id !== "sistema") ? c.usuario_id : (seed ? seed.usuario_id : c.usuario_id);
+    const usrNome = (c.usuario_nome && c.usuario_nome !== "Agente DETRAN" && c.usuario_nome !== "sistema" && c.usuario_nome !== "-")
+      ? c.usuario_nome
+      : (seed ? seed.usuario_nome : c.usuario_nome);
+
+    const cpf = (c.cpf && c.cpf.trim() !== "") ? c.cpf.trim() : (seed && seed.cpf ? seed.cpf.trim() : c.cpf);
+    const gaveta = (c.gaveta && c.gaveta.trim() !== "") ? c.gaveta.trim() : (seed && seed.gaveta ? seed.gaveta.trim() : c.gaveta);
+    const reparticao = (c.reparticao && c.reparticao.trim() !== "") ? c.reparticao.trim() : (seed && seed.reparticao ? seed.reparticao.trim() : c.reparticao);
+
+    if (
+      (c.cpf !== cpf && cpf) ||
+      (c.usuario_nome !== usrNome && usrNome) ||
+      (c.gaveta !== gaveta && gaveta) ||
+      (c.reparticao !== reparticao && reparticao)
+    ) {
+      recordsToHeal.push({
+        ...c,
+        cpf,
+        usuario_id: usrId,
+        usuario_nome: usrNome,
+        gaveta,
+        reparticao
+      });
+    }
 
     return {
       ...c,
+      cpf,
+      gaveta,
+      reparticao,
       data_movimento: dataMov,
       usuario_id: usrId,
       usuario_nome: usrNome
     };
   });
+
+  if (recordsToHeal.length > 0) {
+    saveLocalGeralCNHsBulk(recordsToHeal, false).catch(() => {});
+  }
 
   const usuarios = await getUsuarios();
   const responsaveis = await getResponsaveis();
@@ -2626,26 +3539,44 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
 
   return list.map((c) => {
     const usr = usuarios.find((u) => u.id === c.usuario_id);
+    const seed = seedByOrdem.get(c.ordem) || seedById.get(c.id) || (c.nome ? seedByNormNome.get(normalizeSearch(c.nome)) : undefined);
+
+    let effectiveRespId = c.responsavel_id;
+    let effectiveRespNome = c.responsavel_nome;
+
+    // Se o registro perdeu o vínculo original com o despachante/procurador ou foi sobrescrito para Proprietário, restaura da semente original
+    if (
+      seed &&
+      seed.responsavel_id &&
+      seed.responsavel_id !== CANONICAL_PROPRIETARIO_ID &&
+      seed.responsavel_id !== "e2335b1e" &&
+      (!effectiveRespId || effectiveRespId === CANONICAL_PROPRIETARIO_ID || effectiveRespId === "e2335b1e")
+    ) {
+      effectiveRespId = seed.responsavel_id;
+      if (seed.responsavel_nome && !seed.responsavel_nome.toLowerCase().includes("propriet")) {
+        effectiveRespNome = seed.responsavel_nome.toUpperCase();
+      }
+    }
+
     const resp = responsaveis.find(
       (r) =>
-        r.id === c.responsavel_id ||
-        r.id === c.responsavel_nome ||
-        (r.nome && c.responsavel_nome && r.nome.trim().toLowerCase() === c.responsavel_nome.trim().toLowerCase()) ||
-        (r.nome && c.responsavel_id && r.nome.trim().toLowerCase() === c.responsavel_id.trim().toLowerCase())
+        r.id === effectiveRespId ||
+        r.id === effectiveRespNome ||
+        (r.nome && effectiveRespNome && r.nome.trim().toLowerCase() === effectiveRespNome.trim().toLowerCase()) ||
+        (r.nome && effectiveRespId && r.nome.trim().toLowerCase() === effectiveRespId.trim().toLowerCase())
     );
     const memo = memorandos.find((m) => m.id === c.memorando_id);
     const cand = candidatos.find((cand) => cand.id === c.candidato_id);
-    const seed = seedByOrdem.get(c.ordem) || seedById.get(c.id);
 
-    let displayRespNome = resp ? resp.nome : c.responsavel_nome;
+    let displayRespNome = resp ? resp.nome : effectiveRespNome;
     if (displayRespNome) {
       const matchResp = responsaveis.find((r) => r.id === displayRespNome);
       if (matchResp) {
         displayRespNome = matchResp.nome;
       }
     }
-    if ((!displayRespNome || displayRespNome === "-") && c.responsavel_id) {
-      const matchResp = responsaveis.find((r) => r.id === c.responsavel_id);
+    if ((!displayRespNome || displayRespNome === "-") && effectiveRespId) {
+      const matchResp = responsaveis.find((r) => r.id === effectiveRespId);
       if (matchResp) {
         displayRespNome = matchResp.nome;
       }
@@ -2657,20 +3588,48 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
 
     const cpfCalculado = (c.cpf && c.cpf.trim() !== "")
       ? c.cpf
-      : (cand && cand.cpf && cand.cpf.trim() !== "" ? cand.cpf : (seed ? seed.cpf : ""));
+      : (cand && cand.cpf && cand.cpf.trim() !== "" ? cand.cpf : (seed && seed.cpf ? seed.cpf : ""));
 
     const telefoneCalculado = (c.telefone && c.telefone.trim() !== "")
       ? c.telefone
       : (cand && cand.telefone && cand.telefone.trim() !== "" ? cand.telefone : (seed ? seed.telefone : ""));
 
+    // Resolução de gaveta e repartição garantindo que nunca fiquem vazias
+    let effectiveGaveta = (c.gaveta && c.gaveta.trim() !== "") ? c.gaveta : (seed && seed.gaveta ? seed.gaveta : "");
+    let effectiveReparticao = (c.reparticao && c.reparticao.trim() !== "") ? c.reparticao : (seed && seed.reparticao ? seed.reparticao : "");
+
+    if (c.situacao === "Recebida" && (!effectiveGaveta || !effectiveReparticao)) {
+      const char = getInitialChar(nomeCalculado || c.nome || (seed ? seed.nome : ""));
+      const m = SEED_MAPEAMENTO.find((item) => item.inicial.toUpperCase() === char && item.ativo !== false);
+      if (m) {
+        effectiveGaveta = effectiveGaveta || m.gaveta;
+        effectiveReparticao = effectiveReparticao || m.reparticao;
+      }
+    }
+
+    let displayUsrNome = c.usuario_nome;
+    if (!displayUsrNome || displayUsrNome === "Agente DETRAN" || displayUsrNome === "sistema" || displayUsrNome === "-") {
+      if (seed && seed.usuario_nome) {
+        displayUsrNome = seed.usuario_nome;
+      }
+    }
+    if (usr) {
+      displayUsrNome = usr.nome || usr.nome_curto || displayUsrNome;
+    }
+    if (!displayUsrNome || displayUsrNome === "-") {
+      displayUsrNome = c.situacao === "Entregue" ? "Agente DETRAN" : "-";
+    }
+
     return {
       ...c,
+      gaveta: effectiveGaveta,
+      reparticao: effectiveReparticao,
       nome: nomeCalculado,
       cpf: cpfCalculado,
       telefone: telefoneCalculado,
-      usuario_nome: usr ? usr.nome_curto : c.usuario_nome || "Agente DETRAN",
-      responsavel_id: resp ? resp.id : c.responsavel_id,
-      responsavel_nome: displayRespNome && displayRespNome !== "-" ? displayRespNome : (c.responsavel_nome && !responsaveis.some(r => r.id === c.responsavel_nome) ? c.responsavel_nome : "-"),
+      usuario_nome: displayUsrNome,
+      responsavel_id: resp ? resp.id : effectiveRespId,
+      responsavel_nome: displayRespNome && displayRespNome !== "-" ? displayRespNome : (effectiveRespNome && !responsaveis.some(r => r.id === effectiveRespNome) ? effectiveRespNome : "-"),
       memorando_numero: memo ? memo.numero : (c.memorando_numero || undefined),
       remessa: memo ? (memo.remessa || memo.numero) : (c.remessa || undefined)
     };
@@ -5132,8 +6091,30 @@ async function upsertInBatches(
         }
       }
 
-      // Recuperação 4: Se for geral_cnhs, remover foreign keys nulas ou problemáticas
+      // Recuperação 4: Se for geral_cnhs, auto-provisiona responsáveis faltantes antes de recorrer a safeBatch
       if (tableName === "geral_cnhs") {
+        const respIds = Array.from(new Set(batch.filter((c: any) => c.responsavel_id).map((c: any) => c.responsavel_id)));
+        if (respIds.length > 0) {
+          try {
+            const respUpserts = respIds.map((rid: string) => {
+              const sample = batch.find((c: any) => c.responsavel_id === rid);
+              return {
+                id: rid,
+                nome: sample?.responsavel_nome || (rid === CANONICAL_PROPRIETARIO_ID ? "PROPRIETÁRIO" : "RESPONSÁVEL"),
+                ativo: true
+              };
+            });
+            await supabase.from("responsaveis").upsert(respUpserts, { onConflict: "id" });
+            const { error: retryErr } = await supabase.from(tableName).upsert(batch, { onConflict });
+            if (!retryErr) {
+              count += batch.length;
+              recovered = true;
+              if (onProgress) onProgress(count, payload.length);
+              continue;
+            }
+          } catch {}
+        }
+
         const safeBatch = batch.map((item: any) => ({
           ...item,
           responsavel_id: null,

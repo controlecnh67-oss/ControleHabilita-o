@@ -41,7 +41,8 @@ import {
   CopyCheck,
   Layers,
   RotateCcw,
-  Zap
+  Zap,
+  Database
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -61,7 +62,8 @@ import {
   createResponsavel,
   importSpreadsheetData,
   getPublicSearchCount,
-  getLotes
+  getLotes,
+  restoreResponsaveisInfoAndDatabase
 } from "../services/db";
 import { syncGeralWithSupabase, dexieDb, normalizeCNHRecord } from "../services/dexieDb";
 import { getPublicShareUrl, subscribeToSupabaseRealtime } from "../services/supabase";
@@ -208,6 +210,29 @@ export const GeralPage: React.FC = () => {
 
   // Feedback Message
   const [message, setMessage] = useState<{ type: "success" | "warning" | "error"; text: string } | null>(null);
+  const [isRestoringData, setIsRestoringData] = useState(false);
+
+  // Restauração das informações de Gavetas, Repartições, CPFs, Usuários e Responsáveis para o status anterior
+  const handleRestoreProtocolData = async () => {
+    if (!canEdit || isRestoringData) return;
+    setIsRestoringData(true);
+    setMessage(null);
+    try {
+      const res = await restoreResponsaveisInfoAndDatabase();
+      await fetchDados();
+      setMessage({
+        type: "success",
+        text: `Restauração concluída com sucesso! ${res.cpfsReparadosCount || 0} CPFs, ${res.usuariosReparadosCount || 0} usuários e ${res.gavetasReparadasCount || 0} gavetas/repartições recuperadas (${res.restoredCnhsCount} CNHs sincronizadas no banco de dados).`
+      });
+    } catch (err: any) {
+      setMessage({
+        type: "error",
+        text: err.message || "Erro ao restaurar banco de dados."
+      });
+    } finally {
+      setIsRestoringData(false);
+    }
+  };
 
   // Modal Importação Excel de CNHs Recebidas
   const [isExcelRecebidasModalOpen, setIsExcelRecebidasModalOpen] = useState(false);
@@ -943,6 +968,24 @@ export const GeralPage: React.FC = () => {
       return;
     }
 
+    // Validação preventiva de duplicidade
+    const cleanCpf = formatCPF(newRespCpf).replace(/\D/g, "");
+    const cleanTel = formatPhone(newRespTelefone).replace(/\D/g, "");
+    const dupCpf = responsaveis.find(
+      (r) => (r.cpf || "").replace(/\D/g, "") === cleanCpf
+    );
+    if (dupCpf) {
+      setNewRespErrors({ cpf: `Este CPF já está cadastrado para "${dupCpf.nome}".` });
+      return;
+    }
+    const dupTel = responsaveis.find(
+      (r) => (r.telefone || "").replace(/\D/g, "") === cleanTel
+    );
+    if (dupTel) {
+      setNewRespErrors({ telefone: `Este telefone já está cadastrado para "${dupTel.nome}".` });
+      return;
+    }
+
     setSubmittingNewResp(true);
     try {
       const novo = await createResponsavel(
@@ -1218,6 +1261,19 @@ export const GeralPage: React.FC = () => {
                 >
                   <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                   <span>📥 Importar Excel (Recebidas)</span>
+                </button>
+              )}
+
+              {canEdit && (
+                <button
+                  id="btn-restaurar-dados-protocolo"
+                  onClick={handleRestoreProtocolData}
+                  disabled={isRestoringData}
+                  title="Restaurar e sincronizar todas as gavetas, repartições e responsáveis no banco com o status anterior"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-200 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-emerald-300 dark:border-emerald-800 disabled:opacity-50"
+                >
+                  <Database className={`w-4 h-4 text-emerald-600 dark:text-emerald-400 ${isRestoringData ? "animate-spin" : ""}`} />
+                  <span>{isRestoringData ? "Restaurando..." : "Restaurar Dados"}</span>
                 </button>
               )}
 
@@ -2425,7 +2481,7 @@ export const GeralPage: React.FC = () => {
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Telefone
+              Telefone de Contato <span className="text-rose-500">*</span>
             </label>
             <input
               type="text"
@@ -2435,6 +2491,7 @@ export const GeralPage: React.FC = () => {
               maxLength={15}
               className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
             />
+            {newRespErrors.telefone && <p className="text-[11px] text-rose-500 mt-1">{newRespErrors.telefone}</p>}
           </div>
 
           <div>

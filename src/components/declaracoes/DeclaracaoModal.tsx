@@ -28,6 +28,7 @@ import {
 import { getOrgaoConfig } from "../../services/orgaoService";
 import { useAuth } from "../../context/AuthContext";
 import { formatCPFDisplay } from "../../services/declaracaoPdfService";
+import { formatCPF, formatPhone } from "../../lib/utils";
 
 interface DeclaracaoModalProps {
   isOpen: boolean;
@@ -232,13 +233,41 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
       setNovoProcError("Nome do procurador é obrigatório.");
       return;
     }
+
+    const formattedCpf = formatCPF(novoProcCpf);
+    const formattedTel = formatPhone(novoProcTelefone);
+
+    const cleanCpf = formattedCpf.replace(/\D/g, "");
+    if (!cleanCpf || (cleanCpf.length !== 11 && cleanCpf.length !== 14)) {
+      setNovoProcError("CPF ou CNPJ válido é obrigatório por padrão.");
+      return;
+    }
+
+    const cleanTel = formattedTel.replace(/\D/g, "");
+    if (!cleanTel || cleanTel.length < 10 || cleanTel.length > 11) {
+      setNovoProcError("Telefone de contato com DDD é obrigatório por padrão.");
+      return;
+    }
+
+    // Validação preventiva de duplicatas
+    const dupCpf = responsaveis.find((r) => (r.cpf || "").replace(/\D/g, "") === cleanCpf);
+    if (dupCpf) {
+      setNovoProcError(`Este CPF já está cadastrado para o responsável "${dupCpf.nome}".`);
+      return;
+    }
+    const dupTel = responsaveis.find((r) => (r.telefone || "").replace(/\D/g, "") === cleanTel);
+    if (dupTel) {
+      setNovoProcError(`Este telefone já está cadastrado para o responsável "${dupTel.nome}".`);
+      return;
+    }
+
     setIsSavingNovoProc(true);
     try {
       const created = await createResponsavel(
         {
           nome: novoProcNome.trim().toUpperCase(),
-          cpf: novoProcCpf.trim(),
-          telefone: novoProcTelefone.trim(),
+          cpf: formattedCpf,
+          telefone: formattedTel,
           observacao: novoProcEndereco ? `Endereço: ${novoProcEndereco.trim()}` : "",
           ativo: true
         },
@@ -972,25 +1001,29 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
               </div>
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  CPF
+                  CPF ou CNPJ <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
+                  required
                   value={novoProcCpf}
-                  onChange={(e) => setNovoProcCpf(e.target.value)}
-                  placeholder="Ex: 36956201291"
+                  onChange={(e) => setNovoProcCpf(formatCPF(e.target.value))}
+                  placeholder="Ex: 000.000.000-00"
+                  maxLength={18}
                   className="w-full px-3 py-2 font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
                 />
               </div>
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Telefone / WhatsApp
+                  Telefone / WhatsApp <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
+                  required
                   value={novoProcTelefone}
-                  onChange={(e) => setNovoProcTelefone(e.target.value)}
-                  placeholder="Ex: 93992912928"
+                  onChange={(e) => setNovoProcTelefone(formatPhone(e.target.value))}
+                  placeholder="Ex: (93) 99999-9999"
+                  maxLength={15}
                   className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
                 />
               </div>
