@@ -1032,11 +1032,13 @@ export function repairCorruptedUsuarios(users: Usuario[]): { users: Usuario[]; r
 }
 
 export async function getUsuarios(): Promise<Usuario[]> {
+  const deletedIds = getDeletedIds("usuarios");
+
   if (isSupabaseConfigured()) {
     try {
       const data = await fetchAllRowsFromSupabase<Usuario>("usuarios", 1000, "created_at", false);
       if (data && Array.isArray(data)) {
-        const activeUsers = data.filter((u) => u.ativo !== false);
+        const activeUsers = data.filter((u) => u.ativo !== false && !deletedIds.has(u.id));
         const { users: sanitizedUsers, repairedCount } = repairCorruptedUsuarios(activeUsers);
         saveStoredList("usuarios", sanitizedUsers);
         if (repairedCount > 0) {
@@ -1068,7 +1070,7 @@ export async function getUsuarios(): Promise<Usuario[]> {
   if (localRepaired > 0) {
     saveStoredList("usuarios", sanitizedLocal);
   }
-  return sanitizedLocal.filter((u) => u.ativo !== false);
+  return sanitizedLocal.filter((u) => u.ativo !== false && !deletedIds.has(u.id));
 }
 
 export async function createUsuario(data: Omit<Usuario, "id" | "created_at">, adminId: string, adminNome: string): Promise<Usuario> {
@@ -1186,16 +1188,22 @@ export async function updateUsuario(id: string, data: Partial<Usuario>, adminId:
   return atualizado;
 }
 
-export async function deleteUsuario(id: string, adminId: string, adminNome: string): Promise<void> {
+export async function deleteUsuario(id: string, adminId?: string, adminNome?: string): Promise<void> {
   const list = await getUsuarios();
   const target = list.find((u) => u.id === id);
-  if (!target) return;
-  if (target.login === "admin") {
+
+  if (target?.login === "admin") {
     throw new Error("O Administrador principal não pode ser excluído.");
   }
 
+  // 1. Desvincula chaves estrangeiras no Supabase para permitir exclusão sem violação de FK
   if (isSupabaseConfigured()) {
     try {
+      await supabase.from("geral_cnhs").update({ usuario_id: null }).eq("usuario_id", id);
+      await supabase.from("memorandos").update({ usuario_id: null }).eq("usuario_id", id);
+      await supabase.from("historico").update({ usuario_id: null }).eq("usuario_id", id);
+      await supabase.from("candidatos").update({ usuario_id: null }).eq("usuario_id", id);
+
       const { error } = await supabase.from("usuarios").delete().eq("id", id);
       if (error) {
         console.warn("Aviso no Supabase ao deletar usuário (inativando para preservar integridade):", error.message);
@@ -1203,14 +1211,25 @@ export async function deleteUsuario(id: string, adminId: string, adminNome: stri
       }
     } catch (err: any) {
       console.warn("Falha ao deletar no Supabase, mantendo exclusão local:", err);
+      try {
+        await supabase.from("usuarios").update({ ativo: false }).eq("id", id);
+      } catch {}
     }
   }
 
+  // 2. Registra o ID nos eliminados permanentes (impede retorno via semente/cache)
+  addDeletedId("usuarios", id);
+
+  // 3. Atualiza memória e armazenamento local
   const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
   const filtrados = localList.filter((u) => u.id !== id);
   saveStoredList("usuarios", filtrados);
   notifyDataSync("usuarios");
-  await logAuditoria("usuarios", target.login, "Exclusão", adminId, adminNome, target, null);
+
+  // 4. Auditoria
+  const effAdminId = adminId || "sistema";
+  const effAdminNome = adminNome || "Administrador";
+  await logAuditoria("usuarios", target ? target.login : id, "Exclusão", effAdminId, effAdminNome, target || null, null);
 }
 
 export async function restaurarCredenciaisOficiais(): Promise<{ count: number }> {

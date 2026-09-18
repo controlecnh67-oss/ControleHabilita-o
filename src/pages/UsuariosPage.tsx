@@ -15,6 +15,8 @@ export const UsuariosPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<Usuario | null>(null);
+  const [userToDelete, setUserToDelete] = useState<Usuario | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const isFetchingRef = useRef(false);
@@ -233,20 +235,48 @@ export const UsuariosPage: React.FC = () => {
     }
   };
 
-  const handleDelete = async (item: Usuario) => {
-    if (!user) return;
-    if (item.id === user.id) {
-      alert("⚠️ Você não pode excluir ou inativar sua própria conta durante uma sessão ativa.");
+  const handleDeleteClick = (item: Usuario) => {
+    setMessage(null);
+    if (user && item.id === user.id) {
+      setMessage({
+        type: "error",
+        text: "⚠️ Você não pode excluir ou inativar sua própria conta durante uma sessão ativa."
+      });
       return;
     }
-    if (confirm(`Deseja remover o acesso ao sistema do servidor "${item.nome_completo || item.nome}"?`)) {
-      try {
-        await deleteUsuario(item.id, user.id, user.nome_curto);
-        setMessage({ type: "success", text: "Usuário removido com sucesso!" });
-        await fetchDados();
-      } catch (err: any) {
-        alert(err.message || "Erro ao excluir usuário.");
-      }
+    if (item.login === "admin") {
+      setMessage({
+        type: "error",
+        text: "⚠️ O Administrador principal do sistema não pode ser excluído."
+      });
+      return;
+    }
+    setUserToDelete(item);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!userToDelete) return;
+    setIsDeleting(true);
+    const target = userToDelete;
+    try {
+      // Atualização otimista imediata na UI
+      setUsuarios((prev) => prev.filter((u) => u.id !== target.id));
+
+      const adminId = user?.id || "sistema";
+      const adminNome = user?.nome_curto || user?.nome || "Administrador";
+
+      await deleteUsuario(target.id, adminId, adminNome);
+      setMessage({
+        type: "success",
+        text: `Servidor "${target.nome_completo || target.nome}" (${target.login}) removido com sucesso!`
+      });
+      setUserToDelete(null);
+      await fetchDados();
+    } catch (err: any) {
+      setMessage({ type: "error", text: err.message || "Erro ao excluir usuário." });
+      await fetchDados();
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -393,11 +423,11 @@ export const UsuariosPage: React.FC = () => {
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
-                        {u.id !== user?.id && (
+                        {u.id !== user?.id && u.login !== "admin" && (
                           <button
-                            onClick={() => handleDelete(u)}
+                            onClick={() => handleDeleteClick(u)}
                             title="Remover servidor"
-                            className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg transition-colors"
+                            className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -636,6 +666,50 @@ export const UsuariosPage: React.FC = () => {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Modal de Confirmação de Exclusão de Servidor */}
+      <Modal
+        isOpen={!!userToDelete}
+        onClose={() => !isDeleting && setUserToDelete(null)}
+        title="Confirmar Exclusão de Servidor"
+        maxWidth="md"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3.5 p-4 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl text-xs text-rose-800 dark:text-rose-200">
+            <Trash2 className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-sm text-slate-900 dark:text-white">Tem certeza que deseja remover este servidor?</p>
+              <p className="mt-1 text-slate-600 dark:text-slate-300 leading-relaxed">
+                O acesso ao sistema do servidor{" "}
+                <strong className="text-slate-900 dark:text-white font-semibold">
+                  {userToDelete?.nome_completo || userToDelete?.nome}
+                </strong>{" "}
+                (Login: <span className="font-mono font-semibold">{userToDelete?.login}</span>) será revogado e removido do quadro de usuários.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-200 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => setUserToDelete(null)}
+              disabled={isDeleting}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+              className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <Trash2 className={`w-3.5 h-3.5 ${isDeleting ? "animate-spin" : ""}`} />
+              <span>{isDeleting ? "Excluindo..." : "Confirmar Exclusão"}</span>
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );
