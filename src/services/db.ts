@@ -1189,47 +1189,58 @@ export async function updateUsuario(id: string, data: Partial<Usuario>, adminId:
 }
 
 export async function deleteUsuario(id: string, adminId?: string, adminNome?: string): Promise<void> {
-  const list = await getUsuarios();
-  const target = list.find((u) => u.id === id);
+  const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+  const target = localList.find((u) => u.id === id);
 
   if (target?.login === "admin") {
     throw new Error("O Administrador principal não pode ser excluído.");
   }
 
-  // 1. Desvincula chaves estrangeiras no Supabase para permitir exclusão sem violação de FK
+  // 1. Registra o ID nos eliminados permanentes (impede retorno via semente/cache)
+  addDeletedId("usuarios", id);
+
+  // 2. Atualiza memória e armazenamento local imediatamente
+  const filtrados = localList.filter((u) => u.id !== id);
+  saveStoredList("usuarios", filtrados);
+  invalidateSupabaseCache("usuarios");
+
+  // 3. Auditoria
+  const effAdminId = adminId || "sistema";
+  const effAdminNome = adminNome || "Administrador";
+  try {
+    await logAuditoria("usuarios", target ? (target.nome || target.login) : id, "Exclusão", effAdminId, effAdminNome, target || null, null);
+  } catch {}
+
+  // 4. Desvincula chaves estrangeiras e deleta no Supabase de forma segura e não bloqueante
   if (isSupabaseConfigured()) {
     try {
-      await supabase.from("geral_cnhs").update({ usuario_id: null }).eq("usuario_id", id);
-      await supabase.from("memorandos").update({ usuario_id: null }).eq("usuario_id", id);
-      await supabase.from("historico").update({ usuario_id: null }).eq("usuario_id", id);
-      await supabase.from("candidatos").update({ usuario_id: null }).eq("usuario_id", id);
+      await Promise.race([
+        Promise.all([
+          supabase.from("geral_cnhs").update({ usuario_id: null }).eq("usuario_id", id),
+          supabase.from("memorandos").update({ usuario_id: null }).eq("usuario_id", id),
+          supabase.from("candidatos").update({ usuario_id: null }).eq("usuario_id", id)
+        ]),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout FKs")), 3500))
+      ]).catch(() => {});
 
-      const { error } = await supabase.from("usuarios").delete().eq("id", id);
+      const { error } = await Promise.race([
+        supabase.from("usuarios").delete().eq("id", id),
+        new Promise<{ error: any }>((_, reject) => setTimeout(() => reject(new Error("Timeout delete")), 3500))
+      ]).catch((e) => ({ error: e }));
+
       if (error) {
         console.warn("Aviso no Supabase ao deletar usuário (inativando para preservar integridade):", error.message);
-        await supabase.from("usuarios").update({ ativo: false }).eq("id", id);
+        await Promise.race([
+          supabase.from("usuarios").update({ ativo: false }).eq("id", id),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout inativar")), 2500))
+        ]).catch(() => {});
       }
     } catch (err: any) {
-      console.warn("Falha ao deletar no Supabase, mantendo exclusão local:", err);
-      try {
-        await supabase.from("usuarios").update({ ativo: false }).eq("id", id);
-      } catch {}
+      console.warn("Falha ao deletar no Supabase, exclusão local mantida com sucesso:", err);
     }
   }
 
-  // 2. Registra o ID nos eliminados permanentes (impede retorno via semente/cache)
-  addDeletedId("usuarios", id);
-
-  // 3. Atualiza memória e armazenamento local
-  const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
-  const filtrados = localList.filter((u) => u.id !== id);
-  saveStoredList("usuarios", filtrados);
   notifyDataSync("usuarios");
-
-  // 4. Auditoria
-  const effAdminId = adminId || "sistema";
-  const effAdminNome = adminNome || "Administrador";
-  await logAuditoria("usuarios", target ? target.login : id, "Exclusão", effAdminId, effAdminNome, target || null, null);
 }
 
 export async function restaurarCredenciaisOficiais(): Promise<{ count: number }> {
@@ -2261,26 +2272,33 @@ export async function updateResponsavel(
 }
 
 export async function deleteResponsavel(id: string, userId: string, userNome: string): Promise<void> {
-  const list = await getResponsaveis();
-  const target = list.find((r) => r.id === id);
+  const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+  const target = localList.find((r) => r.id === id);
   if (!target) return;
   if (isProprietarioRecord(target)) {
     throw new Error("O registro Padrão 'Proprietário' não poderá ser excluído.");
   }
 
+  addDeletedId("responsaveis", id);
+  const filtrados = localList.filter((r) => r.id !== id);
+  saveStoredList("responsaveis", filtrados);
+  invalidateSupabaseCache("responsaveis");
+  notifyDataSync("responsaveis");
+
+  try {
+    await logAuditoria("responsaveis", target.nome, "Exclusão", userId, userNome, target, null);
+  } catch {}
+
   if (isSupabaseConfigured()) {
     try {
-      await supabase.from("responsaveis").delete().eq("id", id);
+      await Promise.race([
+        supabase.from("responsaveis").delete().eq("id", id),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout delete")), 3500))
+      ]);
     } catch (e) {
       console.warn("Aviso ao deletar responsável no Supabase:", e);
     }
   }
-
-  const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
-  const filtrados = localList.filter((r) => r.id !== id);
-  saveStoredList("responsaveis", filtrados);
-  notifyDataSync("responsaveis");
-  await logAuditoria("responsaveis", target.nome, "Exclusão", userId, userNome, target, null);
 }
 
 // ============================================================================
@@ -3452,21 +3470,13 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
   await initStorage();
   let rawList: GeralCNH[] = await getLocalGeralCNHs();
 
-  // Se o Supabase estiver configurado:
-  if (isSupabaseConfigured()) {
-    if (rawList.length === 0) {
-      // Primeira carga: sincronização paginada completa
-      try {
-        await syncGeralWithSupabase(true);
-        rawList = await getLocalGeralCNHs();
-      } catch (err) {
-        console.warn("Aviso ao sincronizar inicialmente com Supabase:", err);
-      }
-    } else {
-      // Em segundo plano (não bloqueia UI): busca alterações/recebimentos recentes de outras máquinas
-      syncGeralWithSupabase(false).catch((err) => {
-        console.warn("Aviso na sincronização delta em segundo plano:", err);
-      });
+  // Se o Supabase estiver configurado e ainda não houver dados locais, faz carga inicial
+  if (isSupabaseConfigured() && rawList.length === 0) {
+    try {
+      await syncGeralWithSupabase(true);
+      rawList = await getLocalGeralCNHs();
+    } catch (err) {
+      console.warn("Aviso ao sincronizar inicialmente com Supabase:", err);
     }
   }
 
@@ -3478,147 +3488,56 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
     }
   }
 
-  // Deduplicar CNHs por ID único e assegurar ordem numérica estritamente única para cada CNH
+  // Deduplicar CNHs por ID único preservando RIGOROSAMENTE o número de ordem original do banco de dados (Supabase)
   const seenCnhIds = new Set<string>();
-  const seenCnhOrdens = new Set<number>();
-  let currentMaxOrdem = rawList.reduce((max, item) => Math.max(max, item.ordem || 0), 0);
-
   const cleanRawList: GeralCNH[] = [];
   for (const c of rawList) {
     if (!c.id || seenCnhIds.has(c.id)) continue;
     seenCnhIds.add(c.id);
 
-    let finalOrdem = c.ordem;
-    if (!finalOrdem || isNaN(finalOrdem) || seenCnhOrdens.has(finalOrdem)) {
-      currentMaxOrdem++;
-      finalOrdem = currentMaxOrdem;
-    }
-    seenCnhOrdens.add(finalOrdem);
+    // Garante que a ordem seja um número válido positivo sem sobrescrever valores existentes do banco
+    const parsedOrdem = Number(c.ordem);
+    const validOrdem = !isNaN(parsedOrdem) && parsedOrdem > 0 ? parsedOrdem : 0;
 
     cleanRawList.push({
       ...c,
-      ordem: finalOrdem
+      ordem: validOrdem
     });
   }
 
-  const seedByOrdem = new Map(SEED_GERAL.map((s) => [s.ordem, s]));
-  const seedById = new Map(SEED_GERAL.map((s) => [s.id, s]));
-  const seedByNormNome = new Map(SEED_GERAL.map((s) => [normalizeSearch(s.nome), s]));
+  // Obtenção rápida de dados de apoio da memória local/cache (evita requisições remotas síncronas bloqueantes)
+  const usuarios = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
+  const responsaveis = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+  const memorandos = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
+  const candidatos = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
 
-  const recordsToHeal: GeralCNH[] = [];
-
-  const list = cleanRawList.map((c) => {
-    const seed = seedByOrdem.get(c.ordem) || seedById.get(c.id) || (c.nome ? seedByNormNome.get(normalizeSearch(c.nome)) : undefined);
-    const dataMov = c.data_movimento || c.created_at || (c as any).criado_em || (seed ? seed.data_movimento : undefined);
-    
-    const usrId = (c.usuario_id && c.usuario_id !== "sistema") ? c.usuario_id : (seed ? seed.usuario_id : c.usuario_id);
-    const usrNome = (c.usuario_nome && c.usuario_nome !== "Agente DETRAN" && c.usuario_nome !== "sistema" && c.usuario_nome !== "-")
-      ? c.usuario_nome
-      : (seed ? seed.usuario_nome : c.usuario_nome);
-
-    const cpf = (c.cpf && c.cpf.trim() !== "") ? c.cpf.trim() : (seed && seed.cpf ? seed.cpf.trim() : c.cpf);
-    const gaveta = (c.gaveta && c.gaveta.trim() !== "") ? c.gaveta.trim() : (seed && seed.gaveta ? seed.gaveta.trim() : c.gaveta);
-    const reparticao = (c.reparticao && c.reparticao.trim() !== "") ? c.reparticao.trim() : (seed && seed.reparticao ? seed.reparticao.trim() : c.reparticao);
-
-    if (
-      (c.cpf !== cpf && cpf) ||
-      (c.usuario_nome !== usrNome && usrNome) ||
-      (c.gaveta !== gaveta && gaveta) ||
-      (c.reparticao !== reparticao && reparticao)
-    ) {
-      recordsToHeal.push({
-        ...c,
-        cpf,
-        usuario_id: usrId,
-        usuario_nome: usrNome,
-        gaveta,
-        reparticao
-      });
-    }
-
-    return {
-      ...c,
-      cpf,
-      gaveta,
-      reparticao,
-      data_movimento: dataMov,
-      usuario_id: usrId,
-      usuario_nome: usrNome
-    };
-  });
-
-  if (recordsToHeal.length > 0) {
-    saveLocalGeralCNHsBulk(recordsToHeal, false).catch(() => {});
-  }
-
-  const usuarios = await getUsuarios();
-  const responsaveis = await getResponsaveis();
-  const memorandos = await getMemorandos();
-  const candidatos = await getCandidatosAll();
-
-  return list.map((c) => {
+  return cleanRawList.map((c) => {
     const usr = usuarios.find((u) => u.id === c.usuario_id);
-    const seed = seedByOrdem.get(c.ordem) || seedById.get(c.id) || (c.nome ? seedByNormNome.get(normalizeSearch(c.nome)) : undefined);
-
-    let effectiveRespId = c.responsavel_id;
-    let effectiveRespNome = c.responsavel_nome;
-
-    // Se o registro perdeu o vínculo original com o despachante/procurador ou foi sobrescrito para Proprietário, restaura da semente original
-    if (
-      seed &&
-      seed.responsavel_id &&
-      seed.responsavel_id !== CANONICAL_PROPRIETARIO_ID &&
-      seed.responsavel_id !== "e2335b1e" &&
-      (!effectiveRespId || effectiveRespId === CANONICAL_PROPRIETARIO_ID || effectiveRespId === "e2335b1e")
-    ) {
-      effectiveRespId = seed.responsavel_id;
-      if (seed.responsavel_nome && !seed.responsavel_nome.toLowerCase().includes("propriet")) {
-        effectiveRespNome = seed.responsavel_nome.toUpperCase();
-      }
-    }
-
     const resp = responsaveis.find(
       (r) =>
-        r.id === effectiveRespId ||
-        r.id === effectiveRespNome ||
-        (r.nome && effectiveRespNome && r.nome.trim().toLowerCase() === effectiveRespNome.trim().toLowerCase()) ||
-        (r.nome && effectiveRespId && r.nome.trim().toLowerCase() === effectiveRespId.trim().toLowerCase())
+        r.id === c.responsavel_id ||
+        (r.nome && c.responsavel_nome && r.nome.trim().toLowerCase() === c.responsavel_nome.trim().toLowerCase())
     );
     const memo = memorandos.find((m) => m.id === c.memorando_id);
     const cand = candidatos.find((cand) => cand.id === c.candidato_id);
 
-    let displayRespNome = resp ? resp.nome : effectiveRespNome;
-    if (displayRespNome) {
-      const matchResp = responsaveis.find((r) => r.id === displayRespNome);
-      if (matchResp) {
-        displayRespNome = matchResp.nome;
-      }
-    }
-    if ((!displayRespNome || displayRespNome === "-") && effectiveRespId) {
-      const matchResp = responsaveis.find((r) => r.id === effectiveRespId);
-      if (matchResp) {
-        displayRespNome = matchResp.nome;
-      }
-    }
-
     const nomeCalculado = (c.nome && c.nome.trim() !== "")
       ? c.nome
-      : (cand && cand.nome && cand.nome.trim() !== "" ? cand.nome : (seed ? seed.nome : ""));
+      : (cand && cand.nome && cand.nome.trim() !== "" ? cand.nome : "");
 
     const cpfCalculado = (c.cpf && c.cpf.trim() !== "")
       ? c.cpf
-      : (cand && cand.cpf && cand.cpf.trim() !== "" ? cand.cpf : (seed && seed.cpf ? seed.cpf : ""));
+      : (cand && cand.cpf && cand.cpf.trim() !== "" ? cand.cpf : "");
 
     const telefoneCalculado = (c.telefone && c.telefone.trim() !== "")
       ? c.telefone
-      : (cand && cand.telefone && cand.telefone.trim() !== "" ? cand.telefone : (seed ? seed.telefone : ""));
+      : (cand && cand.telefone && cand.telefone.trim() !== "" ? cand.telefone : "");
 
-    // Resolução de gaveta e repartição garantindo que nunca fiquem vazias
-    let effectiveGaveta = (c.gaveta && c.gaveta.trim() !== "") ? c.gaveta : (seed && seed.gaveta ? seed.gaveta : "");
-    let effectiveReparticao = (c.reparticao && c.reparticao.trim() !== "") ? c.reparticao : (seed && seed.reparticao ? seed.reparticao : "");
+    let effectiveGaveta = c.gaveta || "";
+    let effectiveReparticao = c.reparticao || "";
 
     if (c.situacao === "Recebida" && (!effectiveGaveta || !effectiveReparticao)) {
-      const char = getInitialChar(nomeCalculado || c.nome || (seed ? seed.nome : ""));
+      const char = getInitialChar(nomeCalculado || c.nome || "");
       const m = SEED_MAPEAMENTO.find((item) => item.inicial.toUpperCase() === char && item.ativo !== false);
       if (m) {
         effectiveGaveta = effectiveGaveta || m.gaveta;
@@ -3627,17 +3546,14 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
     }
 
     let displayUsrNome = c.usuario_nome;
-    if (!displayUsrNome || displayUsrNome === "Agente DETRAN" || displayUsrNome === "sistema" || displayUsrNome === "-") {
-      if (seed && seed.usuario_nome) {
-        displayUsrNome = seed.usuario_nome;
-      }
-    }
     if (usr) {
       displayUsrNome = usr.nome || usr.nome_curto || displayUsrNome;
     }
-    if (!displayUsrNome || displayUsrNome === "-") {
+    if (!displayUsrNome || displayUsrNome === "-" || displayUsrNome === "sistema") {
       displayUsrNome = c.situacao === "Entregue" ? "Agente DETRAN" : "-";
     }
+
+    const displayRespNome = resp ? resp.nome : (c.responsavel_nome || "-");
 
     return {
       ...c,
@@ -3647,8 +3563,8 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
       cpf: cpfCalculado,
       telefone: telefoneCalculado,
       usuario_nome: displayUsrNome,
-      responsavel_id: resp ? resp.id : effectiveRespId,
-      responsavel_nome: displayRespNome && displayRespNome !== "-" ? displayRespNome : (effectiveRespNome && !responsaveis.some(r => r.id === effectiveRespNome) ? effectiveRespNome : "-"),
+      responsavel_id: resp ? resp.id : c.responsavel_id,
+      responsavel_nome: displayRespNome,
       memorando_numero: memo ? memo.numero : (c.memorando_numero || undefined),
       remessa: memo ? (memo.remessa || memo.numero) : (c.remessa || undefined)
     };
@@ -4625,7 +4541,7 @@ export async function createGeralManual(
 // Ao clicar: Situação = Recebida, Data = atual, Usuário = logado
 // Determinar automaticamente Gaveta e Repartição via Mapeamento pela inicial do nome
 export async function receberCNH(id: string, userId: string, userNome: string): Promise<{ geral: GeralCNH; isVazio: boolean }> {
-  const geralList = await getGeralCNHs();
+  const geralList = await getLocalGeralCNHs();
   const index = geralList.findIndex((g) => g.id === id);
   if (index === -1) throw new Error("Registro CNH não encontrado no protocolo");
   const atual = geralList[index];
@@ -4679,7 +4595,7 @@ export async function receberCNHsBulk(
 ): Promise<{ updatedCount: number; updatedCNHs: GeralCNH[] }> {
   if (!items || items.length === 0) return { updatedCount: 0, updatedCNHs: [] };
 
-  const geralList = await getGeralCNHs();
+  const geralList = await getLocalGeralCNHs();
   const idMap = new Map<string, string | undefined>();
   items.forEach((item) => idMap.set(item.id, item.observacaoExtra));
 
@@ -4752,7 +4668,7 @@ export async function entregarCNH(
   userId: string,
   userNome: string
 ): Promise<GeralCNH> {
-  const geralList = await getGeralCNHs();
+  const geralList = await getLocalGeralCNHs();
   const index = geralList.findIndex((g) => g.id === id);
   if (index === -1) throw new Error("Registro CNH não encontrado");
   const atual = geralList[index];
@@ -4760,7 +4676,7 @@ export async function entregarCNH(
     throw new Error("Apenas CNHs Recebidas ou Pendentes podem ser entregues aos titulares ou responsáveis.");
   }
 
-  const responsaveis = await getResponsaveis();
+  const responsaveis = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
   const resp = responsaveis.find((r) => r.id === responsavel_id);
   if (!resp) throw new Error("Responsável pela retirada não identificado");
 
@@ -4816,7 +4732,7 @@ export async function updateGeralCNH(
   userId: string,
   userNome: string
 ): Promise<GeralCNH> {
-  const geralList = await getGeralCNHs();
+  const geralList = await getLocalGeralCNHs();
   const index = geralList.findIndex((g) => g.id === id);
   if (index === -1) throw new Error("Registro CNH não encontrado");
   const ant = geralList[index];
@@ -4828,7 +4744,7 @@ export async function updateGeralCNH(
   // Se a CNH possui candidato_id associado, sincronizar também na lista de candidatos do memorando
   if (atualizado.candidato_id) {
     try {
-      const cands = await getCandidatosAll();
+      const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
       const candIndex = cands.findIndex((c) => c.id === atualizado.candidato_id);
       if (candIndex !== -1) {
         const candUpdated = { ...cands[candIndex] };
@@ -4886,7 +4802,7 @@ export async function deleteGeralCNH(
   userId: string,
   userNome: string
 ): Promise<boolean> {
-  const geralList = await getGeralCNHs();
+  const geralList = await getLocalGeralCNHs();
   const target = geralList.find((g) => g.id === id);
   if (!target) return false;
 
@@ -4915,7 +4831,7 @@ export async function deleteMultipleGeralCNHs(
 ): Promise<number> {
   if (!ids || ids.length === 0) return 0;
   const idsSet = new Set(ids);
-  const geralList = await getGeralCNHs();
+  const geralList = await getLocalGeralCNHs();
   const targets = geralList.filter((g) => idsSet.has(g.id));
   const updated = geralList.filter((g) => !idsSet.has(g.id));
   saveStoredList("geral", updated);
@@ -5957,7 +5873,7 @@ interface SupabaseCacheEntry<T> {
   cachedAt: number;
 }
 const supabaseTableCache = new Map<string, SupabaseCacheEntry<any>>();
-const CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutos de validade por padrão
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos de validade por padrão para preservar a quota de egress do Supabase
 
 export function invalidateSupabaseCache(tableName?: string) {
   if (tableName) {
@@ -5971,7 +5887,7 @@ export function invalidateSupabaseCache(tableName?: string) {
   }
 }
 
-// Helper para buscar todos os registros de uma tabela do Supabase com paginação (evita limite de 1000 registros do PostgREST)
+// Helper para buscar todos os registros de uma tabela do Supabase com paginação e timeout seguro (evita travamento caso quota esteja no limite)
 export async function fetchAllRowsFromSupabase<T = any>(
   tableName: string, 
   pageSize = 1000,
@@ -5994,42 +5910,61 @@ export async function fetchAllRowsFromSupabase<T = any>(
   let hasMore = true;
   let totalBytes = 0;
 
-  while (hasMore) {
-    const to = from + pageSize - 1;
-    let query = supabase.from(tableName).select("*");
-    if (orderColumn) {
-      query = query.order(orderColumn, { ascending });
-    }
-    const { data, error } = await query.range(from, to);
-
-    if (error) {
-      throw error;
-    }
-
-    if (data && data.length > 0) {
-      allRows = allRows.concat(data as T[]);
-      const chunkBytes = JSON.stringify(data).length;
-      totalBytes += chunkBytes;
-
-      if (data.length < pageSize) {
-        hasMore = false;
-      } else {
-        from += pageSize;
+  try {
+    while (hasMore) {
+      const to = from + pageSize - 1;
+      let query = supabase.from(tableName).select("*");
+      if (orderColumn) {
+        query = query.order(orderColumn, { ascending });
       }
-    } else {
-      hasMore = false;
+
+      // Timeout seguro de 6 segundos por requisição
+      const { data, error } = await Promise.race([
+        query.range(from, to),
+        new Promise<{ data: any; error: any }>((_, reject) =>
+          setTimeout(() => reject(new Error(`Timeout ao consultar '${tableName}' no Supabase`)), 6000)
+        )
+      ]);
+
+      if (error) {
+        throw error;
+      }
+
+      if (data && data.length > 0) {
+        allRows = allRows.concat(data as T[]);
+        const chunkBytes = JSON.stringify(data).length;
+        totalBytes += chunkBytes;
+
+        if (data.length < pageSize) {
+          hasMore = false;
+        } else {
+          from += pageSize;
+        }
+      } else {
+        hasMore = false;
+      }
     }
+
+    const duration = Date.now() - reqStart;
+    trackEgress(tableName, "SELECT", totalBytes || 120, false, duration, `Download de ${allRows.length} linhas do Supabase`);
+
+    supabaseTableCache.set(cacheKey, {
+      data: allRows,
+      cachedAt: now
+    });
+
+    return allRows;
+  } catch (err: any) {
+    console.warn(`[Supabase SafeFetch] Falha ou tempo limite ao carregar '${tableName}':`, err?.message || err);
+    if (cached && cached.data.length > 0) {
+      console.info(`[Supabase SafeFetch] Retornando cache anterior para '${tableName}' (${cached.data.length} registros).`);
+      return cached.data;
+    }
+    if (allRows.length > 0) {
+      return allRows;
+    }
+    return [];
   }
-
-  const duration = Date.now() - reqStart;
-  trackEgress(tableName, "SELECT", totalBytes || 120, false, duration, `Download de ${allRows.length} linhas do Supabase`);
-
-  supabaseTableCache.set(cacheKey, {
-    data: allRows,
-    cachedAt: now
-  });
-
-  return allRows;
 }
 
 // Helper para enviar registros ao Supabase em lotes (evita erro de Payload Too Large)

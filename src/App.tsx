@@ -107,40 +107,17 @@ const MainLayout: React.FC = () => {
       }
     });
 
-    // Polling inteligente em background (Delta Sync): verifica a cada 12 segundos se houve novas alterações em outras máquinas
+    // Sincronização Delta suave em background (a cada 5 minutos, somente se a aba estiver visível)
+    // O Realtime via WebSockets acima já entrega atualizações instantâneas sem gastar quota de Egress
     const backgroundInterval = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
         syncGeralWithSupabase(false).catch(() => {});
       }
-    }, 12000);
-
-    // Polling secundário para tabelas de apoio (memorandos, candidatos, responsáveis) a cada 30 segundos
-    const metaInterval = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        invalidateSupabaseCache("memorandos");
-        invalidateSupabaseCache("candidatos");
-        invalidateSupabaseCache("responsaveis");
-        notifyDataSync("memorandos");
-      }
-    }, 30000);
-
-    // Ao focar na aba do navegador ou retornar a ela, efetua delta-sync automático imediato
-    const handleSyncTrigger = () => {
-      if (typeof document === "undefined" || document.visibilityState === "visible") {
-        syncGeralWithSupabase(false).catch(() => {});
-        invalidateSupabaseCache();
-        notifyDataSync("all");
-      }
-    };
-    window.addEventListener("focus", handleSyncTrigger);
-    document.addEventListener("visibilitychange", handleSyncTrigger);
+    }, 300000);
 
     return () => {
       unsubscribe();
       clearInterval(backgroundInterval);
-      clearInterval(metaInterval);
-      window.removeEventListener("focus", handleSyncTrigger);
-      document.removeEventListener("visibilitychange", handleSyncTrigger);
     };
   }, []);
 

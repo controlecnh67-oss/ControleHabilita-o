@@ -126,8 +126,17 @@ export async function getMeta(key: string): Promise<any> {
   }
 }
 
+// Helper para timeout seguro em consultas remotas (evita travamento do navegador se o Supabase estiver lento ou sem quota)
+export async function withTimeout<T>(promise: PromiseLike<T>, timeoutMs = 7000, fallbackMsg = "Timeout"): Promise<T> {
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(fallbackMsg)), timeoutMs))
+  ]);
+}
+
 /**
  * Normaliza objetos do Supabase para ter campos updated_at e formatos corretos
+ * Preserva estritamente a coluna 'ordem' original do banco de dados (Supabase)
  */
 export function normalizeCNHRecord(item: any): GeralCNH {
   const now = new Date().toISOString();
@@ -146,13 +155,31 @@ export function normalizeCNHRecord(item: any): GeralCNH {
     dataMov = now;
   }
 
-  const seed = (item.ordem ? seedByOrdem.get(Number(item.ordem)) : undefined)
-    || (item.id ? seedById.get(String(item.id)) : undefined)
-    || (item.nome ? seedByNormNome.get(getNormalizedSeedName(item.nome)) : undefined);
+  // Resolução estrita do número de Ordem: PRESERVA rigorosamente a ordem que está gravada no banco de dados (Supabase)
+  let finalOrdem = 0;
+  if (item.ordem !== undefined && item.ordem !== null && item.ordem !== "") {
+    const parsed = Number(item.ordem);
+    if (!isNaN(parsed) && parsed > 0) {
+      finalOrdem = parsed;
+    }
+  }
+
+  // Apenas busca seed caso seja registro demonstrativo puramente vazio
+  const seed = (!finalOrdem && !item.id && !item.nome)
+    ? undefined
+    : (item.id ? seedById.get(String(item.id)) : undefined);
+
+  if (!finalOrdem && seed?.ordem) {
+    finalOrdem = Number(seed.ordem);
+  }
+
+  const finalNome = (item.nome && String(item.nome).trim() !== "")
+    ? String(item.nome).trim()
+    : (seed ? seed.nome : "");
 
   const finalCpf = (item.cpf && String(item.cpf).trim() !== "")
     ? String(item.cpf).trim()
-    : (seed && seed.cpf && String(seed.cpf).trim() !== "" ? String(seed.cpf).trim() : "");
+    : (seed && seed.cpf ? String(seed.cpf).trim() : "");
 
   const finalUsrId = (item.usuario_id && item.usuario_id !== "sistema")
     ? item.usuario_id
@@ -171,12 +198,12 @@ export function normalizeCNHRecord(item: any): GeralCNH {
     : (seed && seed.reparticao ? String(seed.reparticao).trim() : "");
 
   return {
-    id: item.id || (seed ? seed.id : undefined) || `cnh-${item.ordem || Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-    ordem: Number(item.ordem) || (seed ? Number(seed.ordem) : 0),
+    id: item.id || (seed ? seed.id : undefined) || `cnh-${finalOrdem || Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+    ordem: finalOrdem,
     memorando_id: item.memorando_id || undefined,
     candidato_id: item.candidato_id || undefined,
     pa: item.pa !== undefined && item.pa !== null ? String(item.pa).trim() : undefined,
-    nome: item.nome || (seed ? seed.nome : ""),
+    nome: finalNome,
     cpf: finalCpf,
     telefone: item.telefone !== undefined && item.telefone !== null ? String(item.telefone) : (seed && seed.telefone ? String(seed.telefone) : ""),
     notificado_whatsapp: item.notificado_whatsapp !== undefined ? Boolean(item.notificado_whatsapp) : undefined,
@@ -256,11 +283,15 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
           const to = from + pageSize - 1;
           const reqStart = Date.now();
 
-          const { data, error } = await supabase
-            .from("geral_cnhs")
-            .select("*")
-            .order("ordem", { ascending: false })
-            .range(from, to);
+          const { data, error } = await withTimeout(
+            supabase
+              .from("geral_cnhs")
+              .select("*")
+              .order("ordem", { ascending: false })
+              .range(from, to),
+            10000,
+            "Tempo limite esgotado ao buscar CNHs no Supabase"
+          );
 
           const reqDuration = Date.now() - reqStart;
 
@@ -339,7 +370,11 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
           query = query.order("updated_at", { ascending: false }).limit(50);
         }
 
-        const { data: deltaData, error: deltaErr } = await query;
+        const { data: deltaData, error: deltaErr } = await withTimeout(
+          query,
+          6000,
+          "Timeout na consulta delta do Supabase"
+        ).catch((e) => ({ data: null, error: e }));
         const reqDuration = Date.now() - reqStart;
 
         if (deltaErr) {
@@ -473,7 +508,11 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
     }
 
     try {
-      const { error } = await supabase.from("geral_cnhs").upsert(primaryPayload, { onConflict: "id" });
+      const { error } = await withTimeout(
+        supabase.from("geral_cnhs").upsert(primaryPayload, { onConflict: "id" }),
+        4000,
+        "Timeout ao sincronizar com Supabase"
+      );
       trackEgress("geral_cnhs", "UPDATE", primaryPayload, false, 0, `Atualização individual CNH: ${normalized.nome || normalized.cpf}`);
       if (error) {
         console.warn("Aviso ao fazer upsert completo em geral_cnhs (tentando payload seguro):", error.message);
@@ -485,7 +524,11 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
           memorando_id: null,
           candidato_id: null
         };
-        const resFk = await supabase.from("geral_cnhs").upsert(safeFkPayload, { onConflict: "id" });
+        const resFk = await withTimeout(
+          supabase.from("geral_cnhs").upsert(safeFkPayload, { onConflict: "id" }),
+          3500,
+          "Timeout no upsert safeFk"
+        );
         if (resFk.error) {
           console.warn("Aviso ao tentar upsert sem FKs (tentando colunas básicas):", resFk.error.message);
           // Tentativa 2: Apenas colunas básicas garantidas (sem updated_at ou colunas opcionais)
@@ -502,7 +545,11 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
             usuario_nome: normalized.usuario_nome || null,
             observacao: normalized.observacao || null
           };
-          await supabase.from("geral_cnhs").upsert(basicPayload, { onConflict: "id" });
+          await withTimeout(
+            supabase.from("geral_cnhs").upsert(basicPayload, { onConflict: "id" }),
+            3000,
+            "Timeout no upsert básico"
+          );
         }
       }
     } catch (err) {
@@ -612,7 +659,11 @@ export async function deleteLocalGeralCNH(id: string): Promise<void> {
 
   if (isSupabaseConfigured()) {
     try {
-      await supabase.from("geral_cnhs").delete().eq("id", id);
+      await withTimeout(
+        supabase.from("geral_cnhs").delete().eq("id", id),
+        4000,
+        "Timeout ao deletar CNH no Supabase"
+      );
       trackEgress("geral_cnhs", "DELETE", 120, false, 0, `Exclusão de CNH ID ${id}`);
     } catch (err) {
       console.warn("Erro ao excluir do Supabase:", err);
@@ -630,7 +681,11 @@ export async function deleteLocalGeralCNHsBulk(ids: string[]): Promise<void> {
 
   if (isSupabaseConfigured()) {
     try {
-      await supabase.from("geral_cnhs").delete().in("id", ids);
+      await withTimeout(
+        supabase.from("geral_cnhs").delete().in("id", ids),
+        4000,
+        "Timeout ao deletar lote de CNHs no Supabase"
+      );
       trackEgress("geral_cnhs", "DELETE", 200, false, 0, `Exclusão em lote de ${ids.length} CNHs`);
     } catch (err) {
       console.warn("Erro ao excluir lote do Supabase:", err);
