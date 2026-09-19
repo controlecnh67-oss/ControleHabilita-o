@@ -2965,6 +2965,92 @@ export async function deleteCandidato(id: string, userId: string, userNome: stri
   await logAuditoria("candidatos", target.nome, "Exclusão", userId, userNome, target, null);
 }
 
+export async function excluirCandidatosDuplicadosEmLote(
+  candidatoIdsParaExcluir: string[],
+  userId: string,
+  userNome: string,
+  options?: { motivo?: string; permitirEmMemorandoRemetido?: boolean }
+): Promise<{ success: boolean; count: number; memorandosAtualizados: number }> {
+  if (!candidatoIdsParaExcluir || candidatoIdsParaExcluir.length === 0) {
+    return { success: true, count: 0, memorandosAtualizados: 0 };
+  }
+
+  const idsSet = new Set(candidatoIdsParaExcluir);
+  const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+  const targets = cands.filter((c) => idsSet.has(c.id));
+  if (targets.length === 0) {
+    return { success: true, count: 0, memorandosAtualizados: 0 };
+  }
+
+  // Identificar memorandos afetados
+  const memos = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
+  const memoMap = new Map(memos.map((m) => [m.id, m]));
+
+  // Marcar como deletados na persistência de exclusões
+  for (const id of candidatoIdsParaExcluir) {
+    addDeletedId("candidatos", id);
+  }
+
+  // Deletar no Supabase se configurado
+  if (isSupabaseConfigured()) {
+    try {
+      for (let i = 0; i < candidatoIdsParaExcluir.length; i += 50) {
+        const chunk = candidatoIdsParaExcluir.slice(i, i + 50);
+        await supabase.from("candidatos").delete().in("id", chunk);
+      }
+    } catch (e) {
+      console.warn("Aviso ao deletar candidatos duplicados no Supabase:", e);
+    }
+  }
+
+  // Atualizar lista local de candidatos
+  const filtrados = cands.filter((c) => !idsSet.has(c.id));
+  saveStoredList("candidatos", filtrados);
+
+  // Recalcular candidatos_count para os memorandos afetados
+  const affectedMemoIds = new Set(targets.map((t) => t.memorando_id));
+  for (const memoId of affectedMemoIds) {
+    const m = memoMap.get(memoId);
+    if (m) {
+      const remainingCount = filtrados.filter((c) => c.memorando_id === memoId).length;
+      m.candidatos_count = remainingCount;
+      if (isSupabaseConfigured()) {
+        try {
+          await supabase.from("memorandos").update({ candidatos_count: remainingCount }).eq("id", memoId);
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+  saveStoredList("memorandos", memos);
+
+  notifyDataSync("candidatos");
+  notifyDataSync("memorandos");
+
+  await logAuditoria(
+    "candidatos",
+    `Saneamento de ${candidatoIdsParaExcluir.length} duplicata(s)`,
+    "Exclusão",
+    userId,
+    userNome,
+    null,
+    {
+      tipo: "Varredura e saneamento de duplicatas",
+      total_excluidos: candidatoIdsParaExcluir.length,
+      memorandos_afetados: affectedMemoIds.size,
+      motivo: options?.motivo || "Varredura de duplicatas em candidatos",
+      amostra: targets.slice(0, 10).map((t) => ({ id: t.id, nome: t.nome, cpf: t.cpf, memoId: t.memorando_id }))
+    }
+  );
+
+  return {
+    success: true,
+    count: candidatoIdsParaExcluir.length,
+    memorandosAtualizados: affectedMemoIds.size
+  };
+}
+
 export async function updateCandidato(
   id: string,
   data: Partial<Omit<Candidato, "id" | "memorando_id" | "created_at">>,
@@ -3149,6 +3235,149 @@ export async function reabrirMemorando(memorando_id: string, userId: string, use
   );
 
   return idsParaRemover.length;
+}
+
+// ============================================================================
+// AUDITORIA E REMESSA DE CANDIDATOS PARA A TABELA GERAL
+// ============================================================================
+
+export async function remeterCandidatosFaltantesAoGeral(
+  candidatosParaRemeter: Array<{
+    id: string;
+    memorando_id?: string;
+    nome: string;
+    cpf?: string;
+    pa?: string;
+    telefone?: string;
+    memorando_numero?: string;
+    memorando_remessa?: string;
+    memorando_data?: string;
+  }>,
+  userId: string,
+  userNome: string,
+  options?: {
+    alocarGavetaPorInicial?: boolean;
+    gavetaManual?: string;
+    reparticaoManual?: string;
+  }
+): Promise<{ remetidosCount: number; novasCNHs: GeralCNH[] }> {
+  if (!candidatosParaRemeter || candidatosParaRemeter.length === 0) {
+    return { remetidosCount: 0, novasCNHs: [] };
+  }
+
+  const geralList = await getLocalGeralCNHs();
+  let maxOrdem = geralList.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0);
+  const now = new Date().toISOString();
+  const novasCNHs: GeralCNH[] = [];
+  const histEntries: any[] = [];
+  const auditEntries: any[] = [];
+
+  for (const cand of candidatosParaRemeter) {
+    maxOrdem++;
+    const nomeLimpo = (cand.nome || "Candidato sem nome").trim().toUpperCase();
+
+    let locGaveta = "";
+    let locReparticao = "";
+
+    if (options?.gavetaManual && options?.reparticaoManual) {
+      locGaveta = options.gavetaManual.trim();
+      locReparticao = options.reparticaoManual.trim();
+    } else if (options?.alocarGavetaPorInicial) {
+      const loc = await findLocalizacaoPorNome(nomeLimpo);
+      locGaveta = loc.gaveta;
+      locReparticao = loc.reparticao;
+    }
+
+    const uniqueId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : (toValidUUID(`cnh-cand-${cand.id.replace(/\W/g, "")}-${Date.now()}-${maxOrdem}`) || `cnh-cand-${Date.now()}-${maxOrdem}`);
+
+    const memoNum = cand.memorando_numero || "S/N";
+    const remessaNum = cand.memorando_remessa || memoNum;
+
+    const novaCNH: GeralCNH = {
+      id: uniqueId,
+      ordem: maxOrdem,
+      memorando_id: cand.memorando_id || "",
+      candidato_id: cand.id,
+      pa: cand.pa ? cand.pa.trim() : "",
+      nome: nomeLimpo,
+      cpf: cand.cpf ? cand.cpf.trim() : "",
+      telefone: cand.telefone ? cand.telefone.trim() : "",
+      gaveta: locGaveta,
+      reparticao: locReparticao,
+      situacao: "Remetida",
+      data_movimento: cand.memorando_data || now,
+      usuario_id: userId,
+      usuario_nome: userNome,
+      memorando_numero: memoNum,
+      remessa: remessaNum,
+      observacao: `Remetida via Auditoria de Candidatos - Memorando ${memoNum}${cand.memorando_remessa ? ` - Remessa ${cand.memorando_remessa}` : ""}`,
+      created_at: now
+    };
+
+    novasCNHs.push(novaCNH);
+
+    histEntries.push({
+      geral_id: novaCNH.id,
+      geral_ordem: novaCNH.ordem,
+      geral_nome: novaCNH.nome,
+      geral_cpf: novaCNH.cpf,
+      situacao_anterior: null,
+      situacao_nova: "Remetida",
+      usuario_id: userId,
+      usuario_nome: userNome,
+      observacao: `Remetida via Auditoria de Candidatos - Memorando ${memoNum}${locGaveta ? ` - Gaveta ${locGaveta}` : ""}`
+    });
+
+    auditEntries.push({
+      tabela: "geral",
+      registro_id: `Ordem #${novaCNH.ordem}`,
+      acao: "Inclusão (Auditoria de Remessa)",
+      usuario_id: userId,
+      usuario_nome: userNome,
+      valores_anteriores: null,
+      valores_novos: novaCNH
+    });
+  }
+
+  if (novasCNHs.length > 0) {
+    const combined = [...novasCNHs, ...geralList];
+    saveStoredList("geral", combined);
+    await saveLocalGeralCNHsBulk(novasCNHs);
+    await logHistoricoBulk(histEntries);
+    await logAuditoriaBulk(auditEntries);
+
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.from("geral_cnhs").upsert(novasCNHs, { onConflict: "id" });
+      } catch (e) {
+        console.warn("Aviso ao salvar novas CNHs no Supabase:", e);
+      }
+    }
+
+    // Registrar auditoria consolidada na tabela candidatos
+    await logAuditoria(
+      "candidatos",
+      "Auditoria Remessa",
+      "Remessa",
+      userId,
+      userNome,
+      null,
+      {
+        tipo: "Remessa em Lote para Tabela Geral",
+        total_remetidos: novasCNHs.length,
+        ordens: `#${novasCNHs[0].ordem} até #${novasCNHs[novasCNHs.length - 1].ordem}`,
+        candidatos_amostra: candidatosParaRemeter.slice(0, 10).map((c) => ({ id: c.id, nome: c.nome, memo: c.memorando_numero }))
+      }
+    );
+
+    notifyDataSync("geral");
+    notifyDataSync("candidatos");
+    notifyDataSync("memorandos");
+  }
+
+  return { remetidosCount: novasCNHs.length, novasCNHs };
 }
 
 // ============================================================================

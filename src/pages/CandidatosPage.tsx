@@ -29,13 +29,19 @@ import {
   Eye,
   Send,
   HelpCircle,
-  FileCheck
+  FileCheck,
+  ShieldCheck,
+  AlertTriangle
 } from "lucide-react";
-import { getCandidatosAll, getMemorandos, getGeralCNHs } from "../services/db";
+import { getCandidatosAll, getMemorandos, getGeralCNHs, remeterCandidatosFaltantesAoGeral } from "../services/db";
 import { Candidato, Memorando, GeralCNH, SituacaoGeral } from "../types";
 import { formatCPF, formatPhone, formatDateTime, formatDate, normalizeSearch, matchDigitsSafe } from "../lib/utils";
 import { getOrgaoConfig } from "../services/orgaoService";
 import { Modal } from "../components/ui/Modal";
+import { useAuth } from "../context/AuthContext";
+import { AuditoriaRemessaCandidatosModal } from "../components/AuditoriaRemessaCandidatosModal";
+import { AuditoriaDuplicatasCandidatosModal } from "../components/AuditoriaDuplicatasCandidatosModal";
+import { scanCandidatosDuplicates } from "../services/candidatosDuplicatesService";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -110,12 +116,19 @@ type SortField = "seq" | "nome" | "cpf" | "pa" | "telefone" | "memorando" | "cre
 type SortDirection = "asc" | "desc";
 
 export const CandidatosPage: React.FC = () => {
+  const { user, canEdit } = useAuth();
+
   // Estados principais de dados
   const [candidatos, setCandidatos] = useState<Candidato[]>([]);
   const [memorandos, setMemorandos] = useState<Memorando[]>([]);
   const [geralCNHs, setGeralCNHs] = useState<GeralCNH[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+  // Modal de Auditoria e Remessa de CNHs Faltantes
+  const [isAuditoriaModalOpen, setIsAuditoriaModalOpen] = useState<boolean>(false);
+  // Modal de Varredura e Auditoria de Duplicatas
+  const [isDuplicatasModalOpen, setIsDuplicatasModalOpen] = useState<boolean>(false);
 
   // Filtros de busca
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -367,6 +380,18 @@ export const CandidatosPage: React.FC = () => {
     return Array.from(set).sort();
   }, [candidatosEnriquecidos]);
 
+  // Candidatos que já foram remetidos (memorando com status "Remetido"), mas que NÃO estão na Tabela Geral de CNHs
+  const candidatosRemetidosFaltantes = useMemo(() => {
+    return candidatosEnriquecidos.filter(
+      (c) => c.memorando_status === "Remetido" && !c.cnh_id
+    );
+  }, [candidatosEnriquecidos]);
+
+  // Grupos de duplicatas em candidatos para exibição e auditoria
+  const duplicatasDetectadas = useMemo(() => {
+    return scanCandidatosDuplicates(candidatosEnriquecidos);
+  }, [candidatosEnriquecidos]);
+
   // Contadores para métricas
   const metricas = useMemo(() => {
     const total = candidatosEnriquecidos.length;
@@ -390,8 +415,10 @@ export const CandidatosPage: React.FC = () => {
       percentEmElaboracao: total > 0 ? Math.round((emElaboracao / total) * 100) : 0,
       entregues,
       percentEntregues: total > 0 ? Math.round((entregues / total) * 100) : 0,
+      remetidosFaltantes: candidatosRemetidosFaltantes.length,
+      duplicatasGrupos: duplicatasDetectadas.length,
     };
-  }, [candidatosEnriquecidos]);
+  }, [candidatosEnriquecidos, candidatosRemetidosFaltantes, duplicatasDetectadas]);
 
   // Filtragem dos dados
   const candidatosFiltrados = useMemo(() => {
@@ -439,7 +466,9 @@ export const CandidatosPage: React.FC = () => {
 
       // 5. Filtro por Situação da CNH
       if (selectedSituacaoCNH !== "all") {
-        if (selectedSituacaoCNH === "nao_gerada") {
+        if (selectedSituacaoCNH === "remetidas_fora_geral") {
+          if (!(c.memorando_status === "Remetido" && !c.cnh_id)) return false;
+        } else if (selectedSituacaoCNH === "nao_gerada") {
           if (c.cnh_id || c.memorando_status === "Remetido") return false;
         } else if (c.cnh_situacao !== selectedSituacaoCNH) {
           return false;
@@ -811,6 +840,54 @@ export const CandidatosPage: React.FC = () => {
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? "animate-spin text-blue-600" : ""}`} />
           </button>
 
+          {/* Botão de Auditoria e Checagem de Remessas */}
+          <button
+            id="btn-auditoria-remessas"
+            onClick={() => setIsAuditoriaModalOpen(true)}
+            className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all cursor-pointer border ${
+              candidatosRemetidosFaltantes.length > 0
+                ? "bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-md shadow-amber-500/20"
+                : "bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700"
+            }`}
+            title="Auditar candidatos de memorandos remetidos que não constam na Tabela Geral"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Auditar Remessas</span>
+            {candidatosRemetidosFaltantes.length > 0 ? (
+              <span className="px-1.5 py-0.5 rounded-full bg-white text-amber-700 text-[10px] font-black animate-pulse">
+                {candidatosRemetidosFaltantes.length}
+              </span>
+            ) : (
+              <span className="px-1.5 py-0.2 rounded-md bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">
+                OK
+              </span>
+            )}
+          </button>
+
+          {/* Botão de Varredura e Auditoria de Duplicatas */}
+          <button
+            id="btn-varredura-duplicatas-candidatos"
+            onClick={() => setIsDuplicatasModalOpen(true)}
+            className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl font-semibold text-xs transition-all cursor-pointer border ${
+              duplicatasDetectadas.length > 0
+                ? "bg-purple-600 hover:bg-purple-700 text-white border-purple-700 shadow-md shadow-purple-600/20"
+                : "bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700"
+            }`}
+            title="Executar varredura de duplicatas em candidatos com modal de auditoria para saneamento"
+          >
+            <Copy className="w-4 h-4" />
+            <span>Varredura Duplicatas</span>
+            {duplicatasDetectadas.length > 0 ? (
+              <span className="px-1.5 py-0.5 rounded-full bg-white text-purple-700 text-[10px] font-black animate-pulse">
+                {duplicatasDetectadas.length}
+              </span>
+            ) : (
+              <span className="px-1.5 py-0.2 rounded-md bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">
+                0
+              </span>
+            )}
+          </button>
+
           {/* Botão de Colunas (Dropdown) */}
           <div className="relative" ref={colsDropdownRef}>
             <button
@@ -1088,6 +1165,87 @@ export const CandidatosPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Alerta de Auditoria: Candidatos Remetidos Ausentes no Geral */}
+      {candidatosRemetidosFaltantes.length > 0 && (
+        <div
+          id="alert-candidatos-remetidos-faltantes"
+          className="p-4 bg-amber-50/90 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-950 dark:text-amber-100 shadow-xs animate-in fade-in duration-200"
+        >
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-200/80 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="font-bold text-xs sm:text-sm flex items-center gap-2">
+                Auditoria: {candidatosRemetidosFaltantes.length} CNH(s) remetida(s) ausente(s) na Tabela Geral
+                <span className="px-2 py-0.2 rounded-md bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-200 text-[10px] font-black">
+                  Ação Necessária
+                </span>
+              </h4>
+              <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80 mt-0.5">
+                Estes candidatos pertencem a memorandos remetidos, porém os registros físicos de CNH ainda não constam na base do Protocolo Geral.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+            <button
+              onClick={() => setSelectedSituacaoCNH(selectedSituacaoCNH === "remetidas_fora_geral" ? "all" : "remetidas_fora_geral")}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-xl border transition-colors cursor-pointer ${
+                selectedSituacaoCNH === "remetidas_fora_geral"
+                  ? "bg-amber-600 text-white border-amber-600 font-bold"
+                  : "bg-amber-100/70 hover:bg-amber-200 text-amber-900 dark:bg-amber-900/40 dark:hover:bg-amber-900/70 dark:text-amber-200 border-amber-300 dark:border-amber-700"
+              }`}
+            >
+              {selectedSituacaoCNH === "remetidas_fora_geral" ? "Ver Todos" : "Filtrar na Lista"}
+            </button>
+            <button
+              onClick={() => setIsAuditoriaModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-md shadow-blue-500/20 cursor-pointer"
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Auditar e Remeter CNHs</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Alerta de Auditoria: Duplicatas Detectadas na Tabela de Candidatos */}
+      {duplicatasDetectadas.length > 0 && (
+        <div
+          id="alert-candidatos-duplicatas-detectadas"
+          className="p-4 bg-purple-50/90 dark:bg-purple-950/40 border border-purple-300 dark:border-purple-800 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-purple-950 dark:text-purple-100 shadow-xs animate-in fade-in duration-200"
+        >
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-purple-200/80 dark:bg-purple-900/60 text-purple-800 dark:text-purple-300 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
+              <Copy className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="font-bold text-xs sm:text-sm flex items-center gap-2">
+                Auditoria: {duplicatasDetectadas.length} grupo(s) de duplicatas identificado(s) na Tabela de Candidatos
+                <span className="px-2 py-0.2 rounded-md bg-purple-200 dark:bg-purple-900 text-purple-900 dark:text-purple-200 text-[10px] font-black">
+                  Saneamento
+                </span>
+              </h4>
+              <p className="text-[11px] text-purple-800/80 dark:text-purple-300/80 mt-0.5">
+                Foram detectados candidatos repetidos com mesmo CPF, mesmo Processo (PA) ou correspondência fonética. Abra a auditoria para revisar e expurgar duplicatas com segurança.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+            <button
+              id="btn-abrir-auditoria-duplicatas-banner"
+              onClick={() => setIsDuplicatasModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl bg-purple-600 hover:bg-purple-700 text-white transition-all shadow-md shadow-purple-600/20 cursor-pointer"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span>Auditar Duplicatas</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 3. Painel de Filtros de Busca */}
       <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
@@ -1203,6 +1361,11 @@ export const CandidatosPage: React.FC = () => {
               className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white font-medium focus:ring-2 focus:ring-blue-500 outline-hidden cursor-pointer"
             >
               <option value="all">Todas as Situações</option>
+              {candidatosRemetidosFaltantes.length > 0 && (
+                <option value="remetidas_fora_geral">
+                  ⚠️ Remetidas fora do Geral ({candidatosRemetidosFaltantes.length})
+                </option>
+              )}
               <option value="Recebida">Recebida (Arquivada)</option>
               <option value="Entregue">Entregue ao Titular</option>
               <option value="Remetida">Remetida (Em Trânsito)</option>
@@ -1725,7 +1888,14 @@ export const CandidatosPage: React.FC = () => {
                       {/* 9. Situação CNH / Protocolo */}
                       {columns.situacao_cnh && (
                         <td className="py-3 px-4">
-                          {renderSituacaoBadge(cand.cnh_situacao)}
+                          {cand.memorando_status === "Remetido" && !cand.cnh_id ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-bold text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-700 shadow-xs">
+                              <AlertTriangle className="w-3 h-3 text-amber-600 dark:text-amber-400 shrink-0" />
+                              Ausente no Geral
+                            </span>
+                          ) : (
+                            renderSituacaoBadge(cand.cnh_situacao)
+                          )}
                         </td>
                       )}
 
@@ -1760,6 +1930,19 @@ export const CandidatosPage: React.FC = () => {
                       {columns.acoes && (
                         <td className="py-3 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center justify-center gap-1">
+                            {cand.memorando_status === "Remetido" && !cand.cnh_id && canEdit && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedCandidato(cand);
+                                  setIsAuditoriaModalOpen(true);
+                                }}
+                                title="CNH remetida não consta no Geral - Abrir Auditoria/Remessa"
+                                className="p-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-100 dark:hover:bg-amber-950/60 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <ShieldCheck className="w-4 h-4" />
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => setSelectedCandidato(cand)}
@@ -2016,6 +2199,45 @@ export const CandidatosPage: React.FC = () => {
               )}
             </div>
 
+            {/* Aviso de Auditoria e Ação de Remessa Individual */}
+            {selectedCandidato.memorando_status === "Remetido" && !selectedCandidato.cnh_id && (
+              <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-900 dark:text-amber-200">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <div className="text-xs">
+                    <p className="font-bold">
+                      CNH remetida no Memorando #{selectedCandidato.memorando_numero}, mas ausente no Geral.
+                    </p>
+                    <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80 mt-0.5">
+                      Este candidato consta como remetido, porém o registro no Protocolo Geral ainda não foi gerado.
+                    </p>
+                  </div>
+                </div>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await remeterCandidatosFaltantesAoGeral(
+                          [selectedCandidato],
+                          user?.id || "sistema",
+                          user?.nome_curto || user?.nome || "Agente DETRAN"
+                        );
+                        await loadData(true);
+                        setSelectedCandidato(null);
+                      } catch (err: any) {
+                        alert(err?.message || "Erro ao remeter CNH");
+                      }
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs shadow-xs transition-colors shrink-0 cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Remeter CNH ao Geral</span>
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* Rodapé do Modal com Botões de Ação */}
             <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-700">
               {selectedCandidato.telefone ? (
@@ -2075,6 +2297,30 @@ export const CandidatosPage: React.FC = () => {
           </div>
         </Modal>
       )}
+
+      {/* Modal de Auditoria e Remessa de CNHs Faltantes */}
+      <AuditoriaRemessaCandidatosModal
+        isOpen={isAuditoriaModalOpen}
+        onClose={() => setIsAuditoriaModalOpen(false)}
+        candidatosEnriquecidos={candidatosEnriquecidos}
+        user={user}
+        canEdit={canEdit}
+        onSuccess={async () => {
+          await loadData(true);
+        }}
+      />
+
+      {/* Modal de Varredura e Auditoria de Duplicatas */}
+      <AuditoriaDuplicatasCandidatosModal
+        isOpen={isDuplicatasModalOpen}
+        onClose={() => setIsDuplicatasModalOpen(false)}
+        candidatosEnriquecidos={candidatosEnriquecidos}
+        user={user}
+        canEdit={canEdit}
+        onSuccess={async () => {
+          await loadData(true);
+        }}
+      />
     </div>
   );
 };
