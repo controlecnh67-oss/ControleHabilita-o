@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
-import { RotateCcw, Zap } from "lucide-react";
+import { RotateCcw, Zap, Sparkles, FolderArchive, Layers } from "lucide-react";
 import { Modal } from "./ui/Modal";
 import { GeralCNH, SituacaoGeral, CadastroManualCNHSchema } from "../types";
 import { formatCPF } from "../lib/utils";
-import { createGeralManual } from "../services/db";
+import { DEFAULT_GAVETAS, DEFAULT_REPARTICOES } from "../lib/constants";
+import { createGeralManual, findLocalizacaoPorNome } from "../services/db";
 
 interface CadastroManualModalProps {
   isOpen: boolean;
@@ -21,6 +22,10 @@ export const CadastroManualModal: React.FC<CadastroManualModalProps> = React.mem
   const [nome, setNome] = useState("");
   const [cpf, setCpf] = useState("");
   const [situacao, setSituacao] = useState<SituacaoGeral>("Recebida");
+  const [escolhaManual, setEscolhaManual] = useState(false);
+  const [gavetaManual, setGavetaManual] = useState("Gaveta 1");
+  const [reparticaoManual, setReparticaoManual] = useState("Repartição 1");
+  const [sugestaoAutomatica, setSugestaoAutomatica] = useState<{ gaveta: string; reparticao: string } | null>(null);
   const [observacao, setObservacao] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -37,6 +42,10 @@ export const CadastroManualModal: React.FC<CadastroManualModalProps> = React.mem
       setNome("");
       setCpf("");
       setSituacao("Recebida");
+      setEscolhaManual(false);
+      setGavetaManual("Gaveta 1");
+      setReparticaoManual("Repartição 1");
+      setSugestaoAutomatica(null);
       setObservacao("");
       const timer = setTimeout(() => {
         nomeInputRef.current?.focus();
@@ -45,10 +54,28 @@ export const CadastroManualModal: React.FC<CadastroManualModalProps> = React.mem
     }
   }, [isOpen]);
 
+  // Atualiza sugestão automática ao digitar nome
+  useEffect(() => {
+    const nomeTrim = nome.trim();
+    if (nomeTrim.length > 0) {
+      findLocalizacaoPorNome(nomeTrim).then((loc) => {
+        setSugestaoAutomatica(loc);
+        if (!escolhaManual) {
+          if (loc.gaveta && loc.gaveta !== "Vazio") setGavetaManual(loc.gaveta);
+          if (loc.reparticao && loc.reparticao !== "Vazio") setReparticaoManual(loc.reparticao);
+        }
+      });
+    } else {
+      setSugestaoAutomatica(null);
+    }
+  }, [nome, escolhaManual]);
+
   const handleClearForm = () => {
     setNome("");
     setCpf("");
     setObservacao("");
+    setEscolhaManual(false);
+    setSugestaoAutomatica(null);
     setErrors({});
     setSuccessMsg(null);
     setTimeout(() => {
@@ -102,6 +129,8 @@ export const CadastroManualModal: React.FC<CadastroManualModalProps> = React.mem
           cpf: formattedCpf,
           situacao: situacaoEscolhida,
           observacao: obsEscolhida,
+          gaveta: escolhaManual ? gavetaManual : undefined,
+          reparticao: escolhaManual ? reparticaoManual : undefined,
         },
         user.id,
         user.nome_curto
@@ -111,7 +140,8 @@ export const CadastroManualModal: React.FC<CadastroManualModalProps> = React.mem
         onSuccess(nova, "Entregue");
         onClose();
       } else {
-        const msg = `✅ CNH #${nova.ordem} ("${nova.nome}") cadastrada com sucesso! Alocada em: ${nova.gaveta || "Em Trânsito"} ${nova.reparticao}`;
+        const modoAloc = escolhaManual ? "Alocada manualmente" : "Alocada";
+        const msg = `✅ CNH #${nova.ordem} ("${nova.nome}") cadastrada com sucesso! ${modoAloc} em: ${nova.gaveta || "Em Trânsito"} ${nova.reparticao}`;
         setSuccessMsg(msg);
         onSuccess(nova, situacaoEscolhida);
       }
@@ -218,12 +248,94 @@ export const CadastroManualModal: React.FC<CadastroManualModalProps> = React.mem
               onChange={(e) => setSituacao(e.target.value as SituacaoGeral)}
               className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
             >
-              <option value="Recebida">🔵 Recebida na Agência (Aloca Gaveta auto)</option>
+              <option value="Recebida">🔵 Recebida na Agência</option>
               <option value="Remetida">🟡 Remetida (Em trânsito)</option>
               <option value="Pendente">🔴 Pendente (Com exigência)</option>
               <option value="Entregue">🟢 Entregue diretamente ao cidadão</option>
             </select>
           </div>
+        </div>
+
+        {/* Bloco de Escolha Manual de Gaveta e Repartição */}
+        <div className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2.5">
+          <div className="flex items-center justify-between">
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-200 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={escolhaManual}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setEscolhaManual(checked);
+                  if (checked && sugestaoAutomatica) {
+                    if (sugestaoAutomatica.gaveta && sugestaoAutomatica.gaveta !== "Vazio") {
+                      setGavetaManual(sugestaoAutomatica.gaveta);
+                    }
+                    if (sugestaoAutomatica.reparticao && sugestaoAutomatica.reparticao !== "Vazio") {
+                      setReparticaoManual(sugestaoAutomatica.reparticao);
+                    }
+                  }
+                }}
+                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 dark:border-slate-600 cursor-pointer"
+              />
+              <span className="flex items-center gap-1.5">
+                <FolderArchive className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                Ativar escolha manual de Gaveta e Repartição
+              </span>
+            </label>
+
+            {sugestaoAutomatica && (
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 font-medium">
+                <Sparkles className="w-3 h-3 text-amber-500" />
+                Mapeamento Auto: <strong className="text-slate-700 dark:text-slate-300">{sugestaoAutomatica.gaveta} / {sugestaoAutomatica.reparticao}</strong>
+              </span>
+            )}
+          </div>
+
+          {escolhaManual ? (
+            <div className="pt-2 border-t border-slate-200 dark:border-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
+                  <FolderArchive className="w-3.5 h-3.5 text-blue-500" />
+                  Gaveta de Destino
+                </label>
+                <select
+                  value={gavetaManual}
+                  onChange={(e) => setGavetaManual(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+                >
+                  {DEFAULT_GAVETAS.map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
+                  <Layers className="w-3.5 h-3.5 text-indigo-500" />
+                  Repartição de Destino
+                </label>
+                <select
+                  value={reparticaoManual}
+                  onChange={(e) => setReparticaoManual(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+                >
+                  {DEFAULT_REPARTICOES.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : (
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              {situacao === "Recebida"
+                ? "A alocação ocorrerá automaticamente com base no mapeamento da inicial do nome."
+                : "A gaveta e repartição permanecerão em trânsito até o recebimento da CNH."}
+            </p>
+          )}
         </div>
 
         <div>

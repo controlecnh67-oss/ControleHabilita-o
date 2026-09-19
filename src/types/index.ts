@@ -549,6 +549,7 @@ export interface MapaArquivoFisico {
 // Interfaces para Declaração de Retirada de CNH por Procurador / Responsável
 export interface DeclaracaoItemCondutor {
   item: number;
+  ordem?: number | string;
   cnh_id?: string;
   nome: string;
   cpf: string;

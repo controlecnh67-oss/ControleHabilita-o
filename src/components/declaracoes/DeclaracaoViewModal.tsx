@@ -2,7 +2,7 @@ import React from "react";
 import { X, FileDown, Printer, Edit, FileText, CheckCircle } from "lucide-react";
 import { Declaracao } from "../../types";
 import { getOrgaoConfig } from "../../services/orgaoService";
-import { downloadDeclaracaoPDF, formatDataPorExtenso, formatCPFDisplay, resolveCondutorDetails } from "../../services/declaracaoPdfService";
+import { downloadDeclaracaoPDF, formatDataPorExtenso, formatCPFDisplay, resolveCondutorDetails, formatApenasNumero } from "../../services/declaracaoPdfService";
 
 interface DeclaracaoViewModalProps {
   declaracao: Declaracao | null;
@@ -159,22 +159,32 @@ export const DeclaracaoViewModal: React.FC<DeclaracaoViewModalProps> = ({
               <table className="w-full text-left text-[11px]">
                 <thead className="bg-slate-50 border-b border-slate-300 font-bold text-slate-800 uppercase text-[10px]">
                   <tr>
-                    <th className="py-2 px-2.5 w-12 text-center border-r border-slate-200">ITEM</th>
-                    <th className="py-2 px-3 border-r border-slate-200">NOME</th>
+                    <th className="py-2 px-2 w-10 text-center border-r border-slate-200">ITEM</th>
+                    <th className="py-2 px-2 w-14 text-center border-r border-slate-200">ORDEM</th>
+                    <th className="py-2 px-3 border-r border-slate-200">TITULAR</th>
                     <th className="py-2 px-3 text-center border-r border-slate-200">CPF</th>
-                    <th className="py-2 px-2.5 text-center border-r border-slate-200">GAVETA</th>
-                    <th className="py-2 px-3 text-center border-r border-slate-200">REPARTIÇÃO</th>
-                    <th className="py-2 px-3 text-center">DATA MOV. DA CNH</th>
+                    <th className="py-2 px-2 text-center border-r border-slate-200 w-12">GAV.</th>
+                    <th className="py-2 px-2 text-center border-r border-slate-200 w-12">REP.</th>
+                    <th className="py-2 px-2.5 text-center border-r border-slate-200">STATUS</th>
+                    <th className="py-2 px-2.5 text-center">DATA</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {declaracao.condutores && declaracao.condutores.length > 0 ? (
                     declaracao.condutores.map((c, i) => {
                       const details = resolveCondutorDetails(c);
+                      const ordemVal = c.ordem !== undefined && c.ordem !== null && c.ordem !== ""
+                        ? c.ordem
+                        : (details.ordem !== "-" ? details.ordem : null);
+                      const situacaoVal = c.situacao || (details.situacao !== "-" ? details.situacao : "Recebida");
+
                       return (
                         <tr key={i}>
-                          <td className="py-1.5 px-2.5 text-center font-bold border-r border-slate-200">
+                          <td className="py-1.5 px-2 text-center font-bold border-r border-slate-200">
                             {c.item || i + 1}
+                          </td>
+                          <td className="py-1.5 px-2 text-center font-bold text-slate-800 border-r border-slate-200">
+                            {ordemVal ? (String(ordemVal).startsWith("#") ? ordemVal : `#${ordemVal}`) : "-"}
                           </td>
                           <td className="py-1.5 px-3 font-semibold uppercase border-r border-slate-200">
                             {c.nome}
@@ -182,13 +192,26 @@ export const DeclaracaoViewModal: React.FC<DeclaracaoViewModalProps> = ({
                           <td className="py-1.5 px-3 text-center font-mono text-slate-700 border-r border-slate-200">
                             {formatCPFDisplay(c.cpf) || "-"}
                           </td>
-                          <td className="py-1.5 px-2.5 text-center text-slate-700 border-r border-slate-200">
-                            {details.gaveta}
+                          <td className="py-1.5 px-2 text-center font-mono font-semibold text-slate-700 border-r border-slate-200">
+                            {formatApenasNumero(details.gaveta)}
                           </td>
-                          <td className="py-1.5 px-3 text-center text-slate-700 border-r border-slate-200">
-                            {details.reparticao}
+                          <td className="py-1.5 px-2 text-center font-mono font-semibold text-slate-700 border-r border-slate-200">
+                            {formatApenasNumero(details.reparticao)}
                           </td>
-                          <td className="py-1.5 px-3 text-center font-mono text-slate-700">
+                          <td className="py-1.5 px-2.5 text-center border-r border-slate-200">
+                            <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                              situacaoVal === "Entregue"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : situacaoVal === "Recebida"
+                                ? "bg-blue-100 text-blue-800"
+                                : situacaoVal === "Remetida"
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-slate-100 text-slate-700"
+                            }`}>
+                              {situacaoVal}
+                            </span>
+                          </td>
+                          <td className="py-1.5 px-2.5 text-center font-mono text-slate-700 text-[10px]">
                             {details.data_movimento}
                           </td>
                         </tr>
@@ -196,7 +219,7 @@ export const DeclaracaoViewModal: React.FC<DeclaracaoViewModalProps> = ({
                     })
                   ) : (
                     <tr>
-                      <td colSpan={6} className="py-2 px-3 text-center text-slate-400">
+                      <td colSpan={8} className="py-2 px-3 text-center text-slate-400">
                         Nenhum condutor listado
                       </td>
                     </tr>

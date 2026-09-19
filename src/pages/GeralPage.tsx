@@ -73,6 +73,7 @@ import { OcrScannerModal } from "../components/OcrScannerModal";
 import { ExcelRecebimentoModal } from "../components/ExcelRecebimentoModal";
 import { DuplicatasModal } from "../components/DuplicatasModal";
 import { CadastroManualModal } from "../components/CadastroManualModal";
+import { ReceberCNHModal } from "../components/ReceberCNHModal";
 import { EditarCNHModal } from "../components/EditarCNHModal";
 import { LotesSubTab } from "../components/geral/LotesSubTab";
 import { downloadCNHFichaPDF, buildCNHShareableText } from "../services/cnhFichaPdfService";
@@ -224,6 +225,11 @@ export const GeralPage: React.FC = () => {
 
   // Modal 1: Cadastro Manual
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+
+  // Modal: Receber CNH (Escolha de Gaveta e Repartição)
+  const [isReceberModalOpen, setIsReceberModalOpen] = useState(false);
+  const [selectedCNHForRecebimento, setSelectedCNHForRecebimento] = useState<GeralCNH | null>(null);
+  const [submittingRecebimento, setSubmittingRecebimento] = useState(false);
 
   // Modal 2: Entrega de CNH
   const [isEntregaModalOpen, setIsEntregaModalOpen] = useState(false);
@@ -575,10 +581,19 @@ export const GeralPage: React.FC = () => {
     debouncedFetchDados();
   };
 
-  const handleExcelRecebidasSuccess = (updatedCount: number, totalExtracted: number) => {
+  const handleExcelRecebidasSuccess = (updatedCount: number, totalExtracted: number, insertedCount: number = 0) => {
+    const parts: string[] = [];
+    if (updatedCount > 0) {
+      parts.push(`${updatedCount} CNH(s) atualizada(s) para RECEBIDA`);
+    }
+    if (insertedCount > 0) {
+      parts.push(`${insertedCount} nova(s) CNH(s) cadastrada(s) como RECEBIDA`);
+    }
+    const detailMsg = parts.length > 0 ? parts.join(" e ") : "Processamento concluído";
+
     setMessage({
       type: "success",
-      text: `✅ Sucesso! ${updatedCount} CNH(s) tiveram o status alterado de REMETIDA para RECEBIDA a partir da planilha Excel com gavetas e repartições alocadas automaticamente (Total na planilha: ${totalExtracted}).`,
+      text: `✅ Sucesso! ${detailMsg} a partir da planilha Excel com gavetas e repartições alocadas automaticamente (Total na planilha: ${totalExtracted}).`,
     });
     debouncedFetchDados();
   };
@@ -790,11 +805,18 @@ export const GeralPage: React.FC = () => {
     }
   };
 
-  // Botão 📥 Receber (por linha na tabela)
-  const handleReceber = async (item: GeralCNH) => {
+  // Botão 📥 Receber (por linha na tabela ou drawer de detalhes - abre modal para escolha de gaveta/repartição)
+  const handleReceber = (item: GeralCNH) => {
     if (!user || !canEdit) return;
+    setSelectedCNHForRecebimento(item);
+    setIsReceberModalOpen(true);
+  };
+
+  const handleConfirmReceber = async (item: GeralCNH, gaveta?: string, reparticao?: string) => {
+    if (!user || !canEdit) return;
+    setSubmittingRecebimento(true);
     try {
-      const { geral, isVazio } = await receberCNH(item.id, user.id, user.nome_curto);
+      const { geral, isVazio } = await receberCNH(item.id, user.id, user.nome_curto, gaveta, reparticao);
       if (isVazio) {
         setMessage({
           type: "warning",
@@ -806,9 +828,13 @@ export const GeralPage: React.FC = () => {
           text: `📥 CNH de "${geral.nome}" recebida com sucesso e alocada em ${geral.gaveta} / ${geral.reparticao}!`
         });
       }
+      setIsReceberModalOpen(false);
+      setSelectedCNHForRecebimento(null);
       await fetchDados();
     } catch (err: any) {
       alert(err.message || "Erro ao receber CNH.");
+    } finally {
+      setSubmittingRecebimento(false);
     }
   };
 
@@ -2222,6 +2248,18 @@ export const GeralPage: React.FC = () => {
             fetchDados();
           }
         }}
+      />
+
+      {/* MODAL: 📥 RECEBIMENTO DE CNH (Escolha de Gaveta e Repartição) */}
+      <ReceberCNHModal
+        isOpen={isReceberModalOpen}
+        onClose={() => {
+          setIsReceberModalOpen(false);
+          setSelectedCNHForRecebimento(null);
+        }}
+        cnh={selectedCNHForRecebimento}
+        onConfirm={handleConfirmReceber}
+        submitting={submittingRecebimento}
       />
 
       {/* MODAL 2: 📤 ENTREGAR CNH */}

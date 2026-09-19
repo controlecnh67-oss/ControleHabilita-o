@@ -4495,6 +4495,8 @@ export async function createGeralManual(
     pa?: string;
     situacao: SituacaoGeral;
     observacao?: string;
+    gaveta?: string;
+    reparticao?: string;
   },
   userId: string,
   userNome: string
@@ -4503,14 +4505,14 @@ export async function createGeralManual(
   const maxOrdem = geralList.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0) + 1;
   const now = new Date().toISOString();
 
-  let gaveta = "";
-  let reparticao = "";
+  let gaveta = (data.gaveta || "").trim();
+  let reparticao = (data.reparticao || "").trim();
 
-  // Se cadastrar como Recebida, calcular automaticamente Gaveta e Repartição conforme o mapeamento
-  if (data.situacao === "Recebida") {
+  // Se cadastrar como Recebida e não foi informada gaveta/repartição manual, calcular automaticamente
+  if (data.situacao === "Recebida" && (!gaveta || !reparticao)) {
     const loc = await findLocalizacaoPorNome(data.nome);
-    gaveta = loc.gaveta;
-    reparticao = loc.reparticao;
+    gaveta = gaveta || loc.gaveta;
+    reparticao = reparticao || loc.reparticao;
   }
 
   const uniqueId = typeof crypto !== "undefined" && crypto.randomUUID 
@@ -4545,8 +4547,14 @@ export async function createGeralManual(
 // Recebimento de CNH (Botão 📥 Receber - Na tela Geral)
 // Somente aparece quando Situação = Remetida
 // Ao clicar: Situação = Recebida, Data = atual, Usuário = logado
-// Determinar automaticamente Gaveta e Repartição via Mapeamento pela inicial do nome
-export async function receberCNH(id: string, userId: string, userNome: string): Promise<{ geral: GeralCNH; isVazio: boolean }> {
+// Determinar automaticamente Gaveta e Repartição via Mapeamento pela inicial do nome (ou usar manual se fornecida)
+export async function receberCNH(
+  id: string,
+  userId: string,
+  userNome: string,
+  customGaveta?: string,
+  customReparticao?: string
+): Promise<{ geral: GeralCNH; isVazio: boolean }> {
   const geralList = await getLocalGeralCNHs();
   const index = geralList.findIndex((g) => g.id === id);
   if (index === -1) throw new Error("Registro CNH não encontrado no protocolo");
@@ -4555,19 +4563,28 @@ export async function receberCNH(id: string, userId: string, userNome: string): 
     throw new Error("Apenas CNHs com situação 'Remetida' ou 'Pendente' podem ser recebidas no protocolo.");
   }
 
-  const loc = await findLocalizacaoPorNome(atual.nome);
-  const isVazio = loc.gaveta === "Vazio" || loc.reparticao === "Vazio";
+  let finalGaveta = (customGaveta || "").trim();
+  let finalReparticao = (customReparticao || "").trim();
+  let isVazio = false;
+
+  if (!finalGaveta || !finalReparticao) {
+    const loc = await findLocalizacaoPorNome(atual.nome);
+    finalGaveta = finalGaveta || loc.gaveta;
+    finalReparticao = finalReparticao || loc.reparticao;
+    isVazio = finalGaveta === "Vazio" || finalReparticao === "Vazio";
+  }
+
   const now = new Date().toISOString();
 
   const atualizado: GeralCNH = {
     ...atual,
     situacao: "Recebida",
-    gaveta: loc.gaveta,
-    reparticao: loc.reparticao,
+    gaveta: finalGaveta,
+    reparticao: finalReparticao,
     data_movimento: now,
     usuario_id: userId,
     usuario_nome: userNome,
-    observacao: `${atual.observacao ? atual.observacao + " | " : ""}Recebida no protocolo - Alocada em ${loc.gaveta} ${loc.reparticao}`
+    observacao: `${atual.observacao ? atual.observacao + " | " : ""}Recebida no protocolo - Alocada em ${finalGaveta} ${finalReparticao}`
   };
 
   geralList[index] = atualizado;
@@ -4582,48 +4599,64 @@ export async function receberCNH(id: string, userId: string, userNome: string): 
     "Recebida",
     userId,
     userNome,
-    `Alocado na ${loc.gaveta} / ${loc.reparticao}`,
+    `Alocado na ${finalGaveta} / ${finalReparticao}`,
     undefined,
     undefined,
     atualizado.cpf
   );
 
-  await logAuditoria("geral", `Ordem #${atualizado.ordem}`, "Recebimento", userId, userNome, { situacao: atual.situacao }, { situacao: "Recebida", gaveta: loc.gaveta, reparticao: loc.reparticao });
+  await logAuditoria("geral", `Ordem #${atualizado.ordem}`, "Recebimento", userId, userNome, { situacao: atual.situacao }, { situacao: "Recebida", gaveta: finalGaveta, reparticao: finalReparticao });
 
   return { geral: atualizado, isVazio };
 }
 
 // Recebimento em Lote de CNHs (utilizado pelo Escaneamento OCR e ações em massa)
 export async function receberCNHsBulk(
-  items: Array<{ id: string; observacaoExtra?: string }>,
+  items: Array<{ id: string; observacaoExtra?: string; gaveta?: string; reparticao?: string }>,
   userId: string,
-  userNome: string
+  userNome: string,
+  bulkLocation?: { gaveta: string; reparticao: string }
 ): Promise<{ updatedCount: number; updatedCNHs: GeralCNH[] }> {
   if (!items || items.length === 0) return { updatedCount: 0, updatedCNHs: [] };
 
   const geralList = await getLocalGeralCNHs();
-  const idMap = new Map<string, string | undefined>();
-  items.forEach((item) => idMap.set(item.id, item.observacaoExtra));
+  const itemsMap = new Map<string, { observacaoExtra?: string; gaveta?: string; reparticao?: string }>();
+  items.forEach((item) => itemsMap.set(item.id, item));
 
   const now = new Date().toISOString();
   const updatedCNHs: GeralCNH[] = [];
 
   for (let i = 0; i < geralList.length; i++) {
     const cnh = geralList[i];
-    if (idMap.has(cnh.id)) {
-      const extraObs = idMap.get(cnh.id);
-      const loc = await findLocalizacaoPorNome(cnh.nome);
+    if (itemsMap.has(cnh.id)) {
+      const itemConfig = itemsMap.get(cnh.id)!;
+      const extraObs = itemConfig.observacaoExtra;
+
+      let locGaveta = (itemConfig.gaveta || "").trim();
+      let locReparticao = (itemConfig.reparticao || "").trim();
+
+      if (!locGaveta || !locReparticao) {
+        if (bulkLocation?.gaveta && bulkLocation?.reparticao) {
+          locGaveta = bulkLocation.gaveta.trim();
+          locReparticao = bulkLocation.reparticao.trim();
+        } else {
+          const loc = await findLocalizacaoPorNome(cnh.nome);
+          locGaveta = locGaveta || loc.gaveta;
+          locReparticao = locReparticao || loc.reparticao;
+        }
+      }
+
       const oldSituacao = cnh.situacao;
 
       const atualizado: GeralCNH = {
         ...cnh,
         situacao: "Recebida",
-        gaveta: loc.gaveta,
-        reparticao: loc.reparticao,
+        gaveta: locGaveta,
+        reparticao: locReparticao,
         data_movimento: now,
         usuario_id: userId,
         usuario_nome: userNome,
-        observacao: `${cnh.observacao ? cnh.observacao + " | " : ""}${extraObs ? extraObs + " - " : ""}Recebida no protocolo - Alocada em ${loc.gaveta} ${loc.reparticao}`
+        observacao: `${cnh.observacao ? cnh.observacao + " | " : ""}${extraObs ? extraObs + " - " : ""}Recebida no protocolo - Alocada em ${locGaveta} ${locReparticao}`
       };
 
       geralList[i] = atualizado;
@@ -4637,7 +4670,7 @@ export async function receberCNHsBulk(
         "Recebida",
         userId,
         userNome,
-        `Recebimento via OCR - Alocado na ${loc.gaveta} / ${loc.reparticao}`,
+        `Recebimento em lote - Alocado na ${locGaveta} / ${locReparticao}`,
         undefined,
         undefined,
         atualizado.cpf
@@ -4650,7 +4683,7 @@ export async function receberCNHsBulk(
         userId,
         userNome,
         { situacao: oldSituacao },
-        { situacao: "Recebida", gaveta: loc.gaveta, reparticao: loc.reparticao }
+        { situacao: "Recebida", gaveta: locGaveta, reparticao: locReparticao }
       );
     }
   }
@@ -4662,6 +4695,106 @@ export async function receberCNHsBulk(
   }
 
   return { updatedCount: updatedCNHs.length, updatedCNHs };
+}
+
+// Cadastro em Lote de Novas CNHs com Situação Recebida (para itens da Planilha Excel sem correspondência na tabela geral)
+export async function cadastrarNovasCNHsRecebidas(
+  novos: Array<{
+    nome: string;
+    pa?: string;
+    cpf?: string;
+    remessa?: string;
+    observacaoExtra?: string;
+    gaveta?: string;
+    reparticao?: string;
+  }>,
+  userId: string,
+  userNome: string,
+  bulkLocation?: { gaveta: string; reparticao: string }
+): Promise<{ insertedCount: number; insertedCNHs: GeralCNH[] }> {
+  if (!novos || novos.length === 0) return { insertedCount: 0, insertedCNHs: [] };
+
+  const geralList = await getLocalGeralCNHs();
+  let maxOrdem = geralList.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0);
+  const now = new Date().toISOString();
+  const insertedCNHs: GeralCNH[] = [];
+
+  for (const item of novos) {
+    const nomeLimpo = (item.nome || "").trim().toUpperCase();
+    if (!nomeLimpo) continue;
+
+    maxOrdem++;
+
+    let locGaveta = (item.gaveta || "").trim();
+    let locReparticao = (item.reparticao || "").trim();
+
+    if (!locGaveta || !locReparticao) {
+      if (bulkLocation?.gaveta && bulkLocation?.reparticao) {
+        locGaveta = bulkLocation.gaveta.trim();
+        locReparticao = bulkLocation.reparticao.trim();
+      } else {
+        const loc = await findLocalizacaoPorNome(nomeLimpo);
+        locGaveta = locGaveta || loc.gaveta;
+        locReparticao = locReparticao || loc.reparticao;
+      }
+    }
+
+    const uniqueId = typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : (toValidUUID(`cnh-excel-${Date.now()}-${Math.random()}`) || `cnh-excel-${Date.now()}-${maxOrdem}`);
+
+    const nova: GeralCNH = {
+      id: uniqueId,
+      ordem: maxOrdem,
+      nome: nomeLimpo,
+      pa: item.pa ? item.pa.trim() : undefined,
+      cpf: item.cpf ? item.cpf.trim() : "",
+      gaveta: locGaveta,
+      reparticao: locReparticao,
+      situacao: "Recebida",
+      data_movimento: now,
+      usuario_id: userId,
+      usuario_nome: userNome,
+      remessa: item.remessa ? item.remessa.trim() : undefined,
+      observacao: item.observacaoExtra || `Importado via planilha Excel - Cadastrado como Recebida - Alocado em ${locGaveta} ${locReparticao}`,
+      created_at: now
+    };
+
+    insertedCNHs.push(nova);
+
+    await logHistorico(
+      nova.id,
+      nova.ordem,
+      nova.nome,
+      null,
+      "Recebida",
+      userId,
+      userNome,
+      `Cadastrado via importação de planilha Excel - Alocado na ${locGaveta} / ${locReparticao}`,
+      undefined,
+      undefined,
+      nova.cpf
+    );
+
+    await logAuditoria(
+      "geral",
+      `Ordem #${nova.ordem}`,
+      "Inclusão",
+      userId,
+      userNome,
+      null,
+      nova
+    );
+  }
+
+  if (insertedCNHs.length > 0) {
+    const combined = [...insertedCNHs, ...geralList];
+    saveStoredList("geral", combined);
+    await saveLocalGeralCNHsBulk(insertedCNHs);
+    notifyDataSync("geral");
+  }
+
+  return { insertedCount: insertedCNHs.length, insertedCNHs };
 }
 
 // Entrega de CNH (Botão 📤 Entregar - Na tela Geral)

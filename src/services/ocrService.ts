@@ -276,7 +276,7 @@ export async function matchExtractedWithGeralCNHs(
       }
     } else {
       category = "not_found";
-      selected = false;
+      selected = true; // Não localizado: auto-selecionado para criar novo cadastro com Situação Recebida
     }
 
     // Determinar gaveta e repartição sugeridas

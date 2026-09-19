@@ -27,7 +27,7 @@ import {
 } from "../../services/db";
 import { getOrgaoConfig } from "../../services/orgaoService";
 import { useAuth } from "../../context/AuthContext";
-import { formatCPFDisplay, formatDataCurta } from "../../services/declaracaoPdfService";
+import { formatCPFDisplay, formatDataCurta, formatApenasNumero, resolveCondutorDetails } from "../../services/declaracaoPdfService";
 import { formatCPF, formatPhone } from "../../lib/utils";
 
 interface DeclaracaoModalProps {
@@ -92,6 +92,8 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
   const [showManualCondutor, setShowManualCondutor] = useState(false);
   const [manualNome, setManualNome] = useState("");
   const [manualCpf, setManualCpf] = useState("");
+  const [manualOrdem, setManualOrdem] = useState("");
+  const [manualSituacao, setManualSituacao] = useState("Recebida");
   const [manualPa, setManualPa] = useState("");
   const [manualGaveta, setManualGaveta] = useState("");
   const [manualReparticao, setManualReparticao] = useState("");
@@ -322,11 +324,12 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
   const handleAddCNH = (cnh: GeralCNH) => {
     const newItem: DeclaracaoItemCondutor = {
       item: condutores.length + 1,
+      ordem: cnh.ordem,
       cnh_id: cnh.id,
       nome: (cnh.nome || "").toUpperCase(),
       cpf: cnh.cpf || "",
       pa: cnh.pa || "",
-      situacao: cnh.situacao,
+      situacao: cnh.situacao || "Recebida",
       gaveta: cnh.gaveta || "",
       reparticao: cnh.reparticao || "",
       data_movimento: cnh.data_movimento || new Date().toISOString().slice(0, 10)
@@ -340,9 +343,11 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
     if (!manualNome.trim()) return;
     const newItem: DeclaracaoItemCondutor = {
       item: condutores.length + 1,
+      ordem: manualOrdem.trim() || undefined,
       nome: manualNome.trim().toUpperCase(),
       cpf: manualCpf.trim(),
       pa: manualPa.trim(),
+      situacao: manualSituacao.trim() || "Recebida",
       gaveta: manualGaveta.trim(),
       reparticao: manualReparticao.trim(),
       data_movimento: manualDataMovimento.trim() || new Date().toISOString().slice(0, 10)
@@ -350,6 +355,8 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
     setCondutores((prev) => [...prev, newItem]);
     setManualNome("");
     setManualCpf("");
+    setManualOrdem("");
+    setManualSituacao("Recebida");
     setManualPa("");
     setManualGaveta("");
     setManualReparticao("");
@@ -702,11 +709,11 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
                 <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
                   Adicionar Condutor sem CNH no Sistema:
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <div className="sm:col-span-2">
                     <input
                       type="text"
-                      placeholder="Nome do condutor"
+                      placeholder="Nome do condutor *"
                       value={manualNome}
                       onChange={(e) => setManualNome(e.target.value.toUpperCase())}
                       className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900"
@@ -724,18 +731,29 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
                   <div>
                     <input
                       type="text"
-                      placeholder="PA (opcional)"
-                      value={manualPa}
-                      onChange={(e) => setManualPa(e.target.value)}
+                      placeholder="Ordem (opcional, ex: 12)"
+                      value={manualOrdem}
+                      onChange={(e) => setManualOrdem(e.target.value)}
                       className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900"
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-1 items-center">
+                <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 pt-1 items-center">
+                  <div>
+                    <select
+                      value={manualSituacao}
+                      onChange={(e) => setManualSituacao(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200"
+                    >
+                      <option value="Recebida">Recebida</option>
+                      <option value="Entregue">Entregue</option>
+                      <option value="Remetida">Remetida</option>
+                    </select>
+                  </div>
                   <div>
                     <input
                       type="text"
-                      placeholder="Gaveta (opcional)"
+                      placeholder="Gaveta (ex: 1)"
                       value={manualGaveta}
                       onChange={(e) => setManualGaveta(e.target.value)}
                       className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900"
@@ -744,7 +762,7 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
                   <div>
                     <input
                       type="text"
-                      placeholder="Repartição (opcional)"
+                      placeholder="Repartição (ex: 1)"
                       value={manualReparticao}
                       onChange={(e) => setManualReparticao(e.target.value)}
                       className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900"
@@ -834,7 +852,7 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
               )}
             </div>
 
-            {/* Tabela de Condutores Adicionados (Exatamente o modelo da foto: ITEM | NOME | CPF) */}
+            {/* Tabela de Condutores Adicionados */}
             <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs">
               <div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 border-b border-slate-200 dark:border-slate-700 text-center font-bold text-xs text-slate-700 dark:text-slate-300 tracking-wider">
                 CONDUTOR(S)
@@ -843,52 +861,81 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
                 <table className="w-full text-xs text-left">
                   <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-bold uppercase tracking-wider text-[11px]">
                     <tr>
-                      <th className="py-2.5 px-2.5 w-12 text-center">ITEM</th>
-                      <th className="py-2.5 px-3">NOME</th>
+                      <th className="py-2.5 px-2 text-center w-12">ITEM</th>
+                      <th className="py-2.5 px-2 text-center w-16">ORDEM</th>
+                      <th className="py-2.5 px-3">TITULAR</th>
                       <th className="py-2.5 px-3 text-center">CPF</th>
-                      <th className="py-2.5 px-2.5 text-center">GAVETA</th>
-                      <th className="py-2.5 px-3 text-center">REPARTIÇÃO</th>
-                      <th className="py-2.5 px-3 text-center">DATA MOV. DA CNH</th>
+                      <th className="py-2.5 px-2 text-center w-12">GAV.</th>
+                      <th className="py-2.5 px-2 text-center w-12">REP.</th>
+                      <th className="py-2.5 px-2.5 text-center">STATUS</th>
+                      <th className="py-2.5 px-2.5 text-center">DATA</th>
                       <th className="py-2.5 px-2 w-12 text-center">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800 bg-white dark:bg-slate-950">
                     {condutores.length > 0 ? (
-                      condutores.map((cond, index) => (
-                        <tr key={index} className="hover:bg-slate-50 dark:hover:bg-slate-900/50">
-                          <td className="py-2.5 px-2.5 text-center font-bold text-slate-700 dark:text-slate-300">
-                            {cond.item || index + 1}
-                          </td>
-                          <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-slate-100 uppercase">
-                            {cond.nome}
-                          </td>
-                          <td className="py-2.5 px-3 text-center font-mono text-slate-600 dark:text-slate-400">
-                            {formatCPFDisplay(cond.cpf) || "-"}
-                          </td>
-                          <td className="py-2.5 px-2.5 text-center text-slate-600 dark:text-slate-400">
-                            {cond.gaveta || "-"}
-                          </td>
-                          <td className="py-2.5 px-3 text-center text-slate-600 dark:text-slate-400">
-                            {cond.reparticao || "-"}
-                          </td>
-                          <td className="py-2.5 px-3 text-center font-mono text-slate-600 dark:text-slate-400">
-                            {formatDataCurta(cond.data_movimento)}
-                          </td>
-                          <td className="py-2.5 px-2 text-center">
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveCondutor(index)}
-                              className="p-1 text-rose-500 hover:text-rose-700 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-md transition-colors"
-                              title="Remover condutor da lista"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))
+                      condutores.map((cond, index) => {
+                        const details = resolveCondutorDetails(cond, allCNHs);
+                        const ordemVal = cond.ordem !== undefined && cond.ordem !== null && cond.ordem !== ""
+                          ? cond.ordem
+                          : (details.ordem !== "-" ? details.ordem : null);
+                        const situacaoVal = cond.situacao || (details.situacao !== "-" ? details.situacao : "Recebida");
+                        const gavetaNum = formatApenasNumero(cond.gaveta || details.gaveta);
+                        const reparticaoNum = formatApenasNumero(cond.reparticao || details.reparticao);
+                        const dataFormatada = formatDataCurta(cond.data_movimento || details.data_movimento);
+
+                        return (
+                          <tr key={index} className="hover:bg-slate-50 dark:hover:bg-slate-900/50">
+                            <td className="py-2 px-2 text-center font-bold text-slate-700 dark:text-slate-300">
+                              {cond.item || index + 1}
+                            </td>
+                            <td className="py-2 px-2 text-center font-bold text-slate-800 dark:text-slate-200">
+                              {ordemVal ? (String(ordemVal).startsWith("#") ? ordemVal : `#${ordemVal}`) : "-"}
+                            </td>
+                            <td className="py-2 px-3 font-semibold text-slate-900 dark:text-slate-100 uppercase">
+                              {cond.nome}
+                            </td>
+                            <td className="py-2 px-3 text-center font-mono text-slate-600 dark:text-slate-400">
+                              {formatCPFDisplay(cond.cpf) || "-"}
+                            </td>
+                            <td className="py-2 px-2 text-center font-mono font-semibold text-slate-700 dark:text-slate-300">
+                              {gavetaNum}
+                            </td>
+                            <td className="py-2 px-2 text-center font-mono font-semibold text-slate-700 dark:text-slate-300">
+                              {reparticaoNum}
+                            </td>
+                            <td className="py-2 px-2.5 text-center">
+                              <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
+                                situacaoVal === "Entregue"
+                                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                  : situacaoVal === "Recebida"
+                                  ? "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300"
+                                  : situacaoVal === "Remetida"
+                                  ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                                  : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                              }`}>
+                                {situacaoVal}
+                              </span>
+                            </td>
+                            <td className="py-2 px-2.5 text-center font-mono text-slate-600 dark:text-slate-400 text-[11px]">
+                              {dataFormatada}
+                            </td>
+                            <td className="py-2 px-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveCondutor(index)}
+                                className="p-1 text-rose-500 hover:text-rose-700 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-md transition-colors cursor-pointer"
+                                title="Remover condutor da lista"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
                     ) : (
                       <tr>
-                        <td colSpan={7} className="py-6 text-center text-slate-400 dark:text-slate-500">
+                        <td colSpan={9} className="py-6 text-center text-slate-400 dark:text-slate-500">
                           Nenhum condutor adicionado ainda. Busque uma CNH acima ou clique em "Condutor Manual".
                         </td>
                       </tr>

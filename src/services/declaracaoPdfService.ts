@@ -72,22 +72,38 @@ export function formatCPFDisplay(cpf?: string): string {
 }
 
 /**
- * Obtém os detalhes adicionais da CNH (Gaveta, Repartição, Data Movimento)
+ * Extrai apenas os números de campos como Gaveta e Repartição (ex: "Gaveta 1" -> "1", "Repartição 1" -> "1")
+ */
+export function formatApenasNumero(val?: string | number): string {
+  if (val === undefined || val === null) return "-";
+  const str = String(val).trim();
+  if (!str) return "-";
+  const digits = str.replace(/\D/g, "");
+  if (digits) return digits;
+  return str || "-";
+}
+
+/**
+ * Obtém os detalhes adicionais da CNH (Ordem, Situação/Status, Gaveta, Repartição, Data Movimento)
  * seja do próprio condutor ou por busca cruzada com os registros locais em cache.
  */
 export function resolveCondutorDetails(
   c: DeclaracaoItemCondutor,
   cachedCNHs?: GeralCNH[]
 ): {
+  ordem: string;
+  situacao: string;
   gaveta: string;
   reparticao: string;
   data_movimento: string;
 } {
+  let ordem = c.ordem !== undefined && c.ordem !== null ? String(c.ordem).trim() : "";
+  let situacao = (c.situacao && c.situacao.trim()) || "";
   let gaveta = (c.gaveta && c.gaveta.trim()) || "";
   let reparticao = (c.reparticao && c.reparticao.trim()) || "";
   let dataMov = (c.data_movimento && c.data_movimento.trim()) || "";
 
-  if (!gaveta || !reparticao || !dataMov) {
+  if (!ordem || !situacao || !gaveta || !reparticao || !dataMov) {
     let list = cachedCNHs;
     if (!list || list.length === 0) {
       try {
@@ -110,6 +126,8 @@ export function resolveCondutorDetails(
       });
 
       if (match) {
+        if (!ordem && match.ordem !== undefined && match.ordem !== null) ordem = String(match.ordem);
+        if (!situacao && match.situacao) situacao = match.situacao;
         if (!gaveta && match.gaveta) gaveta = match.gaveta;
         if (!reparticao && match.reparticao) reparticao = match.reparticao;
         if (!dataMov) {
@@ -120,8 +138,10 @@ export function resolveCondutorDetails(
   }
 
   return {
-    gaveta: gaveta || "-",
-    reparticao: reparticao || "-",
+    ordem: ordem || "-",
+    situacao: situacao || "-",
+    gaveta: formatApenasNumero(gaveta),
+    reparticao: formatApenasNumero(reparticao),
     data_movimento: formatDataCurta(dataMov)
   };
 }
@@ -251,51 +271,58 @@ export function buildDeclaracaoDoc(declaracao: Declaracao): jsPDF {
   const condutoresData = (declaracao.condutores && declaracao.condutores.length > 0)
     ? declaracao.condutores.map((c, idx) => {
         const details = resolveCondutorDetails(c, cachedCNHs);
+        const ordemStr = details.ordem && details.ordem !== "-"
+          ? (details.ordem.startsWith("#") ? details.ordem : `#${details.ordem}`)
+          : "-";
         return [
           String(c.item || idx + 1),
+          ordemStr,
           (c.nome || "").toUpperCase(),
           formatCPFDisplay(c.cpf) || "-",
           details.gaveta,
           details.reparticao,
-          details.data_movimento
+          details.situacao || "-",
+          details.data_movimento || "-"
         ];
       })
-    : [["1", "CONDUTOR NÃO INFORMADO", "-", "-", "-", "-"]];
+    : [["1", "-", "CONDUTOR NÃO INFORMADO", "-", "-", "-", "-", "-"]];
 
   autoTable(doc, {
     startY: currentY,
     margin: { left: marginX, right: marginX },
     head: [
       [
-        { content: "CONDUTOR(S)", colSpan: 6, styles: { halign: "center", fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" } }
+        { content: "CONDUTOR(S)", colSpan: 8, styles: { halign: "center", fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" } }
       ],
-      ["ITEM", "NOME", "CPF", "GAVETA", "REPARTIÇÃO", "DATA MOV. DA CNH"]
+      ["ITEM", "ORDEM", "TITULAR", "CPF", "GAV.", "REP.", "STATUS", "DATA"]
     ],
     body: condutoresData,
     theme: "grid",
     headStyles: {
       fillColor: [226, 232, 240], // slate-200
       textColor: [15, 23, 42],
-      fontSize: 8,
+      fontSize: 7.5,
       fontStyle: "bold",
       halign: "center",
       lineWidth: 0.25,
       lineColor: [148, 163, 184]
     },
     bodyStyles: {
-      fontSize: 8,
+      fontSize: 7.5,
       textColor: [15, 23, 42],
       lineWidth: 0.2,
       lineColor: [203, 213, 225],
-      cellPadding: 2
+      cellPadding: 1.8
     },
     columnStyles: {
-      0: { cellWidth: 12, halign: "center" },
-      1: { cellWidth: "auto", halign: "left" },
-      2: { cellWidth: 32, halign: "center" },
-      3: { cellWidth: 20, halign: "center" },
-      4: { cellWidth: 32, halign: "center" },
-      5: { cellWidth: 28, halign: "center" }
+      0: { cellWidth: 10, halign: "center" },
+      1: { cellWidth: 14, halign: "center", fontStyle: "bold" },
+      2: { cellWidth: "auto", halign: "left" },
+      3: { cellWidth: 28, halign: "center" },
+      4: { cellWidth: 12, halign: "center" },
+      5: { cellWidth: 12, halign: "center" },
+      6: { cellWidth: 22, halign: "center" },
+      7: { cellWidth: 22, halign: "center" }
     }
   });
 
