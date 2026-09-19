@@ -62,8 +62,7 @@ import {
   createResponsavel,
   importSpreadsheetData,
   getPublicSearchCount,
-  getLotes,
-  restoreResponsaveisInfoAndDatabase
+  getLotes
 } from "../services/db";
 import { syncGeralWithSupabase, dexieDb, normalizeCNHRecord, deduplicateCNHRecords } from "../services/dexieDb";
 import { getPublicShareUrl, subscribeToSupabaseRealtime } from "../services/supabase";
@@ -210,29 +209,6 @@ export const GeralPage: React.FC = () => {
 
   // Feedback Message
   const [message, setMessage] = useState<{ type: "success" | "warning" | "error"; text: string } | null>(null);
-  const [isRestoringData, setIsRestoringData] = useState(false);
-
-  // Restauração das informações de Gavetas, Repartições, CPFs, Usuários e Responsáveis para o status anterior
-  const handleRestoreProtocolData = async () => {
-    if (!canEdit || isRestoringData) return;
-    setIsRestoringData(true);
-    setMessage(null);
-    try {
-      const res = await restoreResponsaveisInfoAndDatabase();
-      await fetchDados();
-      setMessage({
-        type: "success",
-        text: `Restauração concluída com sucesso! ${res.cpfsReparadosCount || 0} CPFs, ${res.usuariosReparadosCount || 0} usuários e ${res.gavetasReparadasCount || 0} gavetas/repartições recuperadas (${res.restoredCnhsCount} CNHs sincronizadas no banco de dados).`
-      });
-    } catch (err: any) {
-      setMessage({
-        type: "error",
-        text: err.message || "Erro ao restaurar banco de dados."
-      });
-    } finally {
-      setIsRestoringData(false);
-    }
-  };
 
   // Modal Importação Excel de CNHs Recebidas
   const [isExcelRecebidasModalOpen, setIsExcelRecebidasModalOpen] = useState(false);
@@ -1099,24 +1075,26 @@ export const GeralPage: React.FC = () => {
 
       const dataStr = `Emissão: ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
 
-      // Corpo da tabela sem a coluna de Remessa
+      // Corpo da tabela com Gaveta, Repartição, Data Mov. da CNH e CPF formatado
       const tableData = reportData.map((c) => [
         `#${c.ordem}`,
-        c.nome,
+        c.nome || "-",
         formatCPF(c.cpf),
-        "___/___/202___",
+        cleanGavetaText(c.gaveta) || c.gaveta || "-",
+        c.reparticao || "-",
+        c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "-",
         ""
       ]);
 
       autoTable(doc, {
         startY: 28,
         margin: { top: 28, bottom: 14, left: 14, right: 14 },
-        head: [["Ordem", "Nome do Titular", "CPF", "Data", "Responsável pelo Recebimento"]],
+        head: [["Ordem", "Nome do Titular", "CPF", "Gaveta", "Repartição", "Data Mov.", "Assinatura / Responsável"]],
         body: tableData,
         theme: "grid",
         styles: {
           font: "helvetica",
-          fontSize: 8,
+          fontSize: 7.5,
           cellPadding: 1.5,
           textColor: [30, 41, 59],
           lineColor: [203, 213, 225],
@@ -1130,11 +1108,13 @@ export const GeralPage: React.FC = () => {
           halign: "center",
         },
         columnStyles: {
-          0: { halign: "center", cellWidth: 16, fontStyle: "bold" },
-          1: { cellWidth: 72 },
-          2: { halign: "center", cellWidth: 30 },
-          3: { halign: "center", cellWidth: 26 },
-          4: { cellWidth: "auto" },
+          0: { halign: "center", cellWidth: 14, fontStyle: "bold" },
+          1: { cellWidth: 46 },
+          2: { halign: "center", cellWidth: 26, font: "courier" },
+          3: { halign: "center", cellWidth: 16 },
+          4: { halign: "center", cellWidth: 20 },
+          5: { halign: "center", cellWidth: 20 },
+          6: { cellWidth: "auto" },
         },
         didDrawPage: (data) => {
           const pageWidth = doc.internal.pageSize.getWidth(); // 210mm
@@ -1267,30 +1247,6 @@ export const GeralPage: React.FC = () => {
                 >
                   <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                   <span>📥 Importar Excel (Recebidas)</span>
-                </button>
-              )}
-
-              {canEdit && (
-                <button
-                  id="btn-restaurar-dados-protocolo"
-                  onClick={handleRestoreProtocolData}
-                  disabled={isRestoringData}
-                  title="Restaurar e sincronizar todas as gavetas, repartições e responsáveis no banco com o status anterior"
-                  className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-200 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-emerald-300 dark:border-emerald-800 disabled:opacity-50"
-                >
-                  <Database className={`w-4 h-4 text-emerald-600 dark:text-emerald-400 ${isRestoringData ? "animate-spin" : ""}`} />
-                  <span>{isRestoringData ? "Restaurando..." : "Restaurar Dados"}</span>
-                </button>
-              )}
-
-              {canEdit && (
-                <button
-                  onClick={() => setIsOcrModalOpen(true)}
-                  title="Escanear documento (PDF ou Imagem) via OCR com IA para conferência e recebimento de CNHs"
-                  className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-indigo-200 dark:border-indigo-800"
-                >
-                  <ScanLine className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  <span>📷 Escanear OCR</span>
                 </button>
               )}
 
@@ -2571,7 +2527,9 @@ export const GeralPage: React.FC = () => {
                   <th className="py-1 px-1">Ordem</th>
                   <th className="py-1 px-2">Nome</th>
                   <th className="py-1 px-2">CPF</th>
-                  <th className="py-1 px-2">Data</th>
+                  <th className="py-1 px-1 text-center">Gaveta</th>
+                  <th className="py-1 px-1 text-center">Repartição</th>
+                  <th className="py-1 px-1 text-center">Data Mov.</th>
                   <th className="py-1 px-2">Assinatura / Responsável</th>
                 </tr>
               </thead>
@@ -2579,15 +2537,17 @@ export const GeralPage: React.FC = () => {
                 {reportData.slice(0, 5).map((c, idx) => (
                   <tr key={idx} className="text-slate-700 dark:text-slate-300">
                     <td className="py-1 px-1 font-bold">#{c.ordem}</td>
-                    <td className="py-1 px-2 font-medium truncate max-w-[140px]">{c.nome}</td>
-                    <td className="py-1 px-2 font-mono">{formatCPF(c.cpf)}</td>
-                    <td className="py-1 px-2 text-slate-400 font-mono">___/___/___</td>
+                    <td className="py-1 px-2 font-medium truncate max-w-[120px]">{c.nome}</td>
+                    <td className="py-1 px-2 font-mono text-xs">{formatCPF(c.cpf)}</td>
+                    <td className="py-1 px-1 text-center font-mono">{cleanGavetaText(c.gaveta) || c.gaveta || "-"}</td>
+                    <td className="py-1 px-1 text-center">{c.reparticao || "-"}</td>
+                    <td className="py-1 px-1 text-center font-mono text-slate-500">{c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "-"}</td>
                     <td className="py-1 px-2"></td>
                   </tr>
                 ))}
                 {reportData.length > 5 && (
                   <tr>
-                    <td colSpan={5} className="py-1.5 text-center text-[10px] text-slate-400 italic font-semibold">
+                    <td colSpan={7} className="py-1.5 text-center text-[10px] text-slate-400 italic font-semibold">
                       + {reportData.length - 5} outras CNHs incluídas na impressão...
                     </td>
                   </tr>

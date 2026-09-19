@@ -24,6 +24,43 @@ for (const s of (cnhSeedData as any[])) {
   if (s.nome) seedByNormNome.set(getNormalizedSeedName(s.nome), s);
 }
 
+const DELETED_GERAL_STORAGE_KEY = "detran_cnh_deleted_geral";
+
+export function getDeletedGeralIds(): Set<string> {
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(DELETED_GERAL_STORAGE_KEY) : null;
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return new Set(arr);
+    }
+  } catch {}
+  return new Set();
+}
+
+export function addDeletedGeralId(id: string): void {
+  if (!id) return;
+  try {
+    const set = getDeletedGeralIds();
+    set.add(id);
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(DELETED_GERAL_STORAGE_KEY, JSON.stringify(Array.from(set)));
+    }
+  } catch {}
+}
+
+export function addDeletedGeralIdsBulk(ids: string[]): void {
+  if (!ids || ids.length === 0) return;
+  try {
+    const set = getDeletedGeralIds();
+    for (const id of ids) {
+      if (id) set.add(id);
+    }
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(DELETED_GERAL_STORAGE_KEY, JSON.stringify(Array.from(set)));
+    }
+  } catch {}
+}
+
 export interface SyncStats {
   status: "synced" | "syncing" | "error" | "offline";
   lastSyncAt: string | null;
@@ -248,10 +285,7 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
 
   const scoreRecord = (r: GeralCNH): number => {
     let score = 0;
-    if (r.situacao === "Entregue") score += 100;
-    else if (r.situacao === "Recebida") score += 80;
-    else if (r.situacao === "Remetida") score += 50;
-    else score += 20;
+    if (r.situacao) score += 20;
 
     const cpfDigits = (r.cpf || "").replace(/\D/g, "");
     if (cpfDigits.length === 11) score += 40;
@@ -261,11 +295,6 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
     if (r.observacao && r.observacao.trim()) score += 10;
     // UUID v4 ganha preferência sobre chaves sintéticas temporárias
     if (r.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(r.id)) score += 10;
-    if (r.updated_at) {
-      try {
-        score += Math.min(new Date(r.updated_at).getTime() / 1e12, 10);
-      } catch {}
-    }
     return score;
   };
 
@@ -293,10 +322,20 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
     }
 
     if (conflictingRecord) {
-      const currentScore = scoreRecord(item);
-      const existingScore = scoreRecord(conflictingRecord);
+      // Prioridade máxima: o timestamp mais recente SEMPRE prevalece (respeita as alterações feitas pelo usuário)
+      const timeItem = item.updated_at ? new Date(item.updated_at).getTime() : 0;
+      const timeConf = conflictingRecord.updated_at ? new Date(conflictingRecord.updated_at).getTime() : 0;
 
-      if (currentScore > existingScore) {
+      let itemWins = false;
+      if (timeItem > 0 && timeConf > 0 && timeItem !== timeConf) {
+        itemWins = timeItem > timeConf;
+      } else {
+        const currentScore = scoreRecord(item);
+        const existingScore = scoreRecord(conflictingRecord);
+        itemWins = currentScore > existingScore;
+      }
+
+      if (itemWins) {
         // O registro atual tem maior qualidade ou é mais recente
         duplicateIdsSet.add(conflictingRecord.id);
         keptIdMap.delete(conflictingRecord.id);
@@ -439,7 +478,9 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
           }
 
           if (data && data.length > 0) {
-            const records = data.map(normalizeCNHRecord);
+            const deletedIds = getDeletedGeralIds();
+            const validData = data.filter((d) => !deletedIds.has(d.id));
+            const records = validData.map(normalizeCNHRecord);
             await dexieDb.geral.bulkPut(records);
             totalDownloaded += records.length;
             from += pageSize;
@@ -523,8 +564,38 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
         }
 
         if (deltaData && deltaData.length > 0) {
-          const records = deltaData.map(normalizeCNHRecord);
-          await dexieDb.geral.bulkPut(records);
+          const deletedIds = getDeletedGeralIds();
+          const validDelta = deltaData.filter((d) => !deletedIds.has(d.id));
+          const records = validDelta.map(normalizeCNHRecord);
+
+          // Proteção contra sobrescrita de dados locais:
+          // Apenas grava no Dexie se o registro for novo ou se o registro remoto for mais recente
+          if (records.length > 0) {
+            const existingRecords = await dexieDb.geral.bulkGet(records.map((r) => r.id));
+            const existingMap = new Map<string, GeralCNH>();
+            existingRecords.forEach((e) => {
+              if (e && e.id) existingMap.set(e.id, e);
+            });
+
+            const recordsToPut: GeralCNH[] = [];
+            for (const rec of records) {
+              const local = existingMap.get(rec.id);
+              if (!local) {
+                recordsToPut.push(rec);
+              } else {
+                const localTime = local.updated_at ? new Date(local.updated_at).getTime() : 0;
+                const remoteTime = rec.updated_at ? new Date(rec.updated_at).getTime() : 0;
+                if (remoteTime > localTime) {
+                  recordsToPut.push(rec);
+                }
+              }
+            }
+
+            if (recordsToPut.length > 0) {
+              await dexieDb.geral.bulkPut(recordsToPut);
+            }
+          }
+
           const approxBytes = JSON.stringify(deltaData).length;
           trackEgress("geral_cnhs", "SELECT", approxBytes, false, reqDuration, `Delta: ${records.length} registros atualizados recebidos da nuvem`);
 
@@ -593,12 +664,21 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
 // Obter todos os registros da tabela geral do IndexedDB com deduplicação rigorosa
 export async function getLocalGeralCNHs(): Promise<GeralCNH[]> {
   try {
+    const deletedIds = getDeletedGeralIds();
     const list = await dexieDb.geral.orderBy("ordem").reverse().toArray();
-    const { cleanList, duplicateIds } = deduplicateCNHRecords(list);
+    const nonDeleted = deletedIds.size > 0 ? list.filter((item) => !deletedIds.has(item.id)) : list;
+    const { cleanList, duplicateIds } = deduplicateCNHRecords(nonDeleted);
 
-    // Se detectou registros duplicados locais, limpa em background
-    if (duplicateIds.length > 0) {
-      dexieDb.geral.bulkDelete(duplicateIds).catch(() => {});
+    // Se detectou registros duplicados ou registros marcados como excluídos, limpa em background
+    const idsToDelete = [...duplicateIds];
+    if (deletedIds.size > 0) {
+      for (const item of list) {
+        if (deletedIds.has(item.id)) idsToDelete.push(item.id);
+      }
+    }
+
+    if (idsToDelete.length > 0) {
+      dexieDb.geral.bulkDelete(idsToDelete).catch(() => {});
       if (typeof window !== "undefined") {
         try {
           localStorage.setItem("detran_cnh_geral", JSON.stringify(cleanList.slice(0, 1000)));
@@ -823,7 +903,21 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
 
 // Excluir um registro localmente e no Supabase
 export async function deleteLocalGeralCNH(id: string): Promise<void> {
+  addDeletedGeralId(id);
   await dexieDb.geral.delete(id);
+
+  if (typeof window !== "undefined") {
+    try {
+      const raw = localStorage.getItem("detran_cnh_geral");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter((item: any) => item.id !== id);
+          localStorage.setItem("detran_cnh_geral", JSON.stringify(filtered));
+        }
+      }
+    } catch {}
+  }
 
   if (isSupabaseConfigured()) {
     try {
@@ -845,7 +939,23 @@ export async function deleteLocalGeralCNH(id: string): Promise<void> {
 
 // Excluir múltiplos registros
 export async function deleteLocalGeralCNHsBulk(ids: string[]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  addDeletedGeralIdsBulk(ids);
   await dexieDb.geral.bulkDelete(ids);
+
+  const idsSet = new Set(ids);
+  if (typeof window !== "undefined") {
+    try {
+      const raw = localStorage.getItem("detran_cnh_geral");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter((item: any) => !idsSet.has(item.id));
+          localStorage.setItem("detran_cnh_geral", JSON.stringify(filtered));
+        }
+      }
+    } catch {}
+  }
 
   if (isSupabaseConfigured()) {
     try {

@@ -554,6 +554,9 @@ export interface DeclaracaoItemCondutor {
   cpf: string;
   pa?: string;
   situacao?: string;
+  gaveta?: string;
+  reparticao?: string;
+  data_movimento?: string;
 }
 
 export interface Declaracao {

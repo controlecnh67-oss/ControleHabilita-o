@@ -1,6 +1,6 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { Declaracao } from "../types";
+import { Declaracao, DeclaracaoItemCondutor, GeralCNH } from "../types";
 import { getOrgaoConfig, addPDFHeaderLogo } from "./orgaoService";
 
 /**
@@ -36,6 +36,30 @@ export function formatDataPorExtenso(dataStr: string): string {
 }
 
 /**
+ * Converte data ISO/YYYY-MM-DD para formato padrão brasileiro: DD/MM/YYYY
+ */
+export function formatDataCurta(dataStr?: string): string {
+  if (!dataStr) return "-";
+  const clean = dataStr.trim();
+  if (clean.includes("/")) return clean;
+  try {
+    const datePart = clean.split("T")[0];
+    const parts = datePart.split("-");
+    if (parts.length === 3) {
+      return `${parts[2].padStart(2, "0")}/${parts[1].padStart(2, "0")}/${parts[0]}`;
+    }
+    const d = new Date(clean);
+    if (!isNaN(d.getTime())) {
+      const dia = String(d.getDate()).padStart(2, "0");
+      const mes = String(d.getMonth() + 1).padStart(2, "0");
+      const ano = d.getFullYear();
+      return `${dia}/${mes}/${ano}`;
+    }
+  } catch {}
+  return clean;
+}
+
+/**
  * Formata CPF apenas com números ou mascarado
  */
 export function formatCPFDisplay(cpf?: string): string {
@@ -45,6 +69,61 @@ export function formatCPFDisplay(cpf?: string): string {
     return `${clean.slice(0, 3)}.${clean.slice(3, 6)}.${clean.slice(6, 9)}-${clean.slice(9)}`;
   }
   return cpf;
+}
+
+/**
+ * Obtém os detalhes adicionais da CNH (Gaveta, Repartição, Data Movimento)
+ * seja do próprio condutor ou por busca cruzada com os registros locais em cache.
+ */
+export function resolveCondutorDetails(
+  c: DeclaracaoItemCondutor,
+  cachedCNHs?: GeralCNH[]
+): {
+  gaveta: string;
+  reparticao: string;
+  data_movimento: string;
+} {
+  let gaveta = (c.gaveta && c.gaveta.trim()) || "";
+  let reparticao = (c.reparticao && c.reparticao.trim()) || "";
+  let dataMov = (c.data_movimento && c.data_movimento.trim()) || "";
+
+  if (!gaveta || !reparticao || !dataMov) {
+    let list = cachedCNHs;
+    if (!list || list.length === 0) {
+      try {
+        if (typeof window !== "undefined") {
+          const raw = localStorage.getItem("detran_cnh_geral");
+          if (raw) list = JSON.parse(raw);
+        }
+      } catch {}
+    }
+
+    if (list && list.length > 0) {
+      const cleanCpf = (c.cpf || "").replace(/\D/g, "");
+      const cleanNome = (c.nome || "").trim().toUpperCase();
+
+      const match = list.find((g) => {
+        if (c.cnh_id && g.id === c.cnh_id) return true;
+        if (cleanCpf && cleanCpf.length === 11 && (g.cpf || "").replace(/\D/g, "") === cleanCpf) return true;
+        if (cleanNome && (g.nome || "").trim().toUpperCase() === cleanNome) return true;
+        return false;
+      });
+
+      if (match) {
+        if (!gaveta && match.gaveta) gaveta = match.gaveta;
+        if (!reparticao && match.reparticao) reparticao = match.reparticao;
+        if (!dataMov) {
+          dataMov = match.data_movimento || match.updated_at || match.created_at || "";
+        }
+      }
+    }
+  }
+
+  return {
+    gaveta: gaveta || "-",
+    reparticao: reparticao || "-",
+    data_movimento: formatDataCurta(dataMov)
+  };
 }
 
 /**
@@ -132,7 +211,7 @@ export function buildDeclaracaoDoc(declaracao: Declaracao): jsPDF {
   doc.setFont("helvetica", "bold");
   doc.text("CPF:", marginX + 2, currentY);
   doc.setFont("helvetica", "normal");
-  doc.text(declaracao.procurador_cpf || "", marginX + 14, currentY);
+  doc.text(formatCPFDisplay(declaracao.procurador_cpf) || "-", marginX + 14, currentY);
 
   currentY += 5;
   doc.setFont("helvetica", "bold");
@@ -161,45 +240,62 @@ export function buildDeclaracaoDoc(declaracao: Declaracao): jsPDF {
   currentY += (textoLinhas.length * 5) + 5;
 
   // 7. Tabela de CONDUTOR(ES)
+  let cachedCNHs: GeralCNH[] = [];
+  try {
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem("detran_cnh_geral");
+      if (raw) cachedCNHs = JSON.parse(raw);
+    }
+  } catch {}
+
   const condutoresData = (declaracao.condutores && declaracao.condutores.length > 0)
-    ? declaracao.condutores.map((c, idx) => [
-        String(c.item || idx + 1),
-        (c.nome || "").toUpperCase(),
-        c.cpf || "-"
-      ])
-    : [["1", "CONDUTOR NÃO INFORMADO", "-"]];
+    ? declaracao.condutores.map((c, idx) => {
+        const details = resolveCondutorDetails(c, cachedCNHs);
+        return [
+          String(c.item || idx + 1),
+          (c.nome || "").toUpperCase(),
+          formatCPFDisplay(c.cpf) || "-",
+          details.gaveta,
+          details.reparticao,
+          details.data_movimento
+        ];
+      })
+    : [["1", "CONDUTOR NÃO INFORMADO", "-", "-", "-", "-"]];
 
   autoTable(doc, {
     startY: currentY,
     margin: { left: marginX, right: marginX },
     head: [
       [
-        { content: "CONDUTOR(S)", colSpan: 3, styles: { halign: "center", fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" } }
+        { content: "CONDUTOR(S)", colSpan: 6, styles: { halign: "center", fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" } }
       ],
-      ["ITEM", "NOME", "CPF"]
+      ["ITEM", "NOME", "CPF", "GAVETA", "REPARTIÇÃO", "DATA MOV. DA CNH"]
     ],
     body: condutoresData,
     theme: "grid",
     headStyles: {
       fillColor: [226, 232, 240], // slate-200
       textColor: [15, 23, 42],
-      fontSize: 8.5,
+      fontSize: 8,
       fontStyle: "bold",
       halign: "center",
       lineWidth: 0.25,
       lineColor: [148, 163, 184]
     },
     bodyStyles: {
-      fontSize: 8.5,
+      fontSize: 8,
       textColor: [15, 23, 42],
       lineWidth: 0.2,
       lineColor: [203, 213, 225],
-      cellPadding: 2.2
+      cellPadding: 2
     },
     columnStyles: {
-      0: { cellWidth: 18, halign: "center" },
+      0: { cellWidth: 12, halign: "center" },
       1: { cellWidth: "auto", halign: "left" },
-      2: { cellWidth: 46, halign: "center" }
+      2: { cellWidth: 32, halign: "center" },
+      3: { cellWidth: 20, halign: "center" },
+      4: { cellWidth: 32, halign: "center" },
+      5: { cellWidth: 28, halign: "center" }
     }
   });
 
@@ -238,7 +334,7 @@ export function buildDeclaracaoDoc(declaracao: Declaracao): jsPDF {
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
-  doc.text(declaracao.procurador_cpf || "", leftColX + (colWidth / 2), procuradorY + 9, { align: "center" });
+  doc.text(formatCPFDisplay(declaracao.procurador_cpf) || "", leftColX + (colWidth / 2), procuradorY + 9, { align: "center" });
 
   // Assinatura e Carimbo do Gerente / Responsável DETRAN (Direita)
   // Conforme o modelo da foto:

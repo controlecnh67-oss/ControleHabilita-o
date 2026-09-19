@@ -27,7 +27,7 @@ import {
 } from "../../services/db";
 import { getOrgaoConfig } from "../../services/orgaoService";
 import { useAuth } from "../../context/AuthContext";
-import { formatCPFDisplay } from "../../services/declaracaoPdfService";
+import { formatCPFDisplay, formatDataCurta } from "../../services/declaracaoPdfService";
 import { formatCPF, formatPhone } from "../../lib/utils";
 
 interface DeclaracaoModalProps {
@@ -93,6 +93,9 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
   const [manualNome, setManualNome] = useState("");
   const [manualCpf, setManualCpf] = useState("");
   const [manualPa, setManualPa] = useState("");
+  const [manualGaveta, setManualGaveta] = useState("");
+  const [manualReparticao, setManualReparticao] = useState("");
+  const [manualDataMovimento, setManualDataMovimento] = useState(new Date().toISOString().slice(0, 10));
 
   // Configurações de Assinatura do Gerente / Órgão
   const [showGerenteConfig, setShowGerenteConfig] = useState(false);
@@ -323,7 +326,10 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
       nome: (cnh.nome || "").toUpperCase(),
       cpf: cnh.cpf || "",
       pa: cnh.pa || "",
-      situacao: cnh.situacao
+      situacao: cnh.situacao,
+      gaveta: cnh.gaveta || "",
+      reparticao: cnh.reparticao || "",
+      data_movimento: cnh.data_movimento || new Date().toISOString().slice(0, 10)
     };
     setCondutores((prev) => [...prev, newItem]);
     setCnhSearch("");
@@ -336,12 +342,18 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
       item: condutores.length + 1,
       nome: manualNome.trim().toUpperCase(),
       cpf: manualCpf.trim(),
-      pa: manualPa.trim()
+      pa: manualPa.trim(),
+      gaveta: manualGaveta.trim(),
+      reparticao: manualReparticao.trim(),
+      data_movimento: manualDataMovimento.trim() || new Date().toISOString().slice(0, 10)
     };
     setCondutores((prev) => [...prev, newItem]);
     setManualNome("");
     setManualCpf("");
     setManualPa("");
+    setManualGaveta("");
+    setManualReparticao("");
+    setManualDataMovimento(new Date().toISOString().slice(0, 10));
     setShowManualCondutor(false);
   };
 
@@ -709,7 +721,7 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
                       className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900"
                     />
                   </div>
-                  <div className="flex gap-2">
+                  <div>
                     <input
                       type="text"
                       placeholder="PA (opcional)"
@@ -717,12 +729,43 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
                       onChange={(e) => setManualPa(e.target.value)}
                       className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900"
                     />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-1 items-center">
+                  <div>
+                    <input
+                      type="text"
+                      placeholder="Gaveta (opcional)"
+                      value={manualGaveta}
+                      onChange={(e) => setManualGaveta(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900"
+                    />
+                  </div>
+                  <div>
+                    <input
+                      type="text"
+                      placeholder="Repartição (opcional)"
+                      value={manualReparticao}
+                      onChange={(e) => setManualReparticao(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900"
+                    />
+                  </div>
+                  <div>
+                    <input
+                      type="date"
+                      title="Data de Movimentação da CNH"
+                      value={manualDataMovimento}
+                      onChange={(e) => setManualDataMovimento(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900"
+                    />
+                  </div>
+                  <div className="flex justify-end">
                     <button
                       type="button"
                       onClick={handleAddManualCondutor}
-                      className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shrink-0"
+                      className="w-full sm:w-auto px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shrink-0 transition-colors"
                     >
-                      Inserir
+                      Inserir Condutor
                     </button>
                   </div>
                 </div>
@@ -798,32 +841,40 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs text-left">
-                  <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-bold uppercase tracking-wider">
+                  <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-bold uppercase tracking-wider text-[11px]">
                     <tr>
-                      <th className="py-2.5 px-3 w-16 text-center">ITEM</th>
+                      <th className="py-2.5 px-2.5 w-12 text-center">ITEM</th>
                       <th className="py-2.5 px-3">NOME</th>
                       <th className="py-2.5 px-3 text-center">CPF</th>
-                      <th className="py-2.5 px-3 text-center">PA / Protocolo</th>
-                      <th className="py-2.5 px-3 w-16 text-center">Ações</th>
+                      <th className="py-2.5 px-2.5 text-center">GAVETA</th>
+                      <th className="py-2.5 px-3 text-center">REPARTIÇÃO</th>
+                      <th className="py-2.5 px-3 text-center">DATA MOV. DA CNH</th>
+                      <th className="py-2.5 px-2 w-12 text-center">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800 bg-white dark:bg-slate-950">
                     {condutores.length > 0 ? (
                       condutores.map((cond, index) => (
                         <tr key={index} className="hover:bg-slate-50 dark:hover:bg-slate-900/50">
-                          <td className="py-2.5 px-3 text-center font-bold text-slate-700 dark:text-slate-300">
+                          <td className="py-2.5 px-2.5 text-center font-bold text-slate-700 dark:text-slate-300">
                             {cond.item || index + 1}
                           </td>
                           <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-slate-100 uppercase">
                             {cond.nome}
                           </td>
                           <td className="py-2.5 px-3 text-center font-mono text-slate-600 dark:text-slate-400">
-                            {cond.cpf || "-"}
+                            {formatCPFDisplay(cond.cpf) || "-"}
                           </td>
-                          <td className="py-2.5 px-3 text-center text-slate-500 dark:text-slate-400">
-                            {cond.pa || "-"}
+                          <td className="py-2.5 px-2.5 text-center text-slate-600 dark:text-slate-400">
+                            {cond.gaveta || "-"}
                           </td>
-                          <td className="py-2.5 px-3 text-center">
+                          <td className="py-2.5 px-3 text-center text-slate-600 dark:text-slate-400">
+                            {cond.reparticao || "-"}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono text-slate-600 dark:text-slate-400">
+                            {formatDataCurta(cond.data_movimento)}
+                          </td>
+                          <td className="py-2.5 px-2 text-center">
                             <button
                               type="button"
                               onClick={() => handleRemoveCondutor(index)}
@@ -837,7 +888,7 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={5} className="py-6 text-center text-slate-400 dark:text-slate-500">
+                        <td colSpan={7} className="py-6 text-center text-slate-400 dark:text-slate-500">
                           Nenhum condutor adicionado ainda. Busque uma CNH acima ou clique em "Condutor Manual".
                         </td>
                       </tr>

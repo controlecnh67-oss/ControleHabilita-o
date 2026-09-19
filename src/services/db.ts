@@ -722,6 +722,25 @@ function addDeletedId(key: string, id: string): void {
   } catch {}
 }
 
+function addDeletedIdsBulk(key: string, ids: string[]): void {
+  if (!ids || ids.length === 0) return;
+  try {
+    const set = getDeletedIds(key);
+    for (const id of ids) {
+      if (id) set.add(id);
+    }
+    const arr = Array.from(set);
+    const storeKey = `deleted_${key}`;
+    memoryStore[storeKey] = arr;
+
+    const storageKey = `detran_cnh_deleted_${key}`;
+    idbSet(storageKey, arr).catch(() => {});
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(storageKey, JSON.stringify(arr));
+    }
+  } catch {}
+}
+
 export function resetDemoData(): void {
   for (const k of Object.keys(memoryStore)) {
     delete memoryStore[k];
@@ -4794,6 +4813,7 @@ export async function deleteGeralCNH(
   if (!target) return false;
 
   const updated = geralList.filter((g) => g.id !== id);
+  addDeletedId("geral", id);
   saveStoredList("geral", updated);
   await deleteLocalGeralCNH(id);
 
@@ -4821,6 +4841,7 @@ export async function deleteMultipleGeralCNHs(
   const geralList = await getLocalGeralCNHs();
   const targets = geralList.filter((g) => idsSet.has(g.id));
   const updated = geralList.filter((g) => !idsSet.has(g.id));
+  addDeletedIdsBulk("geral", ids);
   saveStoredList("geral", updated);
   await deleteLocalGeralCNHsBulk(ids);
 

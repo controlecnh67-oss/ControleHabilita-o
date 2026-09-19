@@ -2,7 +2,7 @@ import React from "react";
 import { X, FileDown, Printer, Edit, FileText, CheckCircle } from "lucide-react";
 import { Declaracao } from "../../types";
 import { getOrgaoConfig } from "../../services/orgaoService";
-import { downloadDeclaracaoPDF, formatDataPorExtenso } from "../../services/declaracaoPdfService";
+import { downloadDeclaracaoPDF, formatDataPorExtenso, formatCPFDisplay, resolveCondutorDetails } from "../../services/declaracaoPdfService";
 
 interface DeclaracaoViewModalProps {
   declaracao: Declaracao | null;
@@ -132,7 +132,7 @@ export const DeclaracaoViewModal: React.FC<DeclaracaoViewModalProps> = ({
                 </div>
                 <div>
                   <strong className="text-slate-800">CPF: </strong>
-                  <span className="font-mono text-slate-900">{declaracao.procurador_cpf}</span>
+                  <span className="font-mono text-slate-900">{formatCPFDisplay(declaracao.procurador_cpf)}</span>
                 </div>
                 <div>
                   <strong className="text-slate-800">FONE: </strong>
@@ -157,31 +157,46 @@ export const DeclaracaoViewModal: React.FC<DeclaracaoViewModalProps> = ({
                 CONDUTOR(S)
               </div>
               <table className="w-full text-left text-[11px]">
-                <thead className="bg-slate-50 border-b border-slate-300 font-bold text-slate-800 uppercase">
+                <thead className="bg-slate-50 border-b border-slate-300 font-bold text-slate-800 uppercase text-[10px]">
                   <tr>
-                    <th className="py-2 px-3 w-14 text-center border-r border-slate-200">ITEM</th>
+                    <th className="py-2 px-2.5 w-12 text-center border-r border-slate-200">ITEM</th>
                     <th className="py-2 px-3 border-r border-slate-200">NOME</th>
-                    <th className="py-2 px-3 text-center">CPF</th>
+                    <th className="py-2 px-3 text-center border-r border-slate-200">CPF</th>
+                    <th className="py-2 px-2.5 text-center border-r border-slate-200">GAVETA</th>
+                    <th className="py-2 px-3 text-center border-r border-slate-200">REPARTIÇÃO</th>
+                    <th className="py-2 px-3 text-center">DATA MOV. DA CNH</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {declaracao.condutores && declaracao.condutores.length > 0 ? (
-                    declaracao.condutores.map((c, i) => (
-                      <tr key={i}>
-                        <td className="py-1.5 px-3 text-center font-bold border-r border-slate-200">
-                          {c.item || i + 1}
-                        </td>
-                        <td className="py-1.5 px-3 font-semibold uppercase border-r border-slate-200">
-                          {c.nome}
-                        </td>
-                        <td className="py-1.5 px-3 text-center font-mono text-slate-700">
-                          {c.cpf || "-"}
-                        </td>
-                      </tr>
-                    ))
+                    declaracao.condutores.map((c, i) => {
+                      const details = resolveCondutorDetails(c);
+                      return (
+                        <tr key={i}>
+                          <td className="py-1.5 px-2.5 text-center font-bold border-r border-slate-200">
+                            {c.item || i + 1}
+                          </td>
+                          <td className="py-1.5 px-3 font-semibold uppercase border-r border-slate-200">
+                            {c.nome}
+                          </td>
+                          <td className="py-1.5 px-3 text-center font-mono text-slate-700 border-r border-slate-200">
+                            {formatCPFDisplay(c.cpf) || "-"}
+                          </td>
+                          <td className="py-1.5 px-2.5 text-center text-slate-700 border-r border-slate-200">
+                            {details.gaveta}
+                          </td>
+                          <td className="py-1.5 px-3 text-center text-slate-700 border-r border-slate-200">
+                            {details.reparticao}
+                          </td>
+                          <td className="py-1.5 px-3 text-center font-mono text-slate-700">
+                            {details.data_movimento}
+                          </td>
+                        </tr>
+                      );
+                    })
                   ) : (
                     <tr>
-                      <td colSpan={3} className="py-2 px-3 text-center text-slate-400">
+                      <td colSpan={6} className="py-2 px-3 text-center text-slate-400">
                         Nenhum condutor listado
                       </td>
                     </tr>
@@ -204,7 +219,7 @@ export const DeclaracaoViewModal: React.FC<DeclaracaoViewModalProps> = ({
                   {declaracao.procurador_nome}
                 </div>
                 <div className="text-[10px] font-mono text-slate-700">
-                  {declaracao.procurador_cpf}
+                  {formatCPFDisplay(declaracao.procurador_cpf)}
                 </div>
               </div>
 
