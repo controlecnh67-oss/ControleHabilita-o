@@ -386,10 +386,6 @@ export function initAutoSyncService(): () => void {
               client: CLIENT_SESSION_ID,
               online_at: new Date().toISOString()
             });
-            // Executa verificação inicial de sincronia
-            setTimeout(() => {
-              reconcilePendingDifferences(false).catch(() => {});
-            }, 1000);
           } else if (status === "CLOSED" || status === "CHANNEL_ERROR") {
             updateState({ activeChannel: false });
           }
@@ -397,18 +393,6 @@ export function initAutoSyncService(): () => void {
     } catch (err) {
       console.warn("Erro ao inicializar canal Supabase Realtime:", err);
     }
-  }
-
-  // 3. Ouvintes passivos para reconciliação ao retomar conexão (com cooldown)
-  const handleFocus = () => {
-    if (typeof document === "undefined" || document.visibilityState === "visible") {
-      reconcilePendingDifferences(false).catch(() => {});
-    }
-  };
-
-  if (typeof window !== "undefined") {
-    window.addEventListener("focus", handleFocus);
-    window.addEventListener("online", handleFocus);
   }
 
   // Função de limpeza / descarte
@@ -428,10 +412,6 @@ export function initAutoSyncService(): () => void {
         client.removeChannel(autoSyncChannel);
       } catch {}
       autoSyncChannel = null;
-    }
-    if (typeof window !== "undefined") {
-      window.removeEventListener("focus", handleFocus);
-      window.removeEventListener("online", handleFocus);
     }
   };
 }

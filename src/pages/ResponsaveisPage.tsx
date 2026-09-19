@@ -229,26 +229,12 @@ export const ResponsaveisPage: React.FC = () => {
     const handleSync = (e: Event) => {
       const customEvt = e as CustomEvent;
       if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "responsaveis" || customEvt.detail.type === "geral") {
-        scheduleFetch(100);
+        scheduleFetch(300);
       }
     };
-
-    const handleVisibilityOrFocus = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        scheduleFetch(200);
-      }
-    };
-
-    const intervalId = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        scheduleFetch(0);
-      }
-    }, 30000);
 
     window.addEventListener("detran_sync_updated", handleSync);
     window.addEventListener("storage", handleSync);
-    window.addEventListener("focus", handleVisibilityOrFocus);
-    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
 
     return () => {
       if (debounceTimerRef.current) {
@@ -256,11 +242,8 @@ export const ResponsaveisPage: React.FC = () => {
       }
       unsubRealtimeResp();
       unsubRealtimeGeral();
-      clearInterval(intervalId);
       window.removeEventListener("detran_sync_updated", handleSync);
       window.removeEventListener("storage", handleSync);
-      window.removeEventListener("focus", handleVisibilityOrFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };
   }, [fetchDados, scheduleFetch]);
 

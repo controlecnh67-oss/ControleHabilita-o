@@ -196,27 +196,12 @@ export const RelatoriosPage: React.FC = () => {
     const handleSync = (e: Event) => {
       const customEvt = e as CustomEvent;
       if (!customEvt.detail || customEvt.detail.type === "all" || customEvt.detail.type === "geral" || customEvt.detail.type === "historico" || customEvt.detail.type === "memorandos" || customEvt.detail.type === "candidatos" || customEvt.detail.type === "responsaveis" || customEvt.detail.type === "usuarios") {
-        scheduleLoadData(350);
+        scheduleLoadData(400);
       }
     };
-
-    const handleVisibilityOrFocus = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        scheduleLoadData(300);
-      }
-    };
-
-    // Polling suave a cada 40 segundos se a aba estiver visível
-    const intervalId = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        scheduleLoadData(0);
-      }
-    }, 40000);
 
     window.addEventListener("detran_sync_updated", handleSync);
     window.addEventListener("storage", handleSync);
-    window.addEventListener("focus", handleVisibilityOrFocus);
-    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
 
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
@@ -226,11 +211,8 @@ export const RelatoriosPage: React.FC = () => {
       unsubRealtimeCands();
       unsubRealtimeResp();
       unsubRealtimeUser();
-      clearInterval(intervalId);
       window.removeEventListener("detran_sync_updated", handleSync);
       window.removeEventListener("storage", handleSync);
-      window.removeEventListener("focus", handleVisibilityOrFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };
   }, [loadData, scheduleLoadData]);
 

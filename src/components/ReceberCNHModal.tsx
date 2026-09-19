@@ -128,7 +128,9 @@ export const ReceberCNHModal: React.FC<ReceberCNHModalProps> = ({
                 onChange={(e) => setEscolhaManual(e.target.checked)}
                 className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 dark:border-slate-600 cursor-pointer"
               />
-              <span>Escolha Manual</span>
+              <span className="font-semibold text-xs text-slate-800 dark:text-slate-200">
+                Ativar opção de escolha manual de gaveta e repartição
+              </span>
             </label>
           </div>
 

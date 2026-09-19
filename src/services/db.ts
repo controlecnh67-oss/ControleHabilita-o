@@ -636,7 +636,20 @@ export async function initStorage(force = false): Promise<void> {
   isIdbInitialized = true;
 }
 
-// Helper para obter/salvar com cache em memória e IndexedDB + LocalStorage
+// Conjunto de tabelas volumosas que NUNCA devem ser salvas no localStorage síncrono
+// O localStorage bloqueia a thread principal do navegador por segundos ao serializar MBs de JSON.
+// Essas tabelas usam memoryStore + IndexedDB (assíncrono e de alta performance).
+const HEAVY_STORE_KEYS = new Set([
+  "geral",
+  "historico",
+  "auditoria",
+  "candidatos",
+  "imagens",
+  "acessos_cidadao",
+  "declaracoes"
+]);
+
+// Helper para obter/salvar com cache em memória e IndexedDB + LocalStorage seguro
 export function getStoredList<T extends { id?: string }>(key: string, seed: T[]): T[] {
   const deletedIds = getDeletedIds(key);
   let list: T[] = [];
@@ -644,27 +657,26 @@ export function getStoredList<T extends { id?: string }>(key: string, seed: T[])
   if (memoryStore[key] && Array.isArray(memoryStore[key])) {
     list = memoryStore[key] as T[];
   } else {
-    try {
-      const storageKey = `detran_cnh_${key}`;
-      const raw = localStorage.getItem(storageKey);
+    // Apenas coleções leves (usuários, responsáveis, mapeamento) consultam o localStorage
+    if (!HEAVY_STORE_KEYS.has(key)) {
+      try {
+        const storageKey = `detran_cnh_${key}`;
+        const raw = localStorage.getItem(storageKey);
 
-      if (!raw) {
-        list = seed;
-        memoryStore[key] = seed;
-        saveStoredList(key, seed);
-      } else {
-        let parsed: T[] = JSON.parse(raw);
-        if (!Array.isArray(parsed)) {
-          list = seed;
-          saveStoredList(key, list);
-        } else {
-          list = parsed;
-          memoryStore[key] = parsed;
+        if (raw) {
+          let parsed: T[] = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            list = parsed;
+            memoryStore[key] = parsed;
+          }
         }
-      }
-    } catch {
+      } catch {}
+    }
+
+    if (list.length === 0) {
       list = seed;
       memoryStore[key] = seed;
+      saveStoredList(key, seed);
     }
   }
 
@@ -676,12 +688,23 @@ export function getStoredList<T extends { id?: string }>(key: string, seed: T[])
 }
 
 export function saveStoredList<T>(key: string, data: T[]): void {
-  memoryStore[key] = data;
+  // Limitar histórico e auditoria em memória (mantém os 500 mais recentes na RAM para fluidez imediata)
+  if (key === "auditoria" || key === "historico") {
+    memoryStore[key] = data.slice(0, 500);
+  } else {
+    memoryStore[key] = data;
+  }
+
+  // Persistência assíncrona garantida no IndexedDB (sem travar a interface gráfica do usuário)
   idbSet(`detran_cnh_${key}`, data).catch(() => {});
-  try {
-    localStorage.setItem(`detran_cnh_${key}`, JSON.stringify(data));
-  } catch (err) {
-    // Erro de cota excedida do localStorage ignorado graciosamente pois memoryStore + IndexedDB possuem os dados
+
+  // NUNCA persistir tabelas pesadas no localStorage para não travar o navegador
+  if (!HEAVY_STORE_KEYS.has(key)) {
+    try {
+      localStorage.setItem(`detran_cnh_${key}`, JSON.stringify(data));
+    } catch (err) {
+      // Erro de cota do localStorage ignorado graciosamente pois memoryStore + IndexedDB possuem os dados
+    }
   }
 }
 
@@ -870,6 +893,127 @@ export async function logHistorico(
       }]);
     } catch (e) {
       console.warn("Aviso ao salvar histórico no Supabase:", e);
+    }
+  }
+}
+
+// Registro em Lote de Auditoria com alta performance e sem travamento da thread principal
+export async function logAuditoriaBulk(
+  entries: Array<{
+    tabela: string;
+    registro_id: string | number;
+    acao: AcaoAuditoria;
+    usuario_id: string;
+    usuario_nome?: string;
+    valores_anteriores?: any;
+    valores_novos?: any;
+  }>
+): Promise<void> {
+  if (!entries || entries.length === 0) return;
+  const list = getStoredList<Auditoria>("auditoria", SEED_AUDITORIA);
+  const now = new Date().toISOString();
+
+  const newItems: Auditoria[] = entries.map((entry, idx) => ({
+    id: `aud-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
+    tabela: entry.tabela,
+    registro_id: String(entry.registro_id),
+    acao: entry.acao,
+    usuario_id: entry.usuario_id,
+    usuario_nome: entry.usuario_nome || "Usuário do Sistema",
+    data_hora: now,
+    ip: "127.0.0.1",
+    valores_anteriores: entry.valores_anteriores || null,
+    valores_novos: entry.valores_novos || null
+  }));
+
+  saveStoredList("auditoria", [...newItems, ...list]);
+  notifyDataSync("auditoria");
+
+  if (isSupabaseConfigured()) {
+    try {
+      const payload = newItems.map((nova) => ({
+        id: nova.id,
+        tabela: nova.tabela,
+        registro_id: nova.registro_id,
+        acao: nova.acao,
+        usuario_id: nova.usuario_id || null,
+        usuario_nome: nova.usuario_nome,
+        data_hora: nova.data_hora,
+        ip: nova.ip,
+        valores_anteriores: nova.valores_anteriores,
+        valores_novos: nova.valores_novos
+      }));
+      // Envio em lotes de 100 para evitar limites de payload
+      for (let i = 0; i < payload.length; i += 100) {
+        await supabase.from("auditoria").insert(payload.slice(i, i + 100));
+      }
+    } catch (e) {
+      console.warn("Aviso ao salvar lote de auditoria no Supabase:", e);
+    }
+  }
+}
+
+// Registro em Lote de Histórico com alta performance e uma única sincronização
+export async function logHistoricoBulk(
+  entries: Array<{
+    geral_id: string;
+    geral_ordem: number;
+    geral_nome: string;
+    situacao_anterior: SituacaoGeral | null;
+    situacao_nova: SituacaoGeral;
+    usuario_id: string;
+    usuario_nome: string;
+    observacao?: string;
+    responsavel_id?: string;
+    responsavel_nome?: string;
+    geral_cpf?: string;
+  }>
+): Promise<void> {
+  if (!entries || entries.length === 0) return;
+  const list = getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO);
+  const now = new Date().toISOString();
+
+  const newItems: HistoricoMovimentacao[] = entries.map((entry, idx) => ({
+    id: `hist-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
+    geral_id: entry.geral_id,
+    geral_ordem: entry.geral_ordem,
+    geral_nome: entry.geral_nome,
+    geral_cpf: entry.geral_cpf,
+    situacao_anterior: entry.situacao_anterior,
+    situacao_nova: entry.situacao_nova,
+    responsavel_id: entry.responsavel_id,
+    responsavel_nome: entry.responsavel_nome,
+    usuario_id: entry.usuario_id,
+    usuario_nome: entry.usuario_nome,
+    observacao: entry.observacao,
+    data_hora: now
+  }));
+
+  saveStoredList("historico", [...newItems, ...list]);
+  notifyDataSync("historico");
+
+  if (isSupabaseConfigured()) {
+    try {
+      const payload = newItems.map((novo) => ({
+        id: novo.id,
+        geral_id: novo.geral_id,
+        geral_ordem: novo.geral_ordem,
+        geral_nome: novo.geral_nome,
+        situacao_anterior: novo.situacao_anterior,
+        situacao_nova: novo.situacao_nova,
+        responsavel_id: novo.responsavel_id || null,
+        responsavel_nome: novo.responsavel_nome || null,
+        usuario_id: novo.usuario_id || null,
+        usuario_nome: novo.usuario_nome || null,
+        observacao: novo.observacao || null,
+        data_hora: novo.data_hora
+      }));
+      // Envio em lotes de 100
+      for (let i = 0; i < payload.length; i += 100) {
+        await supabase.from("historico_movimentacoes").insert(payload.slice(i, i + 100));
+      }
+    } catch (e) {
+      console.warn("Aviso ao salvar lote de histórico no Supabase:", e);
     }
   }
 }
@@ -3517,15 +3661,43 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
   const memorandos = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
   const candidatos = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
 
+  // Índices O(1) em memória para evitar 50.000.000 iterações na thread principal
+  const userMap = new Map<string, Usuario>();
+  for (const u of usuarios) {
+    if (u.id) userMap.set(u.id, u);
+  }
+
+  const respMapById = new Map<string, Responsavel>();
+  const respMapByName = new Map<string, Responsavel>();
+  for (const r of responsaveis) {
+    if (r.id) respMapById.set(r.id, r);
+    if (r.nome) respMapByName.set(r.nome.trim().toLowerCase(), r);
+  }
+
+  const memoMap = new Map<string, Memorando>();
+  for (const m of memorandos) {
+    if (m.id) memoMap.set(m.id, m);
+  }
+
+  const candMap = new Map<string, Candidato>();
+  for (const cand of candidatos) {
+    if (cand.id) candMap.set(cand.id, cand);
+  }
+
+  const mapByInitial = new Map<string, (typeof SEED_MAPEAMENTO)[0]>();
+  for (const m of SEED_MAPEAMENTO) {
+    if (m.ativo !== false && m.inicial) {
+      mapByInitial.set(m.inicial.toUpperCase(), m);
+    }
+  }
+
   return cleanRawList.map((c) => {
-    const usr = usuarios.find((u) => u.id === c.usuario_id);
-    const resp = responsaveis.find(
-      (r) =>
-        r.id === c.responsavel_id ||
-        (r.nome && c.responsavel_nome && r.nome.trim().toLowerCase() === c.responsavel_nome.trim().toLowerCase())
-    );
-    const memo = memorandos.find((m) => m.id === c.memorando_id);
-    const cand = candidatos.find((cand) => cand.id === c.candidato_id);
+    const usr = c.usuario_id ? userMap.get(c.usuario_id) : undefined;
+    const resp = c.responsavel_id
+      ? respMapById.get(c.responsavel_id)
+      : (c.responsavel_nome ? respMapByName.get(c.responsavel_nome.trim().toLowerCase()) : undefined);
+    const memo = c.memorando_id ? memoMap.get(c.memorando_id) : undefined;
+    const cand = c.candidato_id ? candMap.get(c.candidato_id) : undefined;
 
     const nomeCalculado = (c.nome && c.nome.trim() !== "")
       ? c.nome
@@ -3544,7 +3716,7 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
 
     if (c.situacao === "Recebida" && (!effectiveGaveta || !effectiveReparticao)) {
       const char = getInitialChar(nomeCalculado || c.nome || "");
-      const m = SEED_MAPEAMENTO.find((item) => item.inicial.toUpperCase() === char && item.ativo !== false);
+      const m = mapByInitial.get(char);
       if (m) {
         effectiveGaveta = effectiveGaveta || m.gaveta;
         effectiveReparticao = effectiveReparticao || m.reparticao;
@@ -4625,6 +4797,8 @@ export async function receberCNHsBulk(
 
   const now = new Date().toISOString();
   const updatedCNHs: GeralCNH[] = [];
+  const histEntries: any[] = [];
+  const auditEntries: any[] = [];
 
   for (let i = 0; i < geralList.length; i++) {
     const cnh = geralList[i];
@@ -4662,35 +4836,35 @@ export async function receberCNHsBulk(
       geralList[i] = atualizado;
       updatedCNHs.push(atualizado);
 
-      await logHistorico(
-        atualizado.id,
-        atualizado.ordem,
-        atualizado.nome,
-        oldSituacao,
-        "Recebida",
-        userId,
-        userNome,
-        `Recebimento em lote - Alocado na ${locGaveta} / ${locReparticao}`,
-        undefined,
-        undefined,
-        atualizado.cpf
-      );
+      histEntries.push({
+        geral_id: atualizado.id,
+        geral_ordem: atualizado.ordem,
+        geral_nome: atualizado.nome,
+        situacao_anterior: oldSituacao,
+        situacao_nova: "Recebida",
+        usuario_id: userId,
+        usuario_nome: userNome,
+        observacao: `Recebimento em lote - Alocado na ${locGaveta} / ${locReparticao}`,
+        geral_cpf: atualizado.cpf
+      });
 
-      await logAuditoria(
-        "geral",
-        `Ordem #${atualizado.ordem}`,
-        "Recebimento",
-        userId,
-        userNome,
-        { situacao: oldSituacao },
-        { situacao: "Recebida", gaveta: locGaveta, reparticao: locReparticao }
-      );
+      auditEntries.push({
+        tabela: "geral",
+        registro_id: `Ordem #${atualizado.ordem}`,
+        acao: "Recebimento",
+        usuario_id: userId,
+        usuario_nome: userNome,
+        valores_anteriores: { situacao: oldSituacao },
+        valores_novos: { situacao: "Recebida", gaveta: locGaveta, reparticao: locReparticao }
+      });
     }
   }
 
   if (updatedCNHs.length > 0) {
     saveStoredList("geral", geralList);
     await saveLocalGeralCNHsBulk(updatedCNHs);
+    await logHistoricoBulk(histEntries);
+    await logAuditoriaBulk(auditEntries);
     notifyDataSync("geral");
   }
 
@@ -4718,6 +4892,8 @@ export async function cadastrarNovasCNHsRecebidas(
   let maxOrdem = geralList.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0);
   const now = new Date().toISOString();
   const insertedCNHs: GeralCNH[] = [];
+  const histEntries: any[] = [];
+  const auditEntries: any[] = [];
 
   for (const item of novos) {
     const nomeLimpo = (item.nome || "").trim().toUpperCase();
@@ -4762,35 +4938,35 @@ export async function cadastrarNovasCNHsRecebidas(
 
     insertedCNHs.push(nova);
 
-    await logHistorico(
-      nova.id,
-      nova.ordem,
-      nova.nome,
-      null,
-      "Recebida",
-      userId,
-      userNome,
-      `Cadastrado via importação de planilha Excel - Alocado na ${locGaveta} / ${locReparticao}`,
-      undefined,
-      undefined,
-      nova.cpf
-    );
+    histEntries.push({
+      geral_id: nova.id,
+      geral_ordem: nova.ordem,
+      geral_nome: nova.nome,
+      situacao_anterior: null,
+      situacao_nova: "Recebida",
+      usuario_id: userId,
+      usuario_nome: userNome,
+      observacao: `Cadastrado via importação de planilha Excel - Alocado na ${locGaveta} / ${locReparticao}`,
+      geral_cpf: nova.cpf
+    });
 
-    await logAuditoria(
-      "geral",
-      `Ordem #${nova.ordem}`,
-      "Inclusão",
-      userId,
-      userNome,
-      null,
-      nova
-    );
+    auditEntries.push({
+      tabela: "geral",
+      registro_id: `Ordem #${nova.ordem}`,
+      acao: "Inclusão",
+      usuario_id: userId,
+      usuario_nome: userNome,
+      valores_anteriores: null,
+      valores_novos: nova
+    });
   }
 
   if (insertedCNHs.length > 0) {
     const combined = [...insertedCNHs, ...geralList];
     saveStoredList("geral", combined);
     await saveLocalGeralCNHsBulk(insertedCNHs);
+    await logHistoricoBulk(histEntries);
+    await logAuditoriaBulk(auditEntries);
     notifyDataSync("geral");
   }
 
@@ -6014,7 +6190,7 @@ interface SupabaseCacheEntry<T> {
   cachedAt: number;
 }
 const supabaseTableCache = new Map<string, SupabaseCacheEntry<any>>();
-const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos de validade por padrão para preservar a quota de egress do Supabase
+const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutos de validade por padrão para preservar a quota de egress do Supabase
 
 export function invalidateSupabaseCache(tableName?: string) {
   if (tableName) {
@@ -6028,15 +6204,22 @@ export function invalidateSupabaseCache(tableName?: string) {
   }
 }
 
-// Helper para buscar todos os registros de uma tabela do Supabase com paginação e timeout seguro (evita travamento caso quota esteja no limite)
+// Helper para buscar registros de uma tabela do Supabase com paginação e limite seguro contra estouro de egress
 export async function fetchAllRowsFromSupabase<T = any>(
   tableName: string, 
   pageSize = 1000,
   orderColumn?: string,
   ascending = true,
-  forceRefresh = false
+  forceRefresh = false,
+  maxRows?: number
 ): Promise<T[]> {
-  const cacheKey = `${tableName}:${orderColumn || ""}:${ascending}`;
+  // Para tabelas de log volumosas, aplicar limite seguro padrão de 250 itens mais recentes
+  const isLogTable = tableName === "auditoria" || tableName === "historico_movimentacoes" || tableName === "acessos_cidadao";
+  const effectiveMaxRows = maxRows || (isLogTable ? 250 : undefined);
+  const effectiveOrderCol = orderColumn || (isLogTable ? "data_hora" : undefined);
+  const effectiveAscending = isLogTable && orderColumn === undefined ? false : ascending;
+
+  const cacheKey = `${tableName}:${effectiveOrderCol || ""}:${effectiveAscending}:${effectiveMaxRows || "all"}`;
   const now = Date.now();
   const cached = supabaseTableCache.get(cacheKey);
 
@@ -6053,10 +6236,13 @@ export async function fetchAllRowsFromSupabase<T = any>(
 
   try {
     while (hasMore) {
-      const to = from + pageSize - 1;
+      const remainingLimit = effectiveMaxRows ? effectiveMaxRows - allRows.length : pageSize;
+      const currentBatchSize = Math.min(pageSize, remainingLimit > 0 ? remainingLimit : pageSize);
+      const to = from + currentBatchSize - 1;
+
       let query = supabase.from(tableName).select("*");
-      if (orderColumn) {
-        query = query.order(orderColumn, { ascending });
+      if (effectiveOrderCol) {
+        query = query.order(effectiveOrderCol, { ascending: effectiveAscending });
       }
 
       // Timeout seguro de 6 segundos por requisição
@@ -6076,10 +6262,10 @@ export async function fetchAllRowsFromSupabase<T = any>(
         const chunkBytes = JSON.stringify(data).length;
         totalBytes += chunkBytes;
 
-        if (data.length < pageSize) {
+        if (data.length < currentBatchSize || (effectiveMaxRows && allRows.length >= effectiveMaxRows)) {
           hasMore = false;
         } else {
-          from += pageSize;
+          from += currentBatchSize;
         }
       } else {
         hasMore = false;

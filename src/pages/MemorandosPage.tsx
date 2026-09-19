@@ -190,32 +190,10 @@ export const MemorandosPage: React.FC<{ onNavigateToGeral?: () => void }> = ({ o
     };
     window.addEventListener("detran_sync_updated", handleSyncEvent);
 
-    // 4. Sincronização automática quando o usuário volta para a aba ou janela
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        fetchDados(undefined, true);
-      }
-    };
-    const handleWindowFocus = () => {
-      fetchDados(undefined, true);
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("focus", handleWindowFocus);
-
-    // 5. Polling de sincronização em segundo plano a cada 10 segundos
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") {
-        fetchDados(undefined, true);
-      }
-    }, 10000);
-
     return () => {
       unsubMemos();
       unsubCands();
       window.removeEventListener("detran_sync_updated", handleSyncEvent);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("focus", handleWindowFocus);
-      clearInterval(interval);
     };
   }, [fetchDados]);
 

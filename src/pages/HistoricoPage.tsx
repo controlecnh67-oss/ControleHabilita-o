@@ -100,23 +100,8 @@ export const HistoricoPage: React.FC = () => {
       }
     };
 
-    const handleVisibilityOrFocus = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        scheduleFetch(200);
-      }
-    };
-
-    // Polling suave a cada 25 segundos se a aba estiver visível
-    const intervalId = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        scheduleFetch(0);
-      }
-    }, 25000);
-
     window.addEventListener("detran_sync_updated", handleSync);
     window.addEventListener("storage", handleSync);
-    window.addEventListener("focus", handleVisibilityOrFocus);
-    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
 
     return () => {
       if (debounceTimerRef.current) {
@@ -124,11 +109,8 @@ export const HistoricoPage: React.FC = () => {
       }
       unsubRealtimeHist();
       unsubRealtimeGeral();
-      clearInterval(intervalId);
       window.removeEventListener("detran_sync_updated", handleSync);
       window.removeEventListener("storage", handleSync);
-      window.removeEventListener("focus", handleVisibilityOrFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };
   }, [fetchDados, scheduleFetch]);
 

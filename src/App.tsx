@@ -107,17 +107,8 @@ const MainLayout: React.FC = () => {
       }
     });
 
-    // Sincronização Delta suave em background (a cada 5 minutos, somente se a aba estiver visível)
-    // O Realtime via WebSockets acima já entrega atualizações instantâneas sem gastar quota de Egress
-    const backgroundInterval = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        syncGeralWithSupabase(false).catch(() => {});
-      }
-    }, 300000);
-
     return () => {
       unsubscribe();
-      clearInterval(backgroundInterval);
     };
   }, []);
 

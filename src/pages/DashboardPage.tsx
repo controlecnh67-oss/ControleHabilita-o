@@ -89,37 +89,19 @@ export const DashboardPage: React.FC = () => {
 
     // 3. Eventos locais e entre abas
     const handleSync = () => {
-      scheduleFetch(200);
+      scheduleFetch(300);
     };
-
-    const handleFocus = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        scheduleFetch(300);
-      }
-    };
-
-    // Heartbeat suave a cada 60 segundos (Realtime cuida das atualizações instantâneas)
-    const intervalId = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        scheduleFetch(0);
-      }
-    }, 60000);
 
     window.addEventListener("detran_sync_updated", handleSync);
     window.addEventListener("storage", handleSync);
-    window.addEventListener("focus", handleFocus);
-    document.addEventListener("visibilitychange", handleFocus);
 
     return () => {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
       unsubRealtime();
-      clearInterval(intervalId);
       window.removeEventListener("detran_sync_updated", handleSync);
       window.removeEventListener("storage", handleSync);
-      window.removeEventListener("focus", handleFocus);
-      document.removeEventListener("visibilitychange", handleFocus);
     };
   }, [fetchStats, scheduleFetch]);
 

@@ -475,6 +475,15 @@ export const GeralPage: React.FC = () => {
   const handleQuickEditCell = async (id: string, field: keyof GeralCNH, val: any) => {
     if (!canEdit) return;
 
+    // Se o usuário selecionou a situação "Recebida" na tabela geral, abrir modal para escolha de gaveta e repartição
+    if (field === "situacao" && val === "Recebida") {
+      const item = cnhs.find((c) => c.id === id);
+      if (item) {
+        handleReceber(item);
+        return;
+      }
+    }
+
     // Atualização otimista imediata na UI
     setCnhs((prev) =>
       prev.map((item) => (item.id === id ? { ...item, [field]: val } : item))

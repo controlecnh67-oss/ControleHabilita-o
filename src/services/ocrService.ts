@@ -54,11 +54,19 @@ export function cleanCpfDigits(cpf?: string): string {
 }
 
 /**
- * Extrai apenas dígitos do PA (até 9 dígitos)
+ * Extrai apenas dígitos do PA (sem restrição arbitrária de comprimento mínimo)
  */
 export function cleanPaDigits(pa?: string): string {
   if (!pa) return "";
-  return String(pa).replace(/\D/g, "").slice(0, 9);
+  return String(pa).replace(/\D/g, "");
+}
+
+/**
+ * Normaliza PA alfanumérico (letras maiúsculas e números sem separadores)
+ */
+export function normalizePa(pa?: string): string {
+  if (!pa) return "";
+  return String(pa).replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
 }
 
 /**
@@ -148,27 +156,48 @@ export async function matchExtractedWithGeralCNHs(
   const results: OcrMatchResult[] = [];
   const usedCnhIds = new Set<string>();
 
-  // Pré-indexar geral por PA, CPF limpo e Nome normalizado
+  // Pré-indexar geral por PA limpo/normalizado, CPF limpo, Nome e combinação Nome+PA
+  const namePaMap = new Map<string, GeralCNH[]>();
   const paMap = new Map<string, GeralCNH[]>();
   const cpfMap = new Map<string, GeralCNH[]>();
   const nameMap = new Map<string, GeralCNH[]>();
 
   for (const cnh of geralList) {
     const paClean = cleanPaDigits(cnh.pa);
-    if (paClean.length >= 6) {
+    const paNorm = normalizePa(cnh.pa);
+    const normName = normalizeString(cnh.nome);
+    const cpfClean = cleanCpfDigits(cnh.cpf);
+
+    if (normName && paClean) {
+      const key = `${normName}:::${paClean}`;
+      const arr = namePaMap.get(key) || [];
+      arr.push(cnh);
+      namePaMap.set(key, arr);
+    }
+    if (normName && paNorm && paNorm !== paClean) {
+      const key = `${normName}:::${paNorm}`;
+      const arr = namePaMap.get(key) || [];
+      arr.push(cnh);
+      namePaMap.set(key, arr);
+    }
+
+    if (paClean.length >= 2) {
       const arr = paMap.get(paClean) || [];
       arr.push(cnh);
       paMap.set(paClean, arr);
     }
+    if (paNorm.length >= 2 && paNorm !== paClean) {
+      const arr = paMap.get(paNorm) || [];
+      arr.push(cnh);
+      paMap.set(paNorm, arr);
+    }
 
-    const cpfClean = cleanCpfDigits(cnh.cpf);
     if (cpfClean.length >= 11) {
       const arr = cpfMap.get(cpfClean) || [];
       arr.push(cnh);
       cpfMap.set(cpfClean, arr);
     }
 
-    const normName = normalizeString(cnh.nome);
     if (normName) {
       const arr = nameMap.get(normName) || [];
       arr.push(cnh);
@@ -179,6 +208,7 @@ export async function matchExtractedWithGeralCNHs(
   for (let idx = 0; idx < extractedList.length; idx++) {
     const item = extractedList[idx];
     const itemPaClean = cleanPaDigits(item.pa);
+    const itemPaNorm = normalizePa(item.pa);
     const itemCpfClean = cleanCpfDigits(item.cpf);
     const itemNormName = normalizeString(item.nome);
 
@@ -186,19 +216,12 @@ export async function matchExtractedWithGeralCNHs(
     let matchType: OcrMatchType = "none";
     let matchScore = 0;
 
-    // 1. TENTATIVA 1: Correspondência Exata por PA (Processo/Identificador Único CNH de 9 dígitos)
-    if (itemPaClean.length >= 6 && paMap.has(itemPaClean)) {
-      const matches = paMap.get(itemPaClean)!;
-      // Se tiver nome também, tentar priorizar quem bate PA e Nome
-      if (itemNormName) {
-        const exactNameAndPa = matches.find(m => normalizeString(m.nome) === itemNormName);
-        if (exactNameAndPa) {
-          matchedCnh = exactNameAndPa;
-          matchType = "exact_pa";
-          matchScore = 100;
-        }
-      }
-      if (!matchedCnh) {
+    // 1. TENTATIVA 1: Correspondência Dupla Perfeita (NOME exato + PA exato simultâneos)
+    if (itemNormName && (itemPaClean || itemPaNorm)) {
+      const key1 = itemPaClean ? `${itemNormName}:::${itemPaClean}` : "";
+      const key2 = itemPaNorm ? `${itemNormName}:::${itemPaNorm}` : "";
+      const matches = (key1 && namePaMap.get(key1)) || (key2 && namePaMap.get(key2));
+      if (matches && matches.length > 0) {
         const remetidaMatch = matches.find(m => !usedCnhIds.has(m.id) && m.situacao === "Remetida");
         const unusedMatch = matches.find(m => !usedCnhIds.has(m.id));
         matchedCnh = remetidaMatch || unusedMatch || matches[0];
@@ -207,28 +230,69 @@ export async function matchExtractedWithGeralCNHs(
       }
     }
 
-    // 2. TENTATIVA 2: Correspondência Exata por CPF (11 dígitos)
+    // 1.1 TENTATIVA 1.1: PA exato com Nome Altamente Similar (>= 75% de similaridade)
+    if (!matchedCnh && (itemPaClean.length >= 2 || itemPaNorm.length >= 2) && itemNormName) {
+      const matches = (itemPaClean && paMap.get(itemPaClean)) || (itemPaNorm && paMap.get(itemPaNorm));
+      if (matches && matches.length > 0) {
+        const closeName = matches.find(m => !usedCnhIds.has(m.id) && calculateNameSimilarity(item.nome, m.nome) >= 75);
+        if (closeName) {
+          matchedCnh = closeName;
+          matchType = "exact_pa";
+          matchScore = 98;
+        }
+      }
+    }
+
+    // 2. TENTATIVA 2: Correspondência Exata por Nome Completo
+    if (!matchedCnh && itemNormName && nameMap.has(itemNormName)) {
+      const matches = nameMap.get(itemNormName)!;
+      // Se tiver PA na planilha, preferir correspondência com mesmo PA ou PA ainda vazio no sistema
+      let candidate = matches.find(m => !usedCnhIds.has(m.id) && (!m.pa || cleanPaDigits(m.pa) === itemPaClean));
+      if (!candidate) {
+        candidate = matches.find(m => !usedCnhIds.has(m.id) && m.situacao === "Remetida");
+      }
+      if (!candidate) {
+        candidate = matches.find(m => !usedCnhIds.has(m.id));
+      }
+      if (candidate) {
+        matchedCnh = candidate;
+        matchType = "exact_name";
+        matchScore = 95;
+      }
+    }
+
+    // 3. TENTATIVA 3: Correspondência por PA com compatibilidade de nome (>= 50% de similaridade)
+    if (!matchedCnh && (itemPaClean.length >= 2 || itemPaNorm.length >= 2)) {
+      const matches = (itemPaClean && paMap.get(itemPaClean)) || (itemPaNorm && paMap.get(itemPaNorm));
+      if (matches && matches.length > 0) {
+        if (itemNormName) {
+          const compatible = matches.find(m => !usedCnhIds.has(m.id) && calculateNameSimilarity(item.nome, m.nome) >= 50);
+          if (compatible) {
+            matchedCnh = compatible;
+            matchType = "exact_pa";
+            matchScore = 90;
+          }
+        } else {
+          const remetidaMatch = matches.find(m => !usedCnhIds.has(m.id) && m.situacao === "Remetida");
+          const unusedMatch = matches.find(m => !usedCnhIds.has(m.id));
+          matchedCnh = remetidaMatch || unusedMatch || matches[0];
+          matchType = "exact_pa";
+          matchScore = 90;
+        }
+      }
+    }
+
+    // 4. TENTATIVA 4: Correspondência Exata por CPF (se presente)
     if (!matchedCnh && itemCpfClean.length >= 11 && cpfMap.has(itemCpfClean)) {
       const matches = cpfMap.get(itemCpfClean)!;
-      // Preferir um que ainda não foi associado e que esteja 'Remetida'
       const remetidaMatch = matches.find(m => !usedCnhIds.has(m.id) && m.situacao === "Remetida");
       const unusedMatch = matches.find(m => !usedCnhIds.has(m.id));
       matchedCnh = remetidaMatch || unusedMatch || matches[0];
       matchType = "exact_cpf";
-      matchScore = 100;
+      matchScore = 95;
     }
 
-    // 3. TENTATIVA 3: Correspondência Exata por Nome Completo
-    if (!matchedCnh && itemNormName && nameMap.has(itemNormName)) {
-      const matches = nameMap.get(itemNormName)!;
-      const remetidaMatch = matches.find(m => !usedCnhIds.has(m.id) && m.situacao === "Remetida");
-      const unusedMatch = matches.find(m => !usedCnhIds.has(m.id));
-      matchedCnh = remetidaMatch || unusedMatch || matches[0];
-      matchType = "exact_name";
-      matchScore = 98;
-    }
-
-    // 4. TENTATIVA 4: Similaridade de Nome (>80%)
+    // 5. TENTATIVA 5: Similaridade de Nome (>85%)
     if (!matchedCnh && itemNormName.length > 5) {
       let bestCandidate: GeralCNH | null = null;
       let highestScore = 0;
@@ -236,13 +300,13 @@ export async function matchExtractedWithGeralCNHs(
       for (const cnh of geralList) {
         if (usedCnhIds.has(cnh.id)) continue;
         const score = calculateNameSimilarity(item.nome, cnh.nome);
-        if (score >= 80 && score > highestScore) {
+        if (score >= 85 && score > highestScore) {
           highestScore = score;
           bestCandidate = cnh;
         }
       }
 
-      if (bestCandidate && highestScore >= 80) {
+      if (bestCandidate && highestScore >= 85) {
         matchedCnh = bestCandidate;
         matchType = "similar_name";
         matchScore = highestScore;
