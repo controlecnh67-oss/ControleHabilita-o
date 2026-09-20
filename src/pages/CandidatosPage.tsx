@@ -248,12 +248,20 @@ export const CandidatosPage: React.FC = () => {
   useEffect(() => {
     loadData();
 
-    // Ouvinte para atualizações automáticas via sincronização
-    const handleSync = () => {
-      loadData(true);
+    // Ouvinte para atualizações automáticas via sincronização (com debounce e filtro de eventos relevantes)
+    let syncTimer: ReturnType<typeof setTimeout> | null = null;
+    const handleSync = (e: any) => {
+      const type = e?.detail?.type;
+      if (!type || type === "all" || type === "candidatos" || type === "memorandos" || type === "geral") {
+        if (syncTimer) clearTimeout(syncTimer);
+        syncTimer = setTimeout(() => {
+          loadData(true);
+        }, 300);
+      }
     };
     window.addEventListener("detran_sync_updated", handleSync);
     return () => {
+      if (syncTimer) clearTimeout(syncTimer);
       window.removeEventListener("detran_sync_updated", handleSync);
     };
   }, [loadData]);
@@ -2299,28 +2307,32 @@ export const CandidatosPage: React.FC = () => {
       )}
 
       {/* Modal de Auditoria e Remessa de CNHs Faltantes */}
-      <AuditoriaRemessaCandidatosModal
-        isOpen={isAuditoriaModalOpen}
-        onClose={() => setIsAuditoriaModalOpen(false)}
-        candidatosEnriquecidos={candidatosEnriquecidos}
-        user={user}
-        canEdit={canEdit}
-        onSuccess={async () => {
-          await loadData(true);
-        }}
-      />
+      {isAuditoriaModalOpen && (
+        <AuditoriaRemessaCandidatosModal
+          isOpen={isAuditoriaModalOpen}
+          onClose={() => setIsAuditoriaModalOpen(false)}
+          candidatosEnriquecidos={candidatosEnriquecidos}
+          user={user}
+          canEdit={canEdit}
+          onSuccess={async () => {
+            await loadData(true);
+          }}
+        />
+      )}
 
       {/* Modal de Varredura e Auditoria de Duplicatas */}
-      <AuditoriaDuplicatasCandidatosModal
-        isOpen={isDuplicatasModalOpen}
-        onClose={() => setIsDuplicatasModalOpen(false)}
-        candidatosEnriquecidos={candidatosEnriquecidos}
-        user={user}
-        canEdit={canEdit}
-        onSuccess={async () => {
-          await loadData(true);
-        }}
-      />
+      {isDuplicatasModalOpen && (
+        <AuditoriaDuplicatasCandidatosModal
+          isOpen={isDuplicatasModalOpen}
+          onClose={() => setIsDuplicatasModalOpen(false)}
+          candidatosEnriquecidos={candidatosEnriquecidos}
+          user={user}
+          canEdit={canEdit}
+          onSuccess={async () => {
+            await loadData(true);
+          }}
+        />
+      )}
     </div>
   );
 };

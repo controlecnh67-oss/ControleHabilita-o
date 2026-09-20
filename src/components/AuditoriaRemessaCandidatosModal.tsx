@@ -80,13 +80,15 @@ export const AuditoriaRemessaCandidatosModal: React.FC<AuditoriaRemessaCandidato
     return new Set(diagnostico.ausentesList.map((c) => c.id));
   });
 
-  // Atualizar seleção caso mude a lista de ausentes
+  // Atualizar seleção e redefinir estados apenas quando a modal for aberta
   React.useEffect(() => {
-    setSelectedIds(new Set(diagnostico.ausentesList.map((c) => c.id)));
-    setMensagemSucesso(null);
-    setErroMsg(null);
-    setInternalSearch("");
-  }, [diagnostico.ausentesList, isOpen]);
+    if (isOpen) {
+      setSelectedIds(new Set(diagnostico.ausentesList.map((c) => c.id)));
+      setMensagemSucesso(null);
+      setErroMsg(null);
+      setInternalSearch("");
+    }
+  }, [isOpen]);
 
   // 2. Filtro dos ausentes de acordo com a busca interna
   const ausentesFiltrados = useMemo(() => {

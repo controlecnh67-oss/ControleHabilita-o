@@ -176,11 +176,13 @@ const MainLayout: React.FC = () => {
   const activeTab = activeTabState;
 
   // Redireciona se a aba ativa não for permitida para o perfil e permissões do usuário logado
+  const userPerfil = user?.perfil;
+  const permissoesKey = user?.permissoes ? user.permissoes.join(",") : "";
   useEffect(() => {
     if (user && !isTabAllowedForProfile(activeTab, user.perfil, user.permissoes)) {
       setActiveTab("dashboard");
     }
-  }, [user?.perfil, user?.permissoes, activeTab]);
+  }, [userPerfil, permissoesKey, activeTab]);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     return typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
