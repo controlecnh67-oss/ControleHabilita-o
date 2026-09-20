@@ -31,6 +31,7 @@ import { getOrgaoConfig, addPDFHeaderLogo } from "../../services/orgaoService";
 import { useAuth } from "../../context/AuthContext";
 import { LoteModal } from "./LoteModal";
 import { LotePdfViewerModal } from "./LotePdfViewerModal";
+import { LotesImportModal } from "./LotesImportModal";
 
 export const LotesSubTab: React.FC = () => {
   const { user } = useAuth();
@@ -45,6 +46,7 @@ export const LotesSubTab: React.FC = () => {
 
   // Modais
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [loteToEdit, setLoteToEdit] = useState<Lote | null>(null);
   const [pdfViewerLote, setPdfViewerLote] = useState<Lote | null>(null);
   const [loteToDelete, setLoteToDelete] = useState<Lote | null>(null);
@@ -528,6 +530,17 @@ export const LotesSubTab: React.FC = () => {
 
           {canEdit && (
             <button
+              onClick={() => setIsImportModalOpen(true)}
+              title="Importar e auditar lotes a partir de planilha Excel (.xlsx)"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md shadow-emerald-600/20 text-xs transition-all cursor-pointer"
+            >
+              <Upload className="w-4 h-4" />
+              <span>Importar Planilha XLSX</span>
+            </button>
+          )}
+
+          {canEdit && (
+            <button
               onClick={handleOpenCreate}
               className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md shadow-blue-600/20 text-xs transition-all cursor-pointer"
             >
@@ -762,6 +775,22 @@ export const LotesSubTab: React.FC = () => {
         onClose={() => setIsModalOpen(false)}
         onSave={handleSaveLote}
         loteToEdit={loteToEdit}
+      />
+
+      {/* Modal de Importação e Auditoria via Planilha Excel */}
+      <LotesImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        existingLotes={lotes}
+        onSuccess={(insertedCount, updatedCount, totalDocs) => {
+          loadData();
+          showToast(
+            `Importação concluída! ${insertedCount} novo(s) lote(s) cadastrado(s)${
+              updatedCount > 0 ? `, ${updatedCount} atualizado(s)` : ""
+            } (${totalDocs} documentos).`,
+            "success"
+          );
+        }}
       />
 
       {/* Modal de Visualização de PDF */}

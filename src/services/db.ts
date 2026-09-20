@@ -3974,6 +3974,186 @@ export async function deleteLote(id: string, userId: string, userNome: string): 
   }
 }
 
+export interface LoteBulkItem {
+  numero: number;
+  data_recebimento: string;
+  documentos_impressos: number;
+  observacao?: string;
+  overwriteIfExisting?: boolean;
+}
+
+export interface LoteBulkResult {
+  insertedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  insertedLotes: Lote[];
+  updatedLotes: Lote[];
+}
+
+export async function cadastrarLotesBulk(
+  items: LoteBulkItem[],
+  userId: string,
+  userNome: string
+): Promise<LoteBulkResult> {
+  await initStorage();
+  const currentList = await getLotes();
+  const deletedIds = getDeletedIds("lotes");
+
+  const existingMap = new Map<number, Lote>();
+  for (const l of currentList) {
+    existingMap.set(Number(l.numero), l);
+  }
+
+  const now = new Date().toISOString();
+  const insertedLotes: Lote[] = [];
+  const updatedLotes: Lote[] = [];
+  let skippedCount = 0;
+
+  const auditEntries: Array<{
+    tabela: string;
+    registro_id: string | number;
+    acao: AcaoAuditoria;
+    usuario_id: string;
+    usuario_nome?: string;
+    valores_anteriores?: any;
+    valores_novos?: any;
+  }> = [];
+
+  for (const item of items) {
+    const num = Number(item.numero);
+    if (isNaN(num) || num <= 0) {
+      skippedCount++;
+      continue;
+    }
+
+    const docCount = Math.max(0, Number(item.documentos_impressos) || 0);
+    const dataRec = item.data_recebimento || now.split("T")[0];
+    const obs = item.observacao?.trim() || undefined;
+
+    const existing = existingMap.get(num);
+
+    if (existing) {
+      if (item.overwriteIfExisting) {
+        const atualizado: Lote = {
+          ...existing,
+          data_recebimento: dataRec,
+          documentos_impressos: docCount,
+          observacao: obs !== undefined ? obs : existing.observacao,
+          updated_at: now
+        };
+        existingMap.set(num, atualizado);
+        updatedLotes.push(atualizado);
+
+        auditEntries.push({
+          tabela: "lotes",
+          registro_id: String(num),
+          acao: "Alteração",
+          usuario_id: userId,
+          usuario_nome: userNome,
+          valores_anteriores: {
+            numero: existing.numero,
+            data_recebimento: existing.data_recebimento,
+            documentos_impressos: existing.documentos_impressos,
+            observacao: existing.observacao
+          },
+          valores_novos: {
+            numero: atualizado.numero,
+            data_recebimento: atualizado.data_recebimento,
+            documentos_impressos: atualizado.documentos_impressos,
+            observacao: atualizado.observacao,
+            origem: "Importação Planilha XLSX"
+          }
+        });
+      } else {
+        skippedCount++;
+      }
+    } else {
+      const loteId =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `lote-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+      const novo: Lote = {
+        id: loteId,
+        numero: num,
+        data_recebimento: dataRec,
+        documentos_impressos: docCount,
+        observacao: obs,
+        usuario_id: userId,
+        usuario_nome: userNome,
+        created_at: now,
+        updated_at: now
+      };
+
+      existingMap.set(num, novo);
+      insertedLotes.push(novo);
+
+      auditEntries.push({
+        tabela: "lotes",
+        registro_id: String(num),
+        acao: "Inclusão",
+        usuario_id: userId,
+        usuario_nome: userNome,
+        valores_anteriores: null,
+        valores_novos: {
+          numero: novo.numero,
+          data_recebimento: novo.data_recebimento,
+          documentos_impressos: novo.documentos_impressos,
+          observacao: novo.observacao,
+          origem: "Importação Planilha XLSX"
+        }
+      });
+    }
+  }
+
+  // Monta lista final atualizada
+  const finalList = Array.from(existingMap.values()).filter((l) => !deletedIds.has(l.id));
+  saveStoredList("lotes", finalList);
+
+  try {
+    if (dexieDb.lotes) {
+      const allToSave = [...insertedLotes, ...updatedLotes];
+      if (allToSave.length > 0) {
+        await dexieDb.lotes.bulkPut(allToSave);
+      }
+    }
+  } catch (err) {
+    console.warn("Aviso ao salvar lotes no Dexie:", err);
+  }
+
+  if (isSupabaseConfigured()) {
+    try {
+      const allUpsert = [...insertedLotes, ...updatedLotes].map((l) => {
+        const copy: any = { ...l };
+        if (copy.pdf_tamanho === undefined) delete copy.pdf_tamanho;
+        return copy;
+      });
+      if (allUpsert.length > 0) {
+        const { error } = await supabase.from("lotes").upsert(allUpsert);
+        if (error) {
+          console.warn("Aviso ao upsert lotes no Supabase:", error.message);
+        }
+      }
+    } catch (e) {
+      console.warn("Erro ao upsert lotes no Supabase:", e);
+    }
+  }
+
+  if (auditEntries.length > 0) {
+    await logAuditoriaBulk(auditEntries);
+  }
+
+  notifyDataSync("lotes");
+
+  return {
+    insertedCount: insertedLotes.length,
+    updatedCount: updatedLotes.length,
+    skippedCount,
+    insertedLotes,
+    updatedLotes
+  };
+}
+
 export async function getGeralCNHs(): Promise<GeralCNH[]> {
   await initStorage();
   let rawList: GeralCNH[] = await getLocalGeralCNHs();
