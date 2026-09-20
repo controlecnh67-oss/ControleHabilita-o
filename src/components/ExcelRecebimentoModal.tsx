@@ -64,6 +64,8 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
   const [colRemessa, setColRemessa] = useState<string>("");
   const [colObs, setColObs] = useState<string>("");
   const [showOptionalCols, setShowOptionalCols] = useState(false);
+  // Calibração do motor: por padrão NÃO localizar por nome similar (fuzzy)
+  const [allowSimilarName, setAllowSimilarName] = useState<boolean>(false);
 
   // Resultados de correspondência
   const [results, setResults] = useState<OcrMatchResult[] | null>(null);
@@ -355,8 +357,10 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
         return;
       }
 
-      // Cruzamento inteligente com a base geral de CNHs (por PA e Nome)
-      const matched = await matchExtractedWithGeralCNHs(extractedItems, geralList);
+      // Cruzamento calibrado com a base geral de CNHs (por PA e Nome, sem nome similar por padrão)
+      const matched = await matchExtractedWithGeralCNHs(extractedItems, geralList, {
+        allowSimilarName,
+      });
       setResults(matched);
     } catch (err: any) {
       console.error("Erro ao cruzar dados do Excel:", err);
@@ -379,6 +383,7 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
     setColRemessa("");
     setColObs("");
     setShowOptionalCols(false);
+    setAllowSimilarName(false);
     setResults(null);
     setErrorMessage(null);
     setFilterCategory("all");
@@ -500,11 +505,16 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
               <FileSpreadsheet className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
                 <span>Importar e Conferir Planilha Excel de CNHs Recebidas</span>
                 <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 rounded-md border border-emerald-300 dark:border-emerald-800">
                   Cruzamento Nome + PA
                 </span>
+                {!allowSimilarName && (
+                  <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 rounded-md border border-blue-300 dark:border-blue-800">
+                    Modo Estrito (Sem Nome Similar)
+                  </span>
+                )}
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 Cruze as colunas <strong className="text-emerald-700 dark:text-emerald-300">NOME</strong> e <strong className="text-emerald-700 dark:text-emerald-300">PA</strong> com a base geral. Os localizados mudam para <strong className="text-blue-600 dark:text-blue-400">RECEBIDA</strong> e os não localizados serão <strong className="text-indigo-600 dark:text-indigo-400">CADASTRADOS COMO RECEBIDA</strong>.
@@ -670,6 +680,28 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
                       </select>
                       <p className="text-[11px] text-slate-400 mt-1">Número do PA / identificador único da CNH</p>
                     </div>
+                  </div>
+
+                  {/* Calibração do Motor: Sem Cruzamento por Nome Similar */}
+                  <div className="bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+                    <div className="flex items-start sm:items-center gap-2 text-emerald-900 dark:text-emerald-200">
+                      <CheckCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5 sm:mt-0" />
+                      <div>
+                        <span className="font-bold">Motor Calibrado (Sem Nome Similar): </span>
+                        <span className="text-emerald-800 dark:text-emerald-300 text-[11px]">
+                          Localiza apenas por <strong>Nome Exato</strong>, <strong>PA Exato</strong> ou <strong>CPF Exato</strong>. Nomes parecidos/similares não são vinculados para evitar misturar condutores distintos.
+                        </span>
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer text-[11px] font-semibold text-slate-600 dark:text-slate-400 shrink-0 select-none bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={allowSimilarName}
+                        onChange={(e) => setAllowSimilarName(e.target.checked)}
+                        className="w-3.5 h-3.5 rounded text-amber-600 border-slate-300 focus:ring-amber-500 cursor-pointer"
+                      />
+                      <span>Permitir busca por similaridade</span>
+                    </label>
                   </div>
 
                   {/* Botão de colunas adicionais opcionais (para não poluir quando a planilha tem apenas Nome e PA) */}
@@ -854,7 +886,7 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
                 <div className="flex items-center gap-2.5 text-blue-800 dark:text-blue-200">
                   <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
                   <span>
-                    <strong>Conferência Concluída:</strong> Foram encontradas <strong>{stats.localizadas}</strong> CNH(s) já cadastradas e <strong>{stats.naoEncontradas}</strong> condutor(es) que <strong>não constam no sistema e serão cadastrados como RECEBIDA</strong>.
+                    <strong>Conferência Concluída:</strong> Foram encontradas <strong>{stats.localizadas}</strong> CNH(s) já cadastradas {!allowSimilarName && <span className="font-semibold text-emerald-700 dark:text-emerald-300">(motor calibrado: sem nomes similares)</span>} e <strong>{stats.naoEncontradas}</strong> condutor(es) que <strong>não constam no sistema e serão cadastrados como RECEBIDA</strong>.
                   </span>
                 </div>
               </div>

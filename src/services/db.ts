@@ -3123,22 +3123,56 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
   memos[memoIndex] = { ...memo, status: "Remetido", remetido_em: now };
   saveStoredList("memorandos", memos);
 
-  // 2. Buscar Geral CNHs atuais e remover registros anteriores deste memorando se houver
+  // 2. Buscar Geral CNHs atuais e mapear existentes para preservar estritamente a numeração ordem e edições
   const geralListAtual = await getGeralCNHs();
-  const cnhsAntigas = geralListAtual.filter((c) => c.memorando_id === memorando_id);
-  const idsAntigos = cnhsAntigas.map((c) => c.id);
+  const ordensValidas = geralListAtual
+    .map((c) => Number(c.ordem) || 0)
+    .filter((o) => o > 0 && o < 15000);
+  let maxOrdem = ordensValidas.length > 0
+    ? Math.max(...ordensValidas)
+    : geralListAtual.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0);
 
-  if (idsAntigos.length > 0) {
-    await deleteLocalGeralCNHsBulk(idsAntigos);
+  const cnhByCandId = new Map<string, GeralCNH>();
+  const cnhByCpf = new Map<string, GeralCNH>();
+  const cnhByPa = new Map<string, GeralCNH>();
+
+  for (const c of geralListAtual) {
+    if (c.candidato_id) cnhByCandId.set(c.candidato_id, c);
+    const cleanCpf = (c.cpf || "").replace(/\D/g, "");
+    if (cleanCpf.length === 11 && !cnhByCpf.has(cleanCpf)) cnhByCpf.set(cleanCpf, c);
+    const cleanPa = (c.pa || "").replace(/\D/g, "");
+    if (cleanPa && !cnhByPa.has(cleanPa)) cnhByPa.set(cleanPa, c);
   }
 
-  const semAtuais = geralListAtual.filter((c) => c.memorando_id !== memorando_id);
-  
-  let maxOrdem = semAtuais.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0);
-
   const novasCNHs: GeralCNH[] = [];
+  const cnhsAtualizadas: GeralCNH[] = [];
   let seq = 0;
+
   for (const cand of cands) {
+    const cleanCpf = (cand.cpf || "").replace(/\D/g, "");
+    const cleanPa = (cand.pa || "").replace(/\D/g, "");
+
+    const existing = (cand.id && cnhByCandId.get(cand.id)) ||
+                     (cleanCpf.length === 11 && cnhByCpf.get(cleanCpf)) ||
+                     (cleanPa && cnhByPa.get(cleanPa));
+
+    if (existing) {
+      // PRESERVA A CNH EXISTENTE, SUA ORDEM E SEUS DADOS FÍSICOS
+      const updated: GeralCNH = {
+        ...existing,
+        memorando_id: memo.id,
+        candidato_id: existing.candidato_id || cand.id,
+        memorando_numero: memo.numero,
+        remessa: memo.remessa || memo.numero,
+        pa: existing.pa || cand.pa || undefined,
+        cpf: existing.cpf || cand.cpf || undefined,
+        telefone: existing.telefone || cand.telefone || undefined,
+        updated_at: now
+      };
+      cnhsAtualizadas.push(updated);
+      continue;
+    }
+
     maxOrdem++;
     seq++;
     const uniqueId = typeof crypto !== "undefined" && crypto.randomUUID
@@ -3169,18 +3203,36 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
     await logHistorico(novaCNH.id, novaCNH.ordem, novaCNH.nome, null, "Remetida", userId, userNome, `Memorando ${memo.numero}`, undefined, undefined, novaCNH.cpf);
   }
 
-  saveStoredList("geral", [...semAtuais, ...novasCNHs]);
-  await saveLocalGeralCNHsBulk(novasCNHs);
+  if (cnhsAtualizadas.length > 0) {
+    await saveLocalGeralCNHsBulk(cnhsAtualizadas);
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.from("geral_cnhs").upsert(cnhsAtualizadas, { onConflict: "id" });
+      } catch (e) {
+        console.warn("Aviso ao atualizar CNHs existentes do memorando no Supabase:", e);
+      }
+    }
+  }
+
+  if (novasCNHs.length > 0) {
+    const combined = [...novasCNHs, ...geralListAtual];
+    saveStoredList("geral", combined);
+    await saveLocalGeralCNHsBulk(novasCNHs);
+
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.from("geral_cnhs").upsert(novasCNHs, { onConflict: "id" });
+      } catch (e) {
+        console.warn("Aviso ao salvar novas CNHs do memorando no Supabase:", e);
+      }
+    }
+  }
 
   if (isSupabaseConfigured()) {
     try {
       await supabase.from("memorandos").update({ status: "Remetido", remetido_em: now }).eq("id", memorando_id);
-      if (idsAntigos.length > 0) {
-        await supabase.from("geral_cnhs").delete().eq("memorando_id", memorando_id);
-      }
-      await supabase.from("geral_cnhs").upsert(novasCNHs, { onConflict: "id" });
     } catch (e) {
-      console.warn("Aviso ao remeter memorando no Supabase:", e);
+      console.warn("Aviso ao atualizar status do memorando no Supabase:", e);
     }
   }
 
@@ -3266,15 +3318,74 @@ export async function remeterCandidatosFaltantesAoGeral(
   }
 
   const geralList = await getLocalGeralCNHs();
-  let maxOrdem = geralList.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0);
+  // Filtra anomalias históricas (> 15000) para manter o sequencial legítimo oficial do Supabase
+  const ordensValidas = geralList
+    .map((c) => Number(c.ordem) || 0)
+    .filter((o) => o > 0 && o < 15000);
+  let maxOrdem = ordensValidas.length > 0
+    ? Math.max(...ordensValidas)
+    : geralList.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0);
+
   const now = new Date().toISOString();
   const novasCNHs: GeralCNH[] = [];
+  const cnhsAtualizadas: GeralCNH[] = [];
   const histEntries: any[] = [];
   const auditEntries: any[] = [];
 
+  // Mapeamentos rápidos para detecção imediata de registros já existentes
+  const cnhByCandId = new Map<string, GeralCNH>();
+  const cnhByCpf = new Map<string, GeralCNH>();
+  const cnhByPa = new Map<string, GeralCNH>();
+
+  for (const c of geralList) {
+    if (c.candidato_id) cnhByCandId.set(c.candidato_id, c);
+    const cleanCpf = (c.cpf || "").replace(/\D/g, "");
+    if (cleanCpf.length === 11 && !cnhByCpf.has(cleanCpf)) cnhByCpf.set(cleanCpf, c);
+    const cleanPa = (c.pa || "").replace(/\D/g, "");
+    if (cleanPa && !cnhByPa.has(cleanPa)) cnhByPa.set(cleanPa, c);
+  }
+
   for (const cand of candidatosParaRemeter) {
-    maxOrdem++;
     const nomeLimpo = (cand.nome || "Candidato sem nome").trim().toUpperCase();
+    const cleanCpf = (cand.cpf || "").replace(/\D/g, "");
+    const cleanPa = (cand.pa || "").replace(/\D/g, "");
+
+    // 1. Verifica se este candidato já possui CNH registrada no Geral
+    const existingCnh = (cand.id && cnhByCandId.get(cand.id)) ||
+                        (cleanCpf.length === 11 && cnhByCpf.get(cleanCpf)) ||
+                        (cleanPa && cnhByPa.get(cleanPa));
+
+    if (existingCnh) {
+      // REGRA DE OURO: CNH já existe! NUNCA gerar nova ordem, NUNCA gerar duplicata!
+      // Se a CNH já foi Recebida ou Entregue, NUNCA rebaixa para Remetida!
+      let needUpdate = false;
+      const updatedCnh = { ...existingCnh };
+
+      if (!updatedCnh.candidato_id && cand.id) {
+        updatedCnh.candidato_id = cand.id;
+        needUpdate = true;
+      }
+      if (!updatedCnh.memorando_id && cand.memorando_id) {
+        updatedCnh.memorando_id = cand.memorando_id;
+        needUpdate = true;
+      }
+      if (!updatedCnh.pa && cand.pa) {
+        updatedCnh.pa = cand.pa.trim();
+        needUpdate = true;
+      }
+      if (!updatedCnh.cpf && cand.cpf) {
+        updatedCnh.cpf = cand.cpf.trim();
+        needUpdate = true;
+      }
+
+      if (needUpdate) {
+        cnhsAtualizadas.push(updatedCnh);
+      }
+      continue;
+    }
+
+    // 2. Candidato genuinamente novo: atribui nova ordem sequencial legítima
+    maxOrdem++;
 
     let locGaveta = "";
     let locReparticao = "";
@@ -3339,6 +3450,10 @@ export async function remeterCandidatosFaltantesAoGeral(
       valores_anteriores: null,
       valores_novos: novaCNH
     });
+  }
+
+  if (cnhsAtualizadas.length > 0) {
+    await saveLocalGeralCNHsBulk(cnhsAtualizadas);
   }
 
   if (novasCNHs.length > 0) {
@@ -4903,7 +5018,12 @@ export async function createGeralManual(
   userNome: string
 ): Promise<GeralCNH> {
   const geralList = await getGeralCNHs();
-  const maxOrdem = geralList.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0) + 1;
+  const ordensValidas = geralList
+    .map((c) => Number(c.ordem) || 0)
+    .filter((o) => o > 0 && o < 15000);
+  const maxOrdem = (ordensValidas.length > 0
+    ? Math.max(...ordensValidas)
+    : geralList.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0)) + 1;
   const now = new Date().toISOString();
 
   let gaveta = (data.gaveta || "").trim();
@@ -5118,17 +5238,35 @@ export async function cadastrarNovasCNHsRecebidas(
   if (!novos || novos.length === 0) return { insertedCount: 0, insertedCNHs: [] };
 
   const geralList = await getLocalGeralCNHs();
-  let maxOrdem = geralList.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0);
+  const ordensValidas = geralList
+    .map((c) => Number(c.ordem) || 0)
+    .filter((o) => o > 0 && o < 15000);
+  let maxOrdem = ordensValidas.length > 0
+    ? Math.max(...ordensValidas)
+    : geralList.reduce((acc, curr) => Math.max(acc, curr.ordem || 0), 0);
+
   const now = new Date().toISOString();
   const insertedCNHs: GeralCNH[] = [];
+  const updatedCNHs: GeralCNH[] = [];
   const histEntries: any[] = [];
   const auditEntries: any[] = [];
+
+  // Mapeamentos rápidos para evitar duplicatas por CPF ou PA
+  const cnhByCpf = new Map<string, GeralCNH>();
+  const cnhByPa = new Map<string, GeralCNH>();
+  for (const c of geralList) {
+    const cleanCpf = (c.cpf || "").replace(/\D/g, "");
+    if (cleanCpf.length === 11 && !cnhByCpf.has(cleanCpf)) cnhByCpf.set(cleanCpf, c);
+    const cleanPa = (c.pa || "").replace(/\D/g, "");
+    if (cleanPa && !cnhByPa.has(cleanPa)) cnhByPa.set(cleanPa, c);
+  }
 
   for (const item of novos) {
     const nomeLimpo = (item.nome || "").trim().toUpperCase();
     if (!nomeLimpo) continue;
 
-    maxOrdem++;
+    const cleanCpf = (item.cpf || "").replace(/\D/g, "");
+    const cleanPa = (item.pa || "").replace(/\D/g, "");
 
     let locGaveta = (item.gaveta || "").trim();
     let locReparticao = (item.reparticao || "").trim();
@@ -5143,6 +5281,54 @@ export async function cadastrarNovasCNHsRecebidas(
         locReparticao = locReparticao || loc.reparticao;
       }
     }
+
+    // Verifica se já existe na base de dados (por CPF ou PA)
+    const existing = (cleanCpf.length === 11 && cnhByCpf.get(cleanCpf)) ||
+                     (cleanPa && cnhByPa.get(cleanPa));
+
+    if (existing) {
+      // PRESERVA A ORDEM ORIGINAL E ATUALIZA A SITUAÇÃO PARA RECEBIDA
+      const situacaoAntiga = existing.situacao;
+      const updated: GeralCNH = {
+        ...existing,
+        situacao: "Recebida",
+        gaveta: locGaveta || existing.gaveta,
+        reparticao: locReparticao || existing.reparticao,
+        data_movimento: now,
+        usuario_id: userId,
+        usuario_nome: userNome,
+        remessa: item.remessa ? item.remessa.trim() : existing.remessa,
+        observacao: item.observacaoExtra || existing.observacao || `Recebida via importação de planilha Excel`,
+        updated_at: now
+      };
+
+      updatedCNHs.push(updated);
+
+      histEntries.push({
+        geral_id: updated.id,
+        geral_ordem: updated.ordem,
+        geral_nome: updated.nome,
+        situacao_anterior: situacaoAntiga,
+        situacao_nova: "Recebida",
+        usuario_id: userId,
+        usuario_nome: userNome,
+        observacao: `Atualizado para Recebido via planilha Excel - Gaveta ${locGaveta} / ${locReparticao}`,
+        geral_cpf: updated.cpf
+      });
+
+      auditEntries.push({
+        tabela: "geral",
+        registro_id: `Ordem #${updated.ordem}`,
+        acao: "Alteração (Importação Excel)",
+        usuario_id: userId,
+        usuario_nome: userNome,
+        valores_anteriores: existing,
+        valores_novos: updated
+      });
+      continue;
+    }
+
+    maxOrdem++;
 
     const uniqueId = typeof crypto !== "undefined" && crypto.randomUUID
       ? crypto.randomUUID()
@@ -5188,6 +5374,17 @@ export async function cadastrarNovasCNHsRecebidas(
       valores_anteriores: null,
       valores_novos: nova
     });
+  }
+
+  if (updatedCNHs.length > 0) {
+    await saveLocalGeralCNHsBulk(updatedCNHs);
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.from("geral_cnhs").upsert(updatedCNHs, { onConflict: "id" });
+      } catch (e) {
+        console.warn("Aviso ao sincronizar atualizações de CNHs recebidas no Supabase:", e);
+      }
+    }
   }
 
   if (insertedCNHs.length > 0) {
@@ -5280,7 +5477,9 @@ export async function updateGeralCNH(
   const index = geralList.findIndex((g) => g.id === id);
   if (index === -1) throw new Error("Registro CNH não encontrado");
   const ant = geralList[index];
-  const atualizado = { ...ant, ...data, data_movimento: new Date().toISOString(), usuario_id: userId, usuario_nome: userNome };
+  // Garante imutabilidade absoluta da coluna ordem nas edições de outros campos
+  const finalOrdem = (data.ordem !== undefined && Number(data.ordem) > 0) ? Number(data.ordem) : ant.ordem;
+  const atualizado = { ...ant, ...data, ordem: finalOrdem, data_movimento: new Date().toISOString(), usuario_id: userId, usuario_nome: userNome };
   geralList[index] = atualizado;
   saveStoredList("geral", geralList);
   await saveLocalGeralCNH(atualizado);

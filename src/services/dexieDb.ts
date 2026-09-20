@@ -283,19 +283,79 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
     return { cleanList: list || [], duplicateIds: [] };
   }
 
+  // Peso operacional rigoroso: registros com situações mais avançadas ou dados físicos
+  // NUNCA podem ser rebaixados ou sobrescritos por uma remessa posterior duplicada
+  const getSituacaoWeight = (s?: string): number => {
+    if (s === "Entregue") return 40;
+    if (s === "Recebida") return 30;
+    if (s === "Pendente") return 20;
+    if (s === "Remetida") return 10;
+    return 0;
+  };
+
   const scoreRecord = (r: GeralCNH): number => {
-    let score = 0;
-    if (r.situacao) score += 20;
+    let score = getSituacaoWeight(r.situacao);
 
     const cpfDigits = (r.cpf || "").replace(/\D/g, "");
-    if (cpfDigits.length === 11) score += 40;
-    if (r.gaveta && r.gaveta.trim()) score += 20;
-    if (r.reparticao && r.reparticao.trim()) score += 10;
-    if (r.responsavel_id || r.responsavel_nome) score += 15;
-    if (r.observacao && r.observacao.trim()) score += 10;
+    if (cpfDigits.length === 11) score += 30;
+    if (r.gaveta && r.gaveta.trim() && r.gaveta !== "Vazio") score += 25;
+    if (r.reparticao && r.reparticao.trim() && r.reparticao !== "Vazio") score += 15;
+    if (r.responsavel_id || r.responsavel_nome) score += 20;
+    if (r.usuario_nome && r.usuario_nome !== "Operador" && r.usuario_nome !== "sistema") score += 10;
+    if (r.observacao && r.observacao.trim()) score += 5;
     // UUID v4 ganha preferência sobre chaves sintéticas temporárias
     if (r.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(r.id)) score += 10;
     return score;
+  };
+
+  // Determina com absoluta precisão qual registro é o legítimo oficial
+  const pickWinner = (current: GeralCNH, candidate: GeralCNH): { winner: GeralCNH; loser: GeralCNH } => {
+    const sitCurrent = getSituacaoWeight(current.situacao);
+    const sitCand = getSituacaoWeight(candidate.situacao);
+
+    // 1. Se um registro já foi Recebido, Entregue ou Pendente e o outro é apenas "Remetida",
+    // o já movimentado/recebido VENCE SEMPRE
+    if (sitCand > sitCurrent) {
+      return { winner: candidate, loser: current };
+    }
+    if (sitCurrent > sitCand) {
+      return { winner: current, loser: candidate };
+    }
+
+    // 2. Ordem oficial do Supabase:
+    // Números de ordem inflados (ex: > 15000 gerados por recálculo em lote) NUNCA podem substituir
+    // a numeração histórica legítima do Supabase (ex: 9917)
+    const ordemCurrent = Number(current.ordem) || 0;
+    const ordemCand = Number(candidate.ordem) || 0;
+
+    if (ordemCurrent > 0 && ordemCand > 0 && ordemCurrent !== ordemCand) {
+      // Se houver discrepância de numeração (ex: ordem espúria 15229..15237 vs ordem real 9909..9917)
+      if (Math.abs(ordemCurrent - ordemCand) > 100) {
+        // A menor ordem é a histórica legítima original do banco de dados
+        return ordemCurrent < ordemCand
+          ? { winner: current, loser: candidate }
+          : { winner: candidate, loser: current };
+      }
+    }
+
+    // 3. Localização física completa no arquivo (gaveta/repartição)
+    const hasLocCurrent = Boolean(current.gaveta && current.gaveta.trim() && current.reparticao && current.reparticao.trim());
+    const hasLocCand = Boolean(candidate.gaveta && candidate.gaveta.trim() && candidate.reparticao && candidate.reparticao.trim());
+    if (hasLocCand && !hasLocCurrent) return { winner: candidate, loser: current };
+    if (hasLocCurrent && !hasLocCand) return { winner: current, loser: candidate };
+
+    // 4. Pontuação geral de preenchimento
+    const scoreCurrent = scoreRecord(current);
+    const scoreCand = scoreRecord(candidate);
+    if (scoreCand > scoreCurrent) return { winner: candidate, loser: current };
+    if (scoreCurrent > scoreCand) return { winner: current, loser: candidate };
+
+    // 5. Timestamp mais recente se for alteração legítima de mesmo status
+    const timeCurrent = current.updated_at ? new Date(current.updated_at).getTime() : 0;
+    const timeCand = candidate.updated_at ? new Date(candidate.updated_at).getTime() : 0;
+    if (timeCand > timeCurrent) return { winner: candidate, loser: current };
+
+    return { winner: current, loser: candidate };
   };
 
   const byOrdem = new Map<number, GeralCNH>();
@@ -321,31 +381,35 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
       conflictingRecord = keptIdMap.get(item.id);
     }
 
-    if (conflictingRecord) {
-      // Prioridade máxima: o timestamp mais recente SEMPRE prevalece (respeita as alterações feitas pelo usuário)
-      const timeItem = item.updated_at ? new Date(item.updated_at).getTime() : 0;
-      const timeConf = conflictingRecord.updated_at ? new Date(conflictingRecord.updated_at).getTime() : 0;
+    if (conflictingRecord && conflictingRecord.id !== item.id) {
+      const { winner, loser } = pickWinner(conflictingRecord, item);
 
-      let itemWins = false;
-      if (timeItem > 0 && timeConf > 0 && timeItem !== timeConf) {
-        itemWins = timeItem > timeConf;
-      } else {
-        const currentScore = scoreRecord(item);
-        const existingScore = scoreRecord(conflictingRecord);
-        itemWins = currentScore > existingScore;
+      duplicateIdsSet.add(loser.id);
+      keptIdMap.delete(loser.id);
+
+      // Preserva a menor ordem histórica legítima caso o perdedor tivesse a ordem do Supabase
+      const ordemWinner = Number(winner.ordem) || 0;
+      const ordemLoser = Number(loser.ordem) || 0;
+      let finalOrdem = ordemWinner;
+      if (ordemLoser > 0 && (ordemWinner === 0 || (ordemWinner > 15000 && ordemLoser < 15000))) {
+        finalOrdem = ordemLoser;
       }
 
-      if (itemWins) {
-        // O registro atual tem maior qualidade ou é mais recente
-        duplicateIdsSet.add(conflictingRecord.id);
-        keptIdMap.delete(conflictingRecord.id);
-        keptIdMap.set(item.id, { ...item, ordem: validOrdem });
-        if (hasValidOrdem) byOrdem.set(validOrdem, item);
-        if (hasValidCpf) byCpf.set(cpfDigits, item);
-      } else {
-        // Mantém o registro já selecionado
-        duplicateIdsSet.add(item.id);
-      }
+      const mergedRecord: GeralCNH = {
+        ...loser,
+        ...winner,
+        ordem: finalOrdem,
+        // Garante que campos físicos preenchidos nunca sejam apagados
+        gaveta: (winner.gaveta && winner.gaveta.trim()) ? winner.gaveta : loser.gaveta,
+        reparticao: (winner.reparticao && winner.reparticao.trim()) ? winner.reparticao : loser.reparticao,
+        usuario_nome: (winner.usuario_nome && winner.usuario_nome !== "Operador") ? winner.usuario_nome : (loser.usuario_nome || winner.usuario_nome),
+        usuario_id: (winner.usuario_id && winner.usuario_id !== "sistema") ? winner.usuario_id : (loser.usuario_id || winner.usuario_id),
+      };
+
+      keptIdMap.set(winner.id, mergedRecord);
+      if (finalOrdem > 0) byOrdem.set(finalOrdem, mergedRecord);
+      const mergedCpfDigits = (mergedRecord.cpf || "").replace(/\D/g, "");
+      if (mergedCpfDigits.length === 11) byCpf.set(mergedCpfDigits, mergedRecord);
     } else {
       keptIdMap.set(item.id, { ...item, ordem: validOrdem });
       if (hasValidOrdem) byOrdem.set(validOrdem, item);
@@ -583,16 +647,37 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
               if (!local) {
                 recordsToPut.push(rec);
               } else {
+                // Proteção: se o registro local já foi recebido/entregue e o remoto está como apenas Remetida, não rebaixa!
+                const localIsAdvanced = local.situacao && local.situacao !== "Remetida";
+                const remoteIsRemetida = rec.situacao === "Remetida";
+                if (localIsAdvanced && remoteIsRemetida) {
+                  continue;
+                }
+
+                // Preserva ordem legítima do Supabase
+                const localOrdem = Number(local.ordem) || 0;
+                const recOrdem = Number(rec.ordem) || 0;
+                let finalOrdem = recOrdem;
+                if (localOrdem > 0 && (recOrdem > 15000 || recOrdem === 0)) {
+                  finalOrdem = localOrdem;
+                }
+
                 const localTime = local.updated_at ? new Date(local.updated_at).getTime() : 0;
                 const remoteTime = rec.updated_at ? new Date(rec.updated_at).getTime() : 0;
                 if (remoteTime > localTime) {
-                  recordsToPut.push(rec);
+                  recordsToPut.push({
+                    ...rec,
+                    ordem: finalOrdem,
+                    gaveta: (rec.gaveta && rec.gaveta.trim()) ? rec.gaveta : local.gaveta,
+                    reparticao: (rec.reparticao && rec.reparticao.trim()) ? rec.reparticao : local.reparticao
+                  });
                 }
               }
             }
 
             if (recordsToPut.length > 0) {
               await dexieDb.geral.bulkPut(recordsToPut);
+              await cleanAndDeduplicateGeralTable();
             }
           }
 

@@ -284,9 +284,9 @@ export const CandidatosPage: React.FC = () => {
     const cnhByMemoAndCpf = new Map<string, GeralCNH>();
     // Indexação por memorando_id + PA limpo
     const cnhByMemoAndPa = new Map<string, GeralCNH>();
-    // CNHs avulsas (sem memorando_id) por CPF
-    const cnhAvulsaByCpf = new Map<string, GeralCNH>();
-    const cnhAvulsaByPa = new Map<string, GeralCNH>();
+    // Indexação universal por CPF e PA (garante que candidatos com CNH já no Geral sempre sejam associados)
+    const cnhByCpf = new Map<string, GeralCNH>();
+    const cnhByPa = new Map<string, GeralCNH>();
 
     geralCNHs.forEach((c) => {
       if (c.candidato_id) {
@@ -298,9 +298,19 @@ export const CandidatosPage: React.FC = () => {
       if (c.memorando_id) {
         if (cleanCpf) cnhByMemoAndCpf.set(`${c.memorando_id}_${cleanCpf}`, c);
         if (cleanPa) cnhByMemoAndPa.set(`${c.memorando_id}_${cleanPa}`, c);
-      } else {
-        if (cleanCpf) cnhAvulsaByCpf.set(cleanCpf, c);
-        if (cleanPa) cnhAvulsaByPa.set(cleanPa, c);
+      }
+      if (cleanCpf && cleanCpf.length === 11) {
+        // Se houver mais de uma, prefere a que tem situação Recebida/Entregue
+        const existing = cnhByCpf.get(cleanCpf);
+        if (!existing || (c.situacao !== "Remetida" && existing.situacao === "Remetida")) {
+          cnhByCpf.set(cleanCpf, c);
+        }
+      }
+      if (cleanPa) {
+        const existing = cnhByPa.get(cleanPa);
+        if (!existing || (c.situacao !== "Remetida" && existing.situacao === "Remetida")) {
+          cnhByPa.set(cleanPa, c);
+        }
       }
     });
 
@@ -317,7 +327,7 @@ export const CandidatosPage: React.FC = () => {
       const cleanCpf = cand.cpf ? cand.cpf.replace(/\D/g, "") : "";
       const cleanPa = cand.pa ? cand.pa.replace(/\D/g, "") : "";
 
-      // Busca estrita e exclusiva da CNH associada
+      // Busca estrita e segura da CNH associada
       let cnh: GeralCNH | undefined = undefined;
 
       // 1ª Prioridade: Vinculação direta por candidato_id
@@ -335,12 +345,12 @@ export const CandidatosPage: React.FC = () => {
         }
       }
 
-      // 3ª Prioridade: Apenas se o memorando está Remetido e existir CNH avulsa não reclamada
-      if (!cnh && memo?.status === "Remetido") {
-        const avulsa = (cleanCpf && cnhAvulsaByCpf.get(cleanCpf)) ||
-                       (cleanPa && cnhAvulsaByPa.get(cleanPa));
-        if (avulsa && !assignedCnhIds.has(avulsa.id)) {
-          cnh = avulsa;
+      // 3ª Prioridade: Vinculação universal por CPF ou PA cadastrado na tabela Geral
+      if (!cnh) {
+        const universal = (cleanCpf && cnhByCpf.get(cleanCpf)) ||
+                          (cleanPa && cnhByPa.get(cleanPa));
+        if (universal && !assignedCnhIds.has(universal.id)) {
+          cnh = universal;
         }
       }
 

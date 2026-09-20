@@ -64,7 +64,7 @@ import {
   getPublicSearchCount,
   getLotes
 } from "../services/db";
-import { syncGeralWithSupabase, dexieDb, normalizeCNHRecord, deduplicateCNHRecords } from "../services/dexieDb";
+import { syncGeralWithSupabase, dexieDb, normalizeCNHRecord, deduplicateCNHRecords, cleanAndDeduplicateGeralTable } from "../services/dexieDb";
 import { getPublicShareUrl, subscribeToSupabaseRealtime } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
@@ -563,9 +563,12 @@ export const GeralPage: React.FC = () => {
   const fetchDados = async () => {
     try {
       const [dataCnhs, dataResp] = await Promise.all([getGeralCNHs(), getResponsaveis()]);
-      const { cleanList } = deduplicateCNHRecords(dataCnhs);
+      const { cleanList, duplicateIds } = deduplicateCNHRecords(dataCnhs);
       setCnhs(cleanList);
       setResponsaveis(dataResp);
+      if (duplicateIds.length > 0) {
+        cleanAndDeduplicateGeralTable().catch(() => {});
+      }
     } catch (err) {
       console.error("Erro ao buscar CNHs no protocolo:", err);
     } finally {

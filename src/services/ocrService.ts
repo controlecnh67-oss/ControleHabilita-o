@@ -145,14 +145,31 @@ export async function scanCnhDocumentOcr(
   return data;
 }
 
+export interface MatchCnhOptions {
+  /**
+   * Se false, desativa completamente a localização por similaridade de nome (fuzzy match).
+   * Apenas aceita correspondências exatas por Nome, PA ou CPF.
+   * Padrão no Excel de Recebimento: false.
+   */
+  allowSimilarName?: boolean;
+  /**
+   * Quantidade mínima de dígitos numéricos para considerar um PA válido isoladamente.
+   * Padrão: 4.
+   */
+  minPaDigits?: number;
+}
+
 /**
  * Cruza itens extraídos da planilha Excel ou OCR com a base geral de CNHs
  * A correspondência se dá pelo PA (Identificador Único CNH), Nome e CPF.
  */
 export async function matchExtractedWithGeralCNHs(
   extractedList: ExtractedCnhItem[],
-  geralList: GeralCNH[]
+  geralList: GeralCNH[],
+  options?: MatchCnhOptions
 ): Promise<OcrMatchResult[]> {
+  const allowSimilarName = options?.allowSimilarName ?? false;
+  const minPaDigits = options?.minPaDigits ?? 4;
   const results: OcrMatchResult[] = [];
   const usedCnhIds = new Set<string>();
 
@@ -181,12 +198,12 @@ export async function matchExtractedWithGeralCNHs(
       namePaMap.set(key, arr);
     }
 
-    if (paClean.length >= 2) {
+    if (paClean.length >= minPaDigits) {
       const arr = paMap.get(paClean) || [];
       arr.push(cnh);
       paMap.set(paClean, arr);
     }
-    if (paNorm.length >= 2 && paNorm !== paClean) {
+    if (paNorm.length >= minPaDigits && paNorm !== paClean) {
       const arr = paMap.get(paNorm) || [];
       arr.push(cnh);
       paMap.set(paNorm, arr);
@@ -230,8 +247,8 @@ export async function matchExtractedWithGeralCNHs(
       }
     }
 
-    // 1.1 TENTATIVA 1.1: PA exato com Nome Altamente Similar (>= 75% de similaridade)
-    if (!matchedCnh && (itemPaClean.length >= 2 || itemPaNorm.length >= 2) && itemNormName) {
+    // 1.1 TENTATIVA 1.1: PA exato com Nome Altamente Similar (>= 75% de similaridade) - Apenas se allowSimilarName ativado
+    if (allowSimilarName && !matchedCnh && (itemPaClean.length >= minPaDigits || itemPaNorm.length >= minPaDigits) && itemNormName) {
       const matches = (itemPaClean && paMap.get(itemPaClean)) || (itemPaNorm && paMap.get(itemPaNorm));
       if (matches && matches.length > 0) {
         const closeName = matches.find(m => !usedCnhIds.has(m.id) && calculateNameSimilarity(item.nome, m.nome) >= 75);
@@ -261,18 +278,30 @@ export async function matchExtractedWithGeralCNHs(
       }
     }
 
-    // 3. TENTATIVA 3: Correspondência por PA com compatibilidade de nome (>= 50% de similaridade)
-    if (!matchedCnh && (itemPaClean.length >= 2 || itemPaNorm.length >= 2)) {
+    // 3. TENTATIVA 3: Correspondência por PA
+    if (!matchedCnh && (itemPaClean.length >= minPaDigits || itemPaNorm.length >= minPaDigits)) {
       const matches = (itemPaClean && paMap.get(itemPaClean)) || (itemPaNorm && paMap.get(itemPaNorm));
       if (matches && matches.length > 0) {
-        if (itemNormName) {
-          const compatible = matches.find(m => !usedCnhIds.has(m.id) && calculateNameSimilarity(item.nome, m.nome) >= 50);
-          if (compatible) {
-            matchedCnh = compatible;
-            matchType = "exact_pa";
-            matchScore = 90;
+        if (itemNormName && itemNormName !== "CONDUTOR") {
+          if (allowSimilarName) {
+            // Se similaridade permitida, aceita compatibilidade >= 50%
+            const compatible = matches.find(m => !usedCnhIds.has(m.id) && calculateNameSimilarity(item.nome, m.nome) >= 50);
+            if (compatible) {
+              matchedCnh = compatible;
+              matchType = "exact_pa";
+              matchScore = 90;
+            }
+          } else {
+            // Modo Estrito: só casa por PA se o nome for idêntico ou se for o condutor correto
+            const exactNameMatch = matches.find(m => !usedCnhIds.has(m.id) && normalizeString(m.nome) === itemNormName);
+            if (exactNameMatch) {
+              matchedCnh = exactNameMatch;
+              matchType = "exact_pa";
+              matchScore = 100;
+            }
           }
         } else {
+          // Planilha não informou nome (apenas PA)
           const remetidaMatch = matches.find(m => !usedCnhIds.has(m.id) && m.situacao === "Remetida");
           const unusedMatch = matches.find(m => !usedCnhIds.has(m.id));
           matchedCnh = remetidaMatch || unusedMatch || matches[0];
@@ -285,15 +314,23 @@ export async function matchExtractedWithGeralCNHs(
     // 4. TENTATIVA 4: Correspondência Exata por CPF (se presente)
     if (!matchedCnh && itemCpfClean.length >= 11 && cpfMap.has(itemCpfClean)) {
       const matches = cpfMap.get(itemCpfClean)!;
-      const remetidaMatch = matches.find(m => !usedCnhIds.has(m.id) && m.situacao === "Remetida");
-      const unusedMatch = matches.find(m => !usedCnhIds.has(m.id));
-      matchedCnh = remetidaMatch || unusedMatch || matches[0];
-      matchType = "exact_cpf";
-      matchScore = 95;
+      // Se tiver nome e modo estrito, evitar casar se o nome for completamente antagônico
+      let candidate: GeralCNH | undefined;
+      if (!allowSimilarName && itemNormName && itemNormName !== "CONDUTOR") {
+        candidate = matches.find(m => !usedCnhIds.has(m.id) && (normalizeString(m.nome) === itemNormName || calculateNameSimilarity(item.nome, m.nome) >= 60));
+      } else {
+        candidate = matches.find(m => !usedCnhIds.has(m.id) && m.situacao === "Remetida") || matches.find(m => !usedCnhIds.has(m.id));
+      }
+
+      if (candidate) {
+        matchedCnh = candidate;
+        matchType = "exact_cpf";
+        matchScore = 95;
+      }
     }
 
-    // 5. TENTATIVA 5: Similaridade de Nome (>85%)
-    if (!matchedCnh && itemNormName.length > 5) {
+    // 5. TENTATIVA 5: Similaridade de Nome (>85%) - EXECUTADA APENAS SE allowSimilarName === true
+    if (allowSimilarName && !matchedCnh && itemNormName.length > 5) {
       let bestCandidate: GeralCNH | null = null;
       let highestScore = 0;
 
