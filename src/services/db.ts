@@ -5220,7 +5220,7 @@ export async function receberCNHsBulk(
   return { updatedCount: updatedCNHs.length, updatedCNHs };
 }
 
-// Cadastro em Lote de Novas CNHs com Situação Recebida (para itens da Planilha Excel sem correspondência na tabela geral)
+// Cadastro em Lote de Novas CNHs com Situação Recebida (para itens da Planilha Excel sem correspondência ou já em estoque que geram nova ordem)
 export async function cadastrarNovasCNHsRecebidas(
   novos: Array<{
     nome: string;
@@ -5230,6 +5230,9 @@ export async function cadastrarNovasCNHsRecebidas(
     observacaoExtra?: string;
     gaveta?: string;
     reparticao?: string;
+    forceNewRecord?: boolean;
+    cnhAnteriorOrdem?: number;
+    cnhAnteriorSituacao?: string;
   }>,
   userId: string,
   userNome: string,
@@ -5251,7 +5254,7 @@ export async function cadastrarNovasCNHsRecebidas(
   const histEntries: any[] = [];
   const auditEntries: any[] = [];
 
-  // Mapeamentos rápidos para evitar duplicatas por CPF ou PA
+  // Mapeamentos rápidos por CPF ou PA
   const cnhByCpf = new Map<string, GeralCNH>();
   const cnhByPa = new Map<string, GeralCNH>();
   for (const c of geralList) {
@@ -5282,12 +5285,19 @@ export async function cadastrarNovasCNHsRecebidas(
       }
     }
 
-    // Verifica se já existe na base de dados (por CPF ou PA)
+    // Localiza registro pré-existente (se houver)
     const existing = (cleanCpf.length === 11 && cnhByCpf.get(cleanCpf)) ||
                      (cleanPa && cnhByPa.get(cleanPa));
 
-    if (existing) {
-      // PRESERVA A ORDEM ORIGINAL E ATUALIZA A SITUAÇÃO PARA RECEBIDA
+    // Se já estiver em estoque (Recebida ou Entregue com gaveta/repartição) OU se for explicitamente solicitado forceNewRecord:
+    // CRIA UM NOVO CADASTRO NA TABELA GERAL COM NÚMERO DE ORDEM NOVO!
+    const isExistingInStock = Boolean(
+      existing && (existing.situacao === "Recebida" || existing.situacao === "Entregue")
+    );
+    const shouldCreateNewOrder = Boolean(item.forceNewRecord || isExistingInStock || !existing);
+
+    if (existing && !shouldCreateNewOrder) {
+      // Caso seja apenas um registro Remetida/Pendente anterior que não é nova via, atualiza para Recebida preservando a ordem original
       const situacaoAntiga = existing.situacao;
       const updated: GeralCNH = {
         ...existing,
@@ -5328,6 +5338,7 @@ export async function cadastrarNovasCNHsRecebidas(
       continue;
     }
 
+    // Criação de NOVO REGISTRO com NOVA ORDEM SEQUENCIAL
     maxOrdem++;
 
     const uniqueId = typeof crypto !== "undefined" && crypto.randomUUID
@@ -5338,17 +5349,20 @@ export async function cadastrarNovasCNHsRecebidas(
       id: uniqueId,
       ordem: maxOrdem,
       nome: nomeLimpo,
-      pa: item.pa ? item.pa.trim() : undefined,
-      cpf: item.cpf ? item.cpf.trim() : "",
+      pa: item.pa ? item.pa.trim() : (existing?.pa || undefined),
+      cpf: item.cpf ? item.cpf.trim() : (existing?.cpf || ""),
       gaveta: locGaveta,
       reparticao: locReparticao,
       situacao: "Recebida",
       data_movimento: now,
       usuario_id: userId,
       usuario_nome: userNome,
-      remessa: item.remessa ? item.remessa.trim() : undefined,
-      observacao: item.observacaoExtra || `Importado via planilha Excel - Cadastrado como Recebida - Alocado em ${locGaveta} ${locReparticao}`,
-      created_at: now
+      remessa: item.remessa ? item.remessa.trim() : (existing?.remessa || undefined),
+      observacao: item.observacaoExtra || (isExistingInStock && existing
+        ? `Importado via planilha Excel - Nova via/emissão (Constava no estoque na Ordem #${existing.ordem} como ${existing.situacao}) - Cadastrado como Recebida - Alocado em ${locGaveta} ${locReparticao}`
+        : `Importado via planilha Excel - Cadastrado como Recebida - Alocado em ${locGaveta} ${locReparticao}`),
+      created_at: now,
+      updated_at: now
     };
 
     insertedCNHs.push(nova);
@@ -5361,17 +5375,19 @@ export async function cadastrarNovasCNHsRecebidas(
       situacao_nova: "Recebida",
       usuario_id: userId,
       usuario_nome: userNome,
-      observacao: `Cadastrado via importação de planilha Excel - Alocado na ${locGaveta} / ${locReparticao}`,
+      observacao: isExistingInStock && existing
+        ? `Novo cadastro via Excel (Nova emissão - CNH anterior na Ordem #${existing.ordem} ${existing.situacao}) - Alocado na ${locGaveta} / ${locReparticao}`
+        : `Cadastrado via importação de planilha Excel - Alocado na ${locGaveta} / ${locReparticao}`,
       geral_cpf: nova.cpf
     });
 
     auditEntries.push({
       tabela: "geral",
       registro_id: `Ordem #${nova.ordem}`,
-      acao: "Inclusão",
+      acao: isExistingInStock ? "Novo Cadastro (Nova Via em Estoque)" : "Inclusão",
       usuario_id: userId,
       usuario_nome: userNome,
-      valores_anteriores: null,
+      valores_anteriores: isExistingInStock && existing ? { cnh_anterior_ordem: existing.ordem, cnh_anterior_situacao: existing.situacao } : null,
       valores_novos: nova
     });
   }
@@ -5394,6 +5410,14 @@ export async function cadastrarNovasCNHsRecebidas(
     await logHistoricoBulk(histEntries);
     await logAuditoriaBulk(auditEntries);
     notifyDataSync("geral");
+
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.from("geral_cnhs").upsert(insertedCNHs, { onConflict: "id" });
+      } catch (e) {
+        console.warn("Aviso ao sincronizar novas CNHs recebidas no Supabase:", e);
+      }
+    }
   }
 
   return { insertedCount: insertedCNHs.length, insertedCNHs };

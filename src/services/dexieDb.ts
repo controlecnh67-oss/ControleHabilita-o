@@ -376,7 +376,19 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
     if (hasValidOrdem && byOrdem.has(validOrdem)) {
       conflictingRecord = byOrdem.get(validOrdem);
     } else if (hasValidCpf && byCpf.has(cpfDigits)) {
-      conflictingRecord = byCpf.get(cpfDigits);
+      const existingCpfRecord = byCpf.get(cpfDigits);
+      const existingOrdem = Number(existingCpfRecord?.ordem) || 0;
+      // Só considera conflito/duplicata por CPF se:
+      // 1) Algum dos registros tiver ordem inválida/zerada ou ordem inflada (> 15000), OU
+      // 2) Tiverem exatamente a mesma ordem ou mesmo ID.
+      // Se ambos tiverem ordens válidas e distintas no sistema (ex: CNH anterior no estoque/entregue e nova CNH recebida),
+      // são registros legítimos distintos do mesmo condutor (nova via/emissão).
+      if (
+        existingCpfRecord &&
+        (validOrdem === 0 || existingOrdem === 0 || validOrdem > 15000 || existingOrdem > 15000 || validOrdem === existingOrdem)
+      ) {
+        conflictingRecord = existingCpfRecord;
+      }
     } else if (keptIdMap.has(item.id)) {
       conflictingRecord = keptIdMap.get(item.id);
     }

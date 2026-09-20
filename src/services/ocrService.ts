@@ -22,6 +22,7 @@ export interface OcrMatchResult {
   selected: boolean;
   suggestedGaveta: string;
   suggestedReparticao: string;
+  isAlreadyInStockNewOrder?: boolean;
 }
 
 export interface OcrApiResponse {
@@ -357,20 +358,21 @@ export async function matchExtractedWithGeralCNHs(
     // Determinar categoria do registro
     let category: OcrCategory = "not_found";
     let selected = false;
+    let isAlreadyInStockNewOrder = false;
 
     if (matchedCnh) {
       if (matchedCnh.situacao === "Remetida") {
         category = "ready_to_receive";
-        selected = true; // Auto-selecionado para mudar status
+        selected = true; // Auto-selecionado para mudar status para RECEBIDA
       } else if (matchedCnh.situacao === "Pendente") {
         category = "pending";
         selected = true; // Pendente também pode ser recebida
-      } else if (matchedCnh.situacao === "Recebida") {
-        category = "already_received";
-        selected = false;
-      } else if (matchedCnh.situacao === "Entregue") {
-        category = "already_delivered";
-        selected = false;
+      } else if (matchedCnh.situacao === "Recebida" || matchedCnh.situacao === "Entregue") {
+        // CNH JÁ EM ESTOQUE (Recebida ou Entregue com gaveta e repartição):
+        // Calibrado conforme solicitação: preparar essas CNHs para criar um novo cadastro/registro na tabela geral com número de ordem novo!
+        category = matchedCnh.situacao === "Recebida" ? "already_received" : "already_delivered";
+        isAlreadyInStockNewOrder = true;
+        selected = true; // Auto-selecionado para criação de novo cadastro com nova ordem!
       } else {
         category = "ready_to_receive";
         selected = true;
@@ -394,6 +396,7 @@ export async function matchExtractedWithGeralCNHs(
       selected,
       suggestedGaveta: loc.gaveta,
       suggestedReparticao: loc.reparticao,
+      isAlreadyInStockNewOrder,
     });
   }
 
