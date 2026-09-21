@@ -95,18 +95,16 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
   const stats = useMemo(() => {
     let totalDuplicatedRecords = 0;
     let totalSelectedForDeletion = 0;
-    let conflictGroupsCount = 0;
     let exactCpfGroups = 0;
     let exactNameGroups = 0;
-    let similarNameGroups = 0;
+    let exactPaGroups = 0;
 
     groups.forEach((g) => {
       totalDuplicatedRecords += g.items.length;
       totalSelectedForDeletion += g.items.filter((i) => i.selectedForDeletion).length;
-      if (g.hasConflicts) conflictGroupsCount++;
-      if (g.matchType === "exact_cpf" || g.matchType === "exact_both") exactCpfGroups++;
-      else if (g.matchType === "exact_name") exactNameGroups++;
-      else if (g.matchType === "similar_name") similarNameGroups++;
+      if (g.hasSameCpf) exactCpfGroups++;
+      if (g.hasSameName) exactNameGroups++;
+      if (g.hasSamePa) exactPaGroups++;
     });
 
     return {
@@ -114,10 +112,9 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
       totalGroups: groups.length,
       totalDuplicatedRecords,
       totalSelectedForDeletion,
-      conflictGroupsCount,
       exactCpfGroups,
       exactNameGroups,
-      similarNameGroups,
+      exactPaGroups,
     };
   }, [groups, geralList.length]);
 
@@ -125,16 +122,13 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
   const filteredGroups = useMemo(() => {
     return groups.filter((g) => {
       // Filtro por tipo
-      if (filterType === "exact_cpf" && g.matchType !== "exact_cpf" && g.matchType !== "exact_both") {
+      if (filterType === "exact_cpf" && !g.hasSameCpf) {
         return false;
       }
-      if (filterType === "exact_name" && g.matchType !== "exact_name" && g.matchType !== "exact_both") {
+      if (filterType === "exact_name" && !g.hasSameName) {
         return false;
       }
-      if (filterType === "similar_name" && g.matchType !== "similar_name") {
-        return false;
-      }
-      if (filterType === "conflicts" && !g.hasConflicts) {
+      if (filterType === "exact_pa" && !g.hasSamePa) {
         return false;
       }
 
@@ -145,12 +139,14 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
         const matchesAnyItem = g.items.some((item) => {
           const nome = (item.nome || "").toLowerCase();
           const cpf = (item.cpf || "").toLowerCase();
+          const pa = (item.pa || "").toLowerCase();
           const ordem = item.ordem ? `#${item.ordem}` : "";
           const obs = (item.observacao || "").toLowerCase();
           const gaveta = (item.gaveta || "").toLowerCase();
           return (
             nome.includes(query) ||
             cpf.includes(query) ||
+            pa.includes(query) ||
             ordem.includes(query) ||
             obs.includes(query) ||
             gaveta.includes(query)
@@ -163,7 +159,7 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
     });
   }, [groups, filterType, searchTerm]);
 
-  // Ações de seleção em lote
+  // Ações de seleção em lote gerais
   const handleAutoSelectBest = () => {
     setGroups((prev) =>
       prev.map((g) => {
@@ -202,6 +198,46 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
           selectedForDeletion: false,
         })),
       }))
+    );
+  };
+
+  // Ações de seleção por critério (CPF, NOME, PA)
+  const handleSelectByCriterion = (criterion: "cpf" | "name" | "pa", select: boolean) => {
+    setGroups((prev) =>
+      prev.map((g) => {
+        let matches = false;
+        if (criterion === "cpf" && g.hasSameCpf) matches = true;
+        if (criterion === "name" && g.hasSameName) matches = true;
+        if (criterion === "pa" && g.hasSamePa) matches = true;
+
+        if (!matches) return g;
+
+        const primary = g.primaryRecordId;
+        return {
+          ...g,
+          items: g.items.map((i) => ({
+            ...i,
+            selectedForDeletion: select ? i.id !== primary : false,
+          })),
+        };
+      })
+    );
+  };
+
+  // Ação para marcar/desmarcar um grupo individual específico
+  const handleToggleGroupSelect = (groupId: string, select: boolean) => {
+    setGroups((prev) =>
+      prev.map((g) => {
+        if (g.groupId !== groupId) return g;
+        const primary = g.primaryRecordId;
+        return {
+          ...g,
+          items: g.items.map((i) => ({
+            ...i,
+            selectedForDeletion: select ? i.id !== primary : false,
+          })),
+        };
+      })
     );
   };
 
@@ -333,11 +369,11 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
                   Varredura de Duplicatas & Auditoria de Exclusão
                 </h2>
                 <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 rounded-md border border-rose-300 dark:border-rose-800">
-                  Correspondência Nome & CPF
+                  Correspondência CPF, Nome Exato & PA
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Localize registros redundantes cadastrados por erro ou importações duplicadas e realize a exclusão seletiva com auditoria.
+                Localize registros redundantes por CPF, Nome Exato ou PA cadastrados por erro ou importações duplicadas e realize a exclusão seletiva com auditoria.
               </p>
             </div>
           </div>
@@ -397,12 +433,12 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
               </div>
             </div>
 
-            <div className="bg-purple-50 dark:bg-purple-950/40 p-3 rounded-xl border border-purple-200 dark:border-purple-800">
-              <div className="text-[11px] font-semibold text-purple-700 dark:text-purple-300">
-                ⚠️ Conflitos de Situação
+            <div className="bg-teal-50 dark:bg-teal-950/40 p-3 rounded-xl border border-teal-200 dark:border-teal-800">
+              <div className="text-[11px] font-semibold text-teal-700 dark:text-teal-300 flex items-center gap-1">
+                <span>📄 Duplicatas por PA</span>
               </div>
-              <div className="text-xl font-black text-purple-800 dark:text-purple-200">
-                {stats.conflictGroupsCount} <span className="text-xs font-normal">grupos</span>
+              <div className="text-xl font-black text-teal-800 dark:text-teal-200">
+                {stats.exactPaGroups} <span className="text-xs font-normal">grupos</span>
               </div>
             </div>
           </div>
@@ -450,29 +486,15 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
 
               <button
                 type="button"
-                onClick={() => setFilterType("similar_name")}
+                onClick={() => setFilterType("exact_pa")}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                  filterType === "similar_name"
-                    ? "bg-amber-600 text-white"
-                    : "bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 hover:bg-amber-100"
+                  filterType === "exact_pa"
+                    ? "bg-teal-600 text-white"
+                    : "bg-teal-50 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300 hover:bg-teal-100"
                 }`}
               >
-                Nomes Similares ({stats.similarNameGroups})
+                Mesmo PA ({stats.exactPaGroups})
               </button>
-
-              {stats.conflictGroupsCount > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setFilterType("conflicts")}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                    filterType === "conflicts"
-                      ? "bg-purple-600 text-white"
-                      : "bg-purple-50 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 hover:bg-purple-100"
-                  }`}
-                >
-                  Com Conflito ({stats.conflictGroupsCount})
-                </button>
-              )}
             </div>
 
             {/* Campo de Busca */}
@@ -480,7 +502,7 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Filtrar por nome, CPF ou ordem..."
+                placeholder="Filtrar por nome, CPF, PA ou ordem..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-8 pr-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-rose-500"
@@ -488,7 +510,7 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
               {searchTerm && (
                 <button
                   onClick={() => setSearchTerm("")}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -497,28 +519,21 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
           </div>
 
           {/* Barra de Ferramentas de Seleção em Lote */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-800">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-800">
             <div className="flex items-center gap-2 flex-wrap text-xs">
-              <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+              <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 mr-1">
                 <Sparkles className="w-3.5 h-3.5 text-amber-500" />
                 Ações em Lote:
               </span>
 
+              {/* Ações Globais */}
               <button
                 type="button"
                 onClick={handleAutoSelectBest}
-                title="Mantém o melhor registro de cada grupo (completude e situação) e marca os excedentes para exclusão"
-                className="px-2.5 py-1 bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 hover:bg-amber-200 rounded-lg font-bold transition-colors cursor-pointer"
+                title="Mantém o melhor registro de cada grupo e marca os excedentes para exclusão"
+                className="px-2.5 py-1 bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 hover:bg-amber-200 rounded-lg font-bold transition-colors cursor-pointer inline-flex items-center gap-1"
               >
-                ⚡ Auto-Selecionar Duplicadas
-              </button>
-
-              <button
-                type="button"
-                onClick={handleSelectAllExceeding}
-                className="px-2.5 py-1 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 rounded-lg font-semibold transition-colors cursor-pointer"
-              >
-                Marcar Todos Excedentes
+                ⚡ Auto-Selecionar
               </button>
 
               <button
@@ -528,9 +543,81 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
               >
                 Desmarcar Todos
               </button>
+
+              {/* Divisor */}
+              <div className="h-4 w-px bg-slate-300 dark:bg-slate-700 mx-1 hidden sm:block" />
+
+              {/* Grupo de CPF */}
+              <div className="inline-flex items-center rounded-lg border border-rose-200 dark:border-rose-900 overflow-hidden shadow-2xs">
+                <span className="px-2 py-1 text-[11px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-r border-rose-200 dark:border-rose-900">
+                  CPF ({stats.exactCpfGroups})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleSelectByCriterion("cpf", true)}
+                  title="Marcar todos os excedentes de grupos com mesmo CPF para exclusão"
+                  className="px-2 py-1 text-[11px] font-semibold bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/50 dark:hover:bg-rose-900 text-rose-700 dark:text-rose-200 transition-colors cursor-pointer"
+                >
+                  + Marcar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectByCriterion("cpf", false)}
+                  title="Desmarcar todos os itens dos grupos com mesmo CPF"
+                  className="px-2 py-1 text-[11px] font-semibold bg-white hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border-l border-rose-200 dark:border-rose-900 transition-colors cursor-pointer"
+                >
+                  ✕ Desmarcar
+                </button>
+              </div>
+
+              {/* Grupo de NOME */}
+              <div className="inline-flex items-center rounded-lg border border-blue-200 dark:border-blue-900 overflow-hidden shadow-2xs">
+                <span className="px-2 py-1 text-[11px] font-bold bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border-r border-blue-200 dark:border-blue-900">
+                  Nome ({stats.exactNameGroups})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleSelectByCriterion("name", true)}
+                  title="Marcar todos os excedentes de grupos com mesmo Nome para exclusão"
+                  className="px-2 py-1 text-[11px] font-semibold bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/50 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-200 transition-colors cursor-pointer"
+                >
+                  + Marcar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectByCriterion("name", false)}
+                  title="Desmarcar todos os itens dos grupos com mesmo Nome"
+                  className="px-2 py-1 text-[11px] font-semibold bg-white hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border-l border-blue-200 dark:border-blue-900 transition-colors cursor-pointer"
+                >
+                  ✕ Desmarcar
+                </button>
+              </div>
+
+              {/* Grupo de PA */}
+              <div className="inline-flex items-center rounded-lg border border-teal-200 dark:border-teal-900 overflow-hidden shadow-2xs">
+                <span className="px-2 py-1 text-[11px] font-bold bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300 border-r border-teal-200 dark:border-teal-900">
+                  PA ({stats.exactPaGroups})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleSelectByCriterion("pa", true)}
+                  title="Marcar todos os excedentes de grupos com mesmo PA para exclusão"
+                  className="px-2 py-1 text-[11px] font-semibold bg-teal-100 hover:bg-teal-200 dark:bg-teal-900/50 dark:hover:bg-teal-900 text-teal-700 dark:text-teal-200 transition-colors cursor-pointer"
+                >
+                  + Marcar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectByCriterion("pa", false)}
+                  title="Desmarcar todos os itens dos grupos com mesmo PA"
+                  className="px-2 py-1 text-[11px] font-semibold bg-white hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border-l border-teal-200 dark:border-teal-900 transition-colors cursor-pointer"
+                >
+                  ✕ Desmarcar
+                </button>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 self-end lg:self-auto">
               <button
                 type="button"
                 onClick={toggleAllExpanded}
@@ -569,7 +656,7 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
                 Executando Varredura O(N) nas CNHs...
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto mt-1">
-                Indexando registros por CPF, correspondência de nomes e padrões fonéticos para identificar duplicatas com precisão.
+                Indexando registros por CPF, Nome Exato e PA para identificar duplicatas com precisão.
               </p>
             </div>
           ) : groups.length === 0 ? (
@@ -624,31 +711,49 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
                             CPF & Nome Idênticos
                           </span>
                         )}
-                        {group.matchType === "exact_cpf" && (
+                        {group.hasSamePa && group.hasSameCpf && group.matchType !== "exact_both" && (
+                          <span className="px-2 py-0.5 text-[10px] font-extrabold bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 rounded-md border border-teal-300 dark:border-teal-800">
+                            CPF & PA Idênticos
+                          </span>
+                        )}
+                        {group.hasSameCpf && (
                           <span className="px-2 py-0.5 text-[10px] font-extrabold bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 rounded-md border border-rose-300 dark:border-rose-800">
                             Mesmo CPF
                           </span>
                         )}
-                        {group.matchType === "exact_name" && (
+                        {group.hasSamePa && (
+                          <span className="px-2 py-0.5 text-[10px] font-bold bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 rounded-md border border-teal-300 dark:border-teal-800">
+                            Mesmo PA
+                          </span>
+                        )}
+                        {group.hasSameName && (
                           <span className="px-2 py-0.5 text-[10px] font-bold bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 rounded-md border border-blue-300 dark:border-blue-800">
                             Mesmo Nome
-                          </span>
-                        )}
-                        {group.matchType === "similar_name" && (
-                          <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 rounded-md border border-amber-300 dark:border-amber-800">
-                            Nomes Similares
-                          </span>
-                        )}
-
-                        {group.hasConflicts && (
-                          <span className="px-2 py-0.5 text-[10px] font-bold bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 rounded-md border border-purple-300 dark:border-purple-800">
-                            ⚠️ Situações Divergentes
                           </span>
                         )}
                       </div>
 
                       <div className="flex items-center gap-3">
-                        <div className="text-right text-[11px]">
+                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleGroupSelect(group.groupId, true)}
+                            title="Marcar excedentes deste grupo para exclusão (mantém 1)"
+                            className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/80 dark:hover:bg-rose-900 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-900 transition-colors cursor-pointer"
+                          >
+                            + Marcar Excedentes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleGroupSelect(group.groupId, false)}
+                            title="Desmarcar todos os itens deste grupo"
+                            className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
+                          >
+                            ✕ Desmarcar
+                          </button>
+                        </div>
+
+                        <div className="text-right text-[11px] hidden sm:block">
                           <span className="font-semibold text-emerald-700 dark:text-emerald-400">
                             {keepingInGroupCount} manter
                           </span>
@@ -738,9 +843,12 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
                                   </div>
 
                                   {/* Detalhes Complementares */}
-                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs text-slate-600 dark:text-slate-400 pt-0.5">
+                                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs text-slate-600 dark:text-slate-400 pt-0.5">
                                     <div>
                                       CPF: <strong className="text-slate-900 dark:text-slate-200">{item.cpf || "-"}</strong>
+                                    </div>
+                                    <div>
+                                      PA: <strong className="text-slate-900 dark:text-slate-200 font-mono">{item.pa || "-"}</strong>
                                     </div>
                                     <div>
                                       Gaveta: <strong className="text-slate-900 dark:text-slate-200">{item.gaveta || "-"}</strong> {item.reparticao && `(${item.reparticao})`}
