@@ -2540,16 +2540,7 @@ export async function getMemorandos(): Promise<Memorando[]> {
       if (data && Array.isArray(data)) {
         const validRemote: Memorando[] = [];
         for (const m of data) {
-          if (deletedIds.has(m.id)) {
-            // Deleção síncrona no Supabase para garantir remoção caso o registro persista na nuvem
-            try {
-              await supabase.from("geral_cnhs").delete().eq("memorando_id", m.id);
-              await supabase.from("candidatos").delete().eq("memorando_id", m.id);
-              await supabase.from("memorandos").delete().eq("id", m.id);
-            } catch (e) {
-              console.warn("Aviso ao excluir no Supabase memorando deletado:", e);
-            }
-          } else {
+          if (!deletedIds.has(m.id)) {
             validRemote.push(m);
           }
         }
@@ -2786,25 +2777,29 @@ export async function deleteMemorando(id: string, userId: string, userNome: stri
     addDeletedId("candidatos", c.id);
   }
 
-  // Handle geral CNHs linked to this memorando (both local/Dexie and Supabase)
+  // Desvincular CNHs do Geral sem jamais apagar os documentos dos cidadãos
   const geralList = getStoredList<GeralCNH>("geral", SEED_GERAL);
-  const cnhsLinked = geralList.filter((g) => g.memorando_id === id);
-  const cnhIdsToDelete = cnhsLinked.map((g) => g.id);
-
-  if (cnhIdsToDelete.length > 0) {
-    try {
-      await deleteLocalGeralCNHsBulk(cnhIdsToDelete);
-    } catch (e) {
-      console.warn("Aviso ao remover CNHs do IndexedDB ao deletar memorando:", e);
+  let alterouGeral = false;
+  const geralAtualizada = geralList.map((g) => {
+    if (g.memorando_id === id) {
+      alterouGeral = true;
+      return { ...g, memorando_id: null };
     }
-    const filtradosGeral = geralList.filter((g) => g.memorando_id !== id);
-    saveStoredList("geral", filtradosGeral);
+    return g;
+  });
+
+  if (alterouGeral) {
+    saveStoredList("geral", geralAtualizada);
+    try {
+      await saveLocalGeralCNHsBulk(geralAtualizada, true);
+    } catch (e) {
+      console.warn("Aviso ao desvincular CNHs no IndexedDB:", e);
+    }
   }
 
   if (isSupabaseConfigured()) {
     try {
-      // 1. Delete or un-link geral_cnhs in Supabase referencing this memorando first
-      await supabase.from("geral_cnhs").delete().eq("memorando_id", id);
+      // 1. Apenas desvincula geral_cnhs no Supabase (NUNCA deleta CNHs)
       await supabase.from("geral_cnhs").update({ memorando_id: null }).eq("memorando_id", id);
 
       // 2. Delete candidatos from Supabase
@@ -7131,7 +7126,6 @@ export async function syncLocalToSupabase(
   if (deletedMemoIds.size > 0 && isSupabaseConfigured()) {
     for (const dId of deletedMemoIds) {
       try {
-        await supabase.from("geral_cnhs").delete().eq("memorando_id", dId);
         await supabase.from("geral_cnhs").update({ memorando_id: null }).eq("memorando_id", dId);
         await supabase.from("candidatos").delete().eq("memorando_id", dId);
         await supabase.from("memorandos").delete().eq("id", dId);
@@ -7186,10 +7180,28 @@ export async function syncLocalToSupabase(
   const validCandIds = new Set(cands.map(c => c.id));
   const validGeralIds = new Set(geral.map(g => g.id));
 
+  // Pré-carregar IDs remotos do Supabase para NUNCA apagar relacionamentos válidos existentes na nuvem
+  if (isSupabaseConfigured()) {
+    try {
+      const [uRes, rRes, mRes, cRes] = await Promise.all([
+        supabase.from("usuarios").select("id").limit(2000),
+        supabase.from("responsaveis").select("id").limit(5000),
+        supabase.from("memorandos").select("id").limit(5000),
+        supabase.from("candidatos").select("id").limit(10000)
+      ]);
+      uRes.data?.forEach((u: any) => validUserIds.add(u.id));
+      rRes.data?.forEach((r: any) => validRespIds.add(r.id));
+      mRes.data?.forEach((m: any) => validMemoIds.add(m.id));
+      cRes.data?.forEach((c: any) => validCandIds.add(c.id));
+    } catch (e) {
+      console.warn("Aviso ao carregar IDs remotos para integridade referencial:", e);
+    }
+  }
+
   const cleanFK = (id?: string | null, validSet?: Set<string>): string | null => {
     if (!id || typeof id !== "string") return null;
     const trimmed = id.trim();
-    if (trimmed === "") return null;
+    if (trimmed === "" || trimmed === "null" || trimmed === "undefined") return null;
     if (validSet && !validSet.has(trimmed)) return null;
     return trimmed;
   };
@@ -7907,6 +7919,12 @@ export async function syncSingleTable(
     );
     const mems = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
     const validMemoIds = new Set(mems.map(m => m.id));
+    if (isSupabaseConfigured()) {
+      try {
+        const { data: remoteMemos } = await supabase.from("memorandos").select("id").limit(5000);
+        remoteMemos?.forEach((m: any) => validMemoIds.add(m.id));
+      } catch {}
+    }
     if (cands.length > 0) {
       log(`📦 Enviando ${cands.length} candidatos para o Supabase...`);
       const payload = cands.map(c => ({
@@ -7929,6 +7947,20 @@ export async function syncSingleTable(
     const validCandIds = new Set((getStoredList<Candidato>("candidatos", SEED_CANDIDATOS)).map(c => c.id));
     const validUserIds = new Set((getStoredList<Usuario>("usuarios", SEED_USUARIOS)).map(u => u.id));
     const validRespIds = new Set((getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS)).map(r => r.id));
+    if (isSupabaseConfigured()) {
+      try {
+        const [uRes, rRes, mRes, cRes] = await Promise.all([
+          supabase.from("usuarios").select("id").limit(2000),
+          supabase.from("responsaveis").select("id").limit(5000),
+          supabase.from("memorandos").select("id").limit(5000),
+          supabase.from("candidatos").select("id").limit(10000)
+        ]);
+        uRes.data?.forEach((u: any) => validUserIds.add(u.id));
+        rRes.data?.forEach((r: any) => validRespIds.add(r.id));
+        mRes.data?.forEach((m: any) => validMemoIds.add(m.id));
+        cRes.data?.forEach((c: any) => validCandIds.add(c.id));
+      } catch {}
+    }
     if (geral.length > 0) {
       log(`📦 Enviando ${geral.length} registros de CNHs para o Supabase...`);
       const payload = geral.map(g => ({
@@ -8197,4 +8229,334 @@ export async function syncSingleTable(
     remoteCount: finalRemoteCount
   };
 }
+
+export interface RelationalRestorationResult {
+  success: boolean;
+  restoredCandMemoCount: number;
+  restoredCnhMemoCount: number;
+  restoredCnhCandCount: number;
+  totalRepaired: number;
+  details: string[];
+}
+
+export async function restaurarVinculosRelacionais(
+  onLog?: (msg: string) => void
+): Promise<RelationalRestorationResult> {
+  const log = (m: string) => {
+    console.log(m);
+    onLog?.(m);
+  };
+
+  log("🔍 [Auditoria Relacional] Iniciando varredura profunda de integridade e vínculos...");
+
+  const details: string[] = [];
+  let restoredCandMemoCount = 0;
+  let restoredCnhMemoCount = 0;
+  let restoredCnhCandCount = 0;
+
+  // 1. Carregar todos os memorandos (Local + Supabase)
+  const localMemos = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
+  let remoteMemos: Memorando[] = [];
+  if (isSupabaseConfigured()) {
+    try {
+      log("📡 Baixando memorandos da nuvem para cruzamento de integridade...");
+      const res = await fetchAllRowsFromSupabase<Memorando>("memorandos", 1000, "created_at", false);
+      if (res && Array.isArray(res)) remoteMemos = res;
+    } catch (e: any) {
+      log(`⚠️ Aviso ao buscar memorandos remotos: ${e.message}`);
+    }
+  }
+
+  const memoMap = new Map<string, Memorando>();
+  localMemos.forEach(m => { if (m.id) memoMap.set(m.id.trim(), m); });
+  remoteMemos.forEach(m => { if (m.id && !memoMap.has(m.id.trim())) memoMap.set(m.id.trim(), m); });
+  const allMemos = Array.from(memoMap.values());
+
+  const memoById = new Map<string, Memorando>();
+  const memoByNumeroNorm = new Map<string, Memorando>();
+  const memoByRemessaNorm = new Map<string, Memorando>();
+
+  const normalizeStr = (str?: string | null): string => {
+    if (!str) return "";
+    return str.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  };
+
+  for (const m of allMemos) {
+    if (m.id) memoById.set(m.id.trim(), m);
+    if (m.numero) {
+      const norm = normalizeStr(m.numero);
+      if (norm) {
+        memoByNumeroNorm.set(norm, m);
+        memoByNumeroNorm.set(m.numero.trim().toLowerCase(), m);
+      }
+    }
+    if (m.remessa) {
+      const norm = normalizeStr(m.remessa);
+      if (norm) {
+        memoByRemessaNorm.set(norm, m);
+        memoByRemessaNorm.set(m.remessa.trim().toLowerCase(), m);
+      }
+    }
+  }
+
+  log(`📋 Total de memorandos indexados para cruzamento: ${allMemos.length}`);
+
+  // 2. Carregar todos os candidatos (Local + Supabase)
+  const localCands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+  let remoteCands: Candidato[] = [];
+  if (isSupabaseConfigured()) {
+    try {
+      log("📡 Baixando candidatos da nuvem para análise de vínculos...");
+      const res = await fetchAllRowsFromSupabase<Candidato>("candidatos", 1000, "created_at", false);
+      if (res && Array.isArray(res)) remoteCands = res;
+    } catch (e: any) {
+      log(`⚠️ Aviso ao buscar candidatos remotos: ${e.message}`);
+    }
+  }
+
+  const candsMap = new Map<string, Candidato>();
+  localCands.forEach(c => { if (c.id) candsMap.set(c.id.trim(), { ...c }); });
+  remoteCands.forEach(c => { if (c.id && !candsMap.has(c.id.trim())) candsMap.set(c.id.trim(), { ...c }); });
+  const allCands = Array.from(candsMap.values());
+
+  const candByCpf = new Map<string, Candidato>();
+  for (const c of allCands) {
+    const cleanCpf = (c.cpf || "").replace(/\D/g, "");
+    if (cleanCpf && cleanCpf.length === 11) {
+      candByCpf.set(cleanCpf, c);
+    }
+  }
+
+  log(`👥 Total de candidatos indexados: ${allCands.length}`);
+
+  // 3. Carregar todas as CNHs do Geral (Local + Supabase)
+  const localGeral = await getLocalGeralCNHs();
+  let remoteGeral: GeralCNH[] = [];
+  if (isSupabaseConfigured()) {
+    try {
+      log("📡 Baixando protocolo geral de CNHs para restauração referencial...");
+      const res = await fetchAllRowsFromSupabase<GeralCNH>("geral_cnhs", 1000, "ordem", false);
+      if (res && Array.isArray(res)) remoteGeral = res;
+    } catch (e: any) {
+      log(`⚠️ Aviso ao buscar CNHs remotas: ${e.message}`);
+    }
+  }
+
+  const geralMap = new Map<string, GeralCNH>();
+  localGeral.forEach(g => { if (g.id) geralMap.set(g.id.trim(), { ...g }); });
+  remoteGeral.forEach(g => { if (g.id && !geralMap.has(g.id.trim())) geralMap.set(g.id.trim(), { ...g }); });
+  const allGeral = Array.from(geralMap.values());
+
+  log(`🗃️ Total de CNHs no protocolo geral indexadas: ${allGeral.length}`);
+
+  // Mapa auxiliar: CPF -> CNH com vínculo de memorando
+  const cnhWithMemoByCpf = new Map<string, { memoId?: string | null; memoNum?: string | null; remessa?: string | null }>();
+  for (const g of allGeral) {
+    const cleanCpf = (g.cpf || "").replace(/\D/g, "");
+    if (cleanCpf && cleanCpf.length === 11 && (g.memorando_id || g.memorando_numero || g.remessa)) {
+      cnhWithMemoByCpf.set(cleanCpf, {
+        memoId: g.memorando_id,
+        memoNum: g.memorando_numero,
+        remessa: g.remessa
+      });
+    }
+  }
+
+  // --- PASSO A: Restaurar vínculos de Candidatos com seus Memorandos ---
+  log("🔄 [Etapa 1/3] Restaurando vínculos de Candidatos ⇄ Memorandos...");
+  const repairedCands: Candidato[] = [];
+
+  for (const c of allCands) {
+    const hasValidMemo = c.memorando_id && memoById.has(c.memorando_id.trim());
+    if (!hasValidMemo) {
+      let matchedMemo: Memorando | undefined;
+
+      // 1. Tentar por remessa do candidato
+      if (c.remessa) {
+        const normRem = normalizeStr(c.remessa);
+        matchedMemo = memoByRemessaNorm.get(normRem) || memoByRemessaNorm.get(c.remessa.trim().toLowerCase());
+      }
+
+      // 2. Tentar por cruzamento de CPF com CNHs do Geral
+      if (!matchedMemo && c.cpf) {
+        const cleanCpf = c.cpf.replace(/\D/g, "");
+        const cnhData = cnhWithMemoByCpf.get(cleanCpf);
+        if (cnhData) {
+          if (cnhData.memoId && memoById.has(cnhData.memoId.trim())) {
+            matchedMemo = memoById.get(cnhData.memoId.trim());
+          } else if (cnhData.memoNum) {
+            matchedMemo = memoByNumeroNorm.get(normalizeStr(cnhData.memoNum));
+          } else if (cnhData.remessa) {
+            matchedMemo = memoByRemessaNorm.get(normalizeStr(cnhData.remessa));
+          }
+        }
+      }
+
+      // 3. Tentar por ID do candidato (padrão: cand-<memoId>-<num>)
+      if (!matchedMemo && c.id && c.id.startsWith("cand-")) {
+        for (const m of allMemos) {
+          if (c.id.includes(m.id) || (m.numero && c.id.includes(normalizeStr(m.numero)))) {
+            matchedMemo = m;
+            break;
+          }
+        }
+      }
+
+      if (matchedMemo) {
+        c.memorando_id = matchedMemo.id;
+        if (!c.remessa && matchedMemo.remessa) c.remessa = matchedMemo.remessa;
+        candsMap.set(c.id.trim(), c);
+        repairedCands.push(c);
+        restoredCandMemoCount++;
+      }
+    }
+  }
+
+  log(`✅ Candidatos recuperados e revinculados a Memorandos: ${restoredCandMemoCount}`);
+
+  // Re-indexar candidatos pós-reparo para uso nas CNHs
+  for (const c of candsMap.values()) {
+    const cleanCpf = (c.cpf || "").replace(/\D/g, "");
+    if (cleanCpf && cleanCpf.length === 11) candByCpf.set(cleanCpf, c);
+  }
+
+  // --- PASSO B: Restaurar vínculos de CNHs com Candidatos e Memorandos ---
+  log("🔄 [Etapa 2/3] Restaurando vínculos de CNHs ⇄ Candidatos e Memorandos...");
+  const repairedGeral: GeralCNH[] = [];
+
+  for (const g of allGeral) {
+    let modified = false;
+    const cleanCpf = (g.cpf || "").replace(/\D/g, "");
+
+    // B1. Restaurar candidato_id da CNH
+    const hasValidCand = g.candidato_id && candsMap.has(g.candidato_id.trim());
+    if (!hasValidCand && cleanCpf && candByCpf.has(cleanCpf)) {
+      const cand = candByCpf.get(cleanCpf)!;
+      g.candidato_id = cand.id;
+      if (!g.memorando_id && cand.memorando_id && memoById.has(cand.memorando_id.trim())) {
+        g.memorando_id = cand.memorando_id;
+        const m = memoById.get(cand.memorando_id.trim());
+        if (m) {
+          g.memorando_numero = g.memorando_numero || m.numero;
+          g.remessa = g.remessa || m.remessa;
+        }
+      }
+      modified = true;
+      restoredCnhCandCount++;
+    }
+
+    // B2. Restaurar memorando_id da CNH
+    const hasValidMemo = g.memorando_id && memoById.has(g.memorando_id.trim());
+    if (!hasValidMemo) {
+      let matchedMemo: Memorando | undefined;
+
+      // Cruzamento por memorando_numero
+      if (g.memorando_numero) {
+        matchedMemo = memoByNumeroNorm.get(normalizeStr(g.memorando_numero)) || memoByNumeroNorm.get(g.memorando_numero.trim().toLowerCase());
+      }
+
+      // Cruzamento por remessa
+      if (!matchedMemo && g.remessa) {
+        matchedMemo = memoByRemessaNorm.get(normalizeStr(g.remessa)) || memoByRemessaNorm.get(g.remessa.trim().toLowerCase());
+      }
+
+      // Cruzamento por candidato vinculado
+      if (!matchedMemo && g.candidato_id && candsMap.has(g.candidato_id.trim())) {
+        const c = candsMap.get(g.candidato_id.trim())!;
+        if (c.memorando_id && memoById.has(c.memorando_id.trim())) {
+          matchedMemo = memoById.get(c.memorando_id.trim());
+        }
+      }
+
+      if (matchedMemo) {
+        g.memorando_id = matchedMemo.id;
+        g.memorando_numero = g.memorando_numero || matchedMemo.numero;
+        g.remessa = g.remessa || matchedMemo.remessa;
+        modified = true;
+        restoredCnhMemoCount++;
+      }
+    }
+
+    if (modified) {
+      geralMap.set(g.id.trim(), g);
+      repairedGeral.push(g);
+    }
+  }
+
+  log(`✅ Vínculos CNH ⇄ Candidato restaurados: ${restoredCnhCandCount}`);
+  log(`✅ Vínculos CNH ⇄ Memorando restaurados: ${restoredCnhMemoCount}`);
+
+  // --- PASSO C: Persistir dados corrigidos localmente e no Supabase ---
+  log("💾 [Etapa 3/3] Salvando e consolidando integridade referencial...");
+
+  // Salvar candidatos consolidados
+  const consolidatedCands = Array.from(candsMap.values());
+  saveStoredList("candidatos", consolidatedCands);
+
+  // Salvar CNHs consolidadas
+  const consolidatedGeral = Array.from(geralMap.values());
+  saveStoredList("geral", consolidatedGeral);
+  await saveLocalGeralCNHsBulk(consolidatedGeral, true);
+
+  // Se Supabase configurado, persistir as correções
+  if (isSupabaseConfigured()) {
+    if (repairedCands.length > 0) {
+      log(`📡 Atualizando ${repairedCands.length} candidatos no Supabase com chaves restauradas...`);
+      const payloadCands = repairedCands.map(c => ({
+        id: c.id,
+        memorando_id: c.memorando_id || null,
+        numero: c.numero || null,
+        nome: c.nome,
+        cpf: c.cpf,
+        telefone: c.telefone || null,
+        remessa: c.remessa || null,
+        created_at: c.created_at || new Date().toISOString()
+      }));
+      await upsertInBatches("candidatos", payloadCands, 250);
+    }
+
+    if (repairedGeral.length > 0) {
+      log(`📡 Atualizando ${repairedGeral.length} CNHs no Supabase com chaves restauradas...`);
+      const payloadGeral = repairedGeral.map(g => ({
+        id: g.id,
+        ordem: g.ordem,
+        memorando_id: g.memorando_id || null,
+        candidato_id: g.candidato_id || null,
+        nome: g.nome,
+        cpf: g.cpf,
+        gaveta: g.gaveta || "",
+        reparticao: g.reparticao || "",
+        situacao: g.situacao,
+        responsavel_id: g.responsavel_id || null,
+        responsavel_nome: g.responsavel_nome || null,
+        data_movimento: g.data_movimento || new Date().toISOString(),
+        usuario_id: g.usuario_id || null,
+        usuario_nome: g.usuario_nome || null,
+        memorando_numero: g.memorando_numero || null,
+        remessa: g.remessa || null,
+        observacao: g.observacao || null,
+        created_at: g.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }));
+      await upsertInBatches("geral_cnhs", payloadGeral, 250);
+    }
+  }
+
+  notifyDataSync("candidatos", true);
+  notifyDataSync("geral", true);
+  notifyDataSync("memorandos", true);
+
+  const totalRepaired = restoredCandMemoCount + restoredCnhCandCount + restoredCnhMemoCount;
+  log(`🎉 Processo concluído com sucesso! Total de ${totalRepaired} vínculos reestabelecidos.`);
+
+  return {
+    success: true,
+    restoredCandMemoCount,
+    restoredCnhMemoCount,
+    restoredCnhCandCount,
+    totalRepaired,
+    details
+  };
+}
+
 

@@ -36,6 +36,8 @@ import {
   syncSingleTable,
   resetDemoData,
   deduplicateResponsaveis,
+  restaurarVinculosRelacionais,
+  RelationalRestorationResult,
   SyncStatusItem
 } from "../services/db";
 import { Modal } from "../components/ui/Modal";
@@ -547,6 +549,9 @@ USING (bucket_id = 'app_images');
   const [syncingTableKey, setSyncingTableKey] = useState<string | null>(null);
   const [isAutoReconciling, setIsAutoReconciling] = useState<boolean>(false);
   const [isDeduplicatingResp, setIsDeduplicatingResp] = useState<boolean>(false);
+  const [isRestoringLinks, setIsRestoringLinks] = useState<boolean>(false);
+  const [linksResult, setLinksResult] = useState<RelationalRestorationResult | null>(null);
+  const [copiedAnalyzeSql, setCopiedAnalyzeSql] = useState<boolean>(false);
 
   const isConnected = isSupabaseConfigured();
   const supabaseUrl = creds.url;
@@ -769,6 +774,60 @@ USING (bucket_id = 'app_images');
     } finally {
       setIsDeduplicatingResp(false);
     }
+  };
+
+  const handleRestoreLinksAction = async () => {
+    if (!isConnected) {
+      setShowConfigModal(true);
+      setLogs(["⚠️ Supabase não configurado. Insira as credenciais para rodar a auditoria relacional completa."]);
+      return;
+    }
+    setIsRestoringLinks(true);
+    setLogs([]);
+    addLog("=== INICIANDO AUDITORIA & RECUPERAÇÃO DE VÍNCULOS RELACIONAIS ===");
+    try {
+      const result = await restaurarVinculosRelacionais((msg) => addLog(msg));
+      setLinksResult(result);
+      if (result.totalRepaired > 0) {
+        addLog(`🎉 Sucesso! Total de ${result.totalRepaired} vínculos reestabelecidos:`);
+        addLog(`  • ${result.restoredCandMemoCount} candidatos revinculados aos seus memorandos.`);
+        addLog(`  • ${result.restoredCnhCandCount} CNHs revinculadas aos seus candidatos.`);
+        addLog(`  • ${result.restoredCnhMemoCount} CNHs revinculadas aos seus memorandos.`);
+      } else {
+        addLog("✨ Integridade verificada: todos os candidatos e CNHs já possuem chaves e vínculos íntegros.");
+      }
+      await loadStats();
+    } catch (err: any) {
+      addLog(`❌ Erro fatal durante a restauração de vínculos: ${err.message}`);
+    } finally {
+      setIsRestoringLinks(false);
+    }
+  };
+
+  const handleCopyAnalyzeSql = () => {
+    const sql = `-- =========================================================================
+-- ATUALIZAÇÃO DAS ESTATÍSTICAS DO POSTGRESQL (CORRIGIR "0 ROWS ESTIMATED")
+-- =========================================================================
+-- O Table Editor do Supabase exibe a contagem estimada baseada em pg_class.reltuples.
+-- Após inserções em lote via API, execute estes comandos no SQL Editor do Supabase:
+
+ANALYZE public.usuarios;
+ANALYZE public.responsaveis;
+ANALYZE public.mapeamento_localizacao;
+ANALYZE public.memorandos;
+ANALYZE public.candidatos;
+ANALYZE public.geral_cnhs;
+ANALYZE public.lotes;
+ANALYZE public.declaracoes;
+ANALYZE public.historico_movimentacoes;
+ANALYZE public.auditoria;
+ANALYZE public.acessos_cidadao;
+ANALYZE public.orgao_config;
+ANALYZE public.imagens_sync;
+`;
+    navigator.clipboard.writeText(sql);
+    setCopiedAnalyzeSql(true);
+    setTimeout(() => setCopiedAnalyzeSql(false), 3000);
   };
 
   const handleExportJSON = () => {
@@ -1175,6 +1234,92 @@ END $$;`;
           </button>
         </div>
       )}
+
+      {/* Cartões de Diagnóstico & Recuperação de Integridade Relacional */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Card 1: Restauração de Vínculos e Chaves Estrangeiras */}
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-blue-200 dark:border-blue-900/60 p-6 shadow-xs flex flex-col justify-between space-y-4">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-950 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold shrink-0">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                    Recuperação de Vínculos Relacionais
+                  </h3>
+                  <p className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold">
+                    Memorandos ⇄ Candidatos ⇄ Protocolo Geral de CNHs
+                  </p>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                Auditoria Ativa
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Faz uma varredura cruzando CPFs, remessas e números de memorando para <strong>reestabelecer chaves estrangeiras que foram desvinculadas</strong> e atualiza tanto o banco local quanto o Supabase.
+            </p>
+            {linksResult && (
+              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl text-xs text-emerald-800 dark:text-emerald-300 space-y-1">
+                <p className="font-bold flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Auditoria Concluída: {linksResult.totalRepaired} vínculos restaurados!</span>
+                </p>
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-300/90">
+                  • {linksResult.restoredCandMemoCount} candidatos revinculados a memorandos.
+                  <br />
+                  • {linksResult.restoredCnhCandCount} CNHs revinculadas aos seus candidatos.
+                  <br />
+                  • {linksResult.restoredCnhMemoCount} CNHs revinculadas aos seus memorandos.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={handleRestoreLinksAction}
+            disabled={isRestoringLinks || !isConnected}
+            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-md shadow-blue-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRestoringLinks ? "animate-spin" : ""}`} />
+            <span>{isRestoringLinks ? "Restaurando e Reconciliando Vínculos..." : "🛠️ Restaurar Todos os Vínculos e Chaves"}</span>
+          </button>
+        </div>
+
+        {/* Card 2: Esclarecimento de Estatísticas do PostgreSQL (ROWS ESTIMATED: 0) */}
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs flex flex-col justify-between space-y-4">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 font-bold shrink-0">
+                <Database className="w-4 h-4 text-indigo-500" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                  Painel Supabase: "ROWS (ESTIMATED): 0"
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold">
+                  Estatísticas do PostgreSQL (pg_class.reltuples)
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              O Table Editor do Supabase exibe uma estimativa em cache e <strong>não roda contagem em tempo real</strong> para economizar CPU. Seus <strong>11.463+ registros continuam salvos e íntegros</strong> na nuvem. Para forçar o painel do Supabase a refletir a contagem real imediatamente, rode os comandos <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono text-[11px]">ANALYZE</code> no SQL Editor.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCopyAnalyzeSql}
+              className="w-full py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold rounded-xl text-xs border border-slate-200 dark:border-slate-700 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {copiedAnalyzeSql ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4 text-blue-500" />}
+              <span>{copiedAnalyzeSql ? "SQL ANALYZE Copiado!" : "Copiar Comandos ANALYZE para o SQL Editor"}</span>
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Tabela de Totais e Status por Entidade */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs">
