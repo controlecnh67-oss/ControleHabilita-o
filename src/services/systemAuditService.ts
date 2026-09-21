@@ -370,7 +370,17 @@ export async function performDeepMemoryCleanup(): Promise<{
 
   // 4. Limpa itens obsoletos temporários do localStorage
   if (typeof window !== "undefined" && window.localStorage) {
-    const keysToClean = ["detran_cnh_geral", "detran_temp_ocr_result", "detran_temp_pdf_buffer"];
+    const keysToClean = [
+      "detran_cnh_geral",
+      "detran_cnh_lotes",
+      "detran_cnh_historico",
+      "detran_cnh_auditoria",
+      "detran_cnh_candidatos",
+      "detran_cnh_declaracoes",
+      "detran_cnh_imagens",
+      "detran_temp_ocr_result",
+      "detran_temp_pdf_buffer"
+    ];
     keysToClean.forEach((k) => {
       if (localStorage.getItem(k)) {
         try {

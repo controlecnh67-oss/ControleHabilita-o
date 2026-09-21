@@ -623,6 +623,28 @@ export async function initStorage(force = false): Promise<void> {
     }
   }
 
+  // Garantir carregamento resiliente de lotes e geral a partir do Dexie se não carregados pelo idbGet
+  if (!memoryStore["lotes"] || (memoryStore["lotes"] as any[]).length === 0) {
+    try {
+      if (dexieDb.lotes) {
+        const dLotes = await dexieDb.lotes.toArray();
+        if (dLotes && dLotes.length > 0) {
+          memoryStore["lotes"] = dLotes;
+        }
+      }
+    } catch {}
+  }
+  if (!memoryStore["geral"] || (memoryStore["geral"] as any[]).length === 0) {
+    try {
+      if (dexieDb.geral) {
+        const dGeral = await dexieDb.geral.toArray();
+        if (dGeral && dGeral.length > 0) {
+          memoryStore["geral"] = dGeral;
+        }
+      }
+    } catch {}
+  }
+
   // Carregar também logs do cidadão se persistidos em IndexedDB
   try {
     const idbAcessos = await idbGet<any[]>("detran_acessos_cidadao_logs");
@@ -631,6 +653,17 @@ export async function initStorage(force = false): Promise<void> {
     }
   } catch (e) {
     console.warn("Aviso ao carregar logs de cidadão do IndexedDB:", e);
+  }
+
+  // Limpeza de segurança: Se o localStorage contiver cópias pesadas de versões antigas,
+  // remove-as do localStorage para desobstruir a thread principal e liberar memória
+  if (typeof window !== "undefined" && window.localStorage) {
+    const heavyKeys = ["geral", "historico", "auditoria", "candidatos", "imagens", "acessos_cidadao", "declaracoes", "lotes"];
+    heavyKeys.forEach(hk => {
+      try {
+        localStorage.removeItem(`detran_cnh_${hk}`);
+      } catch {}
+    });
   }
 
   isIdbInitialized = true;
@@ -646,7 +679,8 @@ const HEAVY_STORE_KEYS = new Set([
   "candidatos",
   "imagens",
   "acessos_cidadao",
-  "declaracoes"
+  "declaracoes",
+  "lotes"
 ]);
 
 // Helper para obter/salvar com cache em memória e IndexedDB + LocalStorage seguro
@@ -675,8 +709,13 @@ export function getStoredList<T extends { id?: string }>(key: string, seed: T[])
 
     if (list.length === 0) {
       list = seed;
-      memoryStore[key] = seed;
-      saveStoredList(key, seed);
+      // NUNCA sobreescrever IndexedDB com array vazio para não deletar dados caso a inicialização ainda esteja em curso
+      if (seed && seed.length > 0) {
+        memoryStore[key] = seed;
+        if (!HEAVY_STORE_KEYS.has(key)) {
+          saveStoredList(key, seed);
+        }
+      }
     }
   }
 
@@ -3851,10 +3890,20 @@ export async function createLote(
   if (isSupabaseConfigured()) {
     try {
       let lotePayload: any = { ...novo };
-      let { error } = await supabase.from("lotes").insert([lotePayload]);
+      // Se pdf_url for base64 muito grande (>150KB), não envia o base64 para o Supabase para evitar erro 413, mantendo metadados
+      const isHugeBase64 = lotePayload.pdf_url && typeof lotePayload.pdf_url === "string" && lotePayload.pdf_url.startsWith("data:") && lotePayload.pdf_url.length > 150000;
+      if (isHugeBase64) {
+        lotePayload.pdf_url = null;
+      }
+      let { error } = await supabase.from("lotes").upsert([lotePayload], { onConflict: "id" });
       if (error && (error.message?.includes("pdf_tamanho") || error.message?.includes("column"))) {
         delete lotePayload.pdf_tamanho;
-        const retry = await supabase.from("lotes").insert([lotePayload]);
+        const retry = await supabase.from("lotes").upsert([lotePayload], { onConflict: "id" });
+        error = retry.error;
+      }
+      if (error && (error.message?.includes("payload") || error.message?.includes("too large") || error.code === "413")) {
+        lotePayload.pdf_url = null;
+        const retry = await supabase.from("lotes").upsert([lotePayload], { onConflict: "id" });
         error = retry.error;
       }
       if (error) {
@@ -3926,10 +3975,20 @@ export async function updateLote(
   if (isSupabaseConfigured()) {
     try {
       let updatePayload: any = { ...atualizado };
-      let { error } = await supabase.from("lotes").update(updatePayload).eq("id", id);
+      // Se pdf_url for base64 muito grande (>150KB), não envia o base64 para o Supabase para evitar erro 413, mantendo metadados
+      const isHugeBase64 = updatePayload.pdf_url && typeof updatePayload.pdf_url === "string" && updatePayload.pdf_url.startsWith("data:") && updatePayload.pdf_url.length > 150000;
+      if (isHugeBase64) {
+        updatePayload.pdf_url = null;
+      }
+      let { error } = await supabase.from("lotes").upsert([updatePayload], { onConflict: "id" });
       if (error && (error.message?.includes("pdf_tamanho") || error.message?.includes("column"))) {
         delete updatePayload.pdf_tamanho;
-        const retry = await supabase.from("lotes").update(updatePayload).eq("id", id);
+        const retry = await supabase.from("lotes").upsert([updatePayload], { onConflict: "id" });
+        error = retry.error;
+      }
+      if (error && (error.message?.includes("payload") || error.message?.includes("too large") || error.code === "413")) {
+        updatePayload.pdf_url = null;
+        const retry = await supabase.from("lotes").upsert([updatePayload], { onConflict: "id" });
         error = retry.error;
       }
       if (error) {
@@ -4133,13 +4192,14 @@ export async function cadastrarLotesBulk(
       const allUpsert = [...insertedLotes, ...updatedLotes].map((l) => {
         const copy: any = { ...l };
         if (copy.pdf_tamanho === undefined) delete copy.pdf_tamanho;
+        // Se houver base64 excessivo, evita estourar payload
+        if (copy.pdf_url && typeof copy.pdf_url === "string" && copy.pdf_url.startsWith("data:") && copy.pdf_url.length > 150000) {
+          copy.pdf_url = null;
+        }
         return copy;
       });
       if (allUpsert.length > 0) {
-        const { error } = await supabase.from("lotes").upsert(allUpsert);
-        if (error) {
-          console.warn("Aviso ao upsert lotes no Supabase:", error.message);
-        }
+        await upsertInBatches("lotes", allUpsert, 50, "id");
       }
     } catch (e) {
       console.warn("Erro ao upsert lotes no Supabase:", e);
@@ -6717,24 +6777,50 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
       const localImgs = getStoredList<any>("imagens", []);
       localCount = Math.max(localImgs.length, cfg?.logo ? 1 : 0);
     } else if (item.key === "lotes") {
+      let dexieCount = 0;
       try {
-        if (dexieDb.lotes) {
-          localCount = await dexieDb.lotes.count();
-        } else {
-          localCount = getStoredList("lotes", []).length;
-        }
-      } catch {
-        localCount = getStoredList("lotes", []).length;
-      }
+        if (dexieDb.lotes) dexieCount = await dexieDb.lotes.count();
+      } catch {}
+      const memLen = memoryStore["lotes"] && Array.isArray(memoryStore["lotes"]) ? memoryStore["lotes"].length : 0;
+      const idb = await idbGet<any[]>("detran_cnh_lotes");
+      const idbLen = idb && Array.isArray(idb) ? idb.length : 0;
+      const stored = getStoredList<any>("lotes", []);
+      localCount = Math.max(dexieCount, memLen, idbLen, stored.length);
+    } else if (item.key === "candidatos") {
+      const memLen = memoryStore["candidatos"] && Array.isArray(memoryStore["candidatos"]) ? memoryStore["candidatos"].length : 0;
+      const idb = await idbGet<any[]>("detran_cnh_candidatos");
+      const idbLen = idb && Array.isArray(idb) ? idb.length : 0;
+      const stored = getStoredList<any>("candidatos", []);
+      localCount = Math.max(memLen, idbLen, stored.length);
+    } else if (item.key === "memorandos") {
+      const memLen = memoryStore["memorandos"] && Array.isArray(memoryStore["memorandos"]) ? memoryStore["memorandos"].length : 0;
+      const idb = await idbGet<any[]>("detran_cnh_memorandos");
+      const idbLen = idb && Array.isArray(idb) ? idb.length : 0;
+      const stored = getStoredList<any>("memorandos", []);
+      localCount = Math.max(memLen, idbLen, stored.length);
+    } else if (item.key === "responsaveis") {
+      const memLen = memoryStore["responsaveis"] && Array.isArray(memoryStore["responsaveis"]) ? memoryStore["responsaveis"].length : 0;
+      const idb = await idbGet<any[]>("detran_cnh_responsaveis");
+      const idbLen = idb && Array.isArray(idb) ? idb.length : 0;
+      const stored = getStoredList<any>("responsaveis", []);
+      localCount = Math.max(memLen, idbLen, stored.length);
     } else if (item.key === "declaracoes") {
       const deletedDeclIds = getDeletedIds("declaracoes");
-      localCount = getStoredList<Declaracao>("declaracoes", []).filter(d => !deletedDeclIds.has(d.id)).length;
+      const memLen = memoryStore["declaracoes"] && Array.isArray(memoryStore["declaracoes"]) ? memoryStore["declaracoes"].length : 0;
+      const idb = await idbGet<any[]>("detran_cnh_declaracoes");
+      const idbLen = idb && Array.isArray(idb) ? idb.length : 0;
+      const stored = getStoredList<Declaracao>("declaracoes", []).filter(d => !deletedDeclIds.has(d.id)).length;
+      localCount = Math.max(memLen, idbLen, stored);
     } else if (item.key === "geral") {
+      let dexieCount = 0;
       try {
-        localCount = await dexieDb.geral.count();
-      } catch {
-        localCount = getStoredList(item.key, []).length;
-      }
+        if (dexieDb.geral) dexieCount = await dexieDb.geral.count();
+      } catch {}
+      const memLen = memoryStore["geral"] && Array.isArray(memoryStore["geral"]) ? memoryStore["geral"].length : 0;
+      const idb = await idbGet<any[]>("detran_cnh_geral");
+      const idbLen = idb && Array.isArray(idb) ? idb.length : 0;
+      const stored = getStoredList(item.key, []).length;
+      localCount = Math.max(dexieCount, memLen, idbLen, stored);
     } else if (item.key === "historico") {
       const memList = memoryStore["historico"] && Array.isArray(memoryStore["historico"]) ? memoryStore["historico"].length : 0;
       const idbHist = await idbGet<any[]>("detran_cnh_historico");
@@ -6788,7 +6874,14 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
 
         if (!error && count !== null) {
           supCount = count;
-          status = localCount === supCount ? 'synced' : 'pending';
+          const isLogTable = item.key === "historico" || item.key === "auditoria" || item.key === "acessos_cidadao";
+          if (localCount === supCount) {
+            status = 'synced';
+          } else if (isLogTable && localCount >= 250 && supCount >= 250) {
+            status = 'synced';
+          } else {
+            status = 'pending';
+          }
         } else if (error) {
           status = 'error';
           if (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('schema')) {
@@ -6884,11 +6977,11 @@ export async function fetchAllRowsFromSupabase<T = any>(
         query = query.order(effectiveOrderCol, { ascending: effectiveAscending });
       }
 
-      // Timeout seguro de 6 segundos por requisição
+      // Timeout seguro de 30 segundos por requisição com tolerância a conexões lentas
       const { data, error } = await Promise.race([
         query.range(from, to),
         new Promise<{ data: any; error: any }>((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout ao consultar '${tableName}' no Supabase`)), 6000)
+          setTimeout(() => reject(new Error(`Timeout ao consultar '${tableName}' no Supabase`)), 30000)
         )
       ]);
 
@@ -6976,11 +7069,14 @@ async function upsertInBatches(
         }
       }
 
-      // Recuperação 2: Se for lotes e houver erro de coluna ou pdf_tamanho
+      // Recuperação 2: Se for lotes e houver erro de coluna ou pdf_tamanho ou payload excessivo
       if (tableName === "lotes" && !recovered) {
         const cleanLotes = batch.map((item: any) => {
           const copy = { ...item };
           delete copy.pdf_tamanho;
+          if (copy.pdf_url && typeof copy.pdf_url === "string" && copy.pdf_url.startsWith("data:") && copy.pdf_url.length > 150000) {
+            copy.pdf_url = null;
+          }
           return copy;
         });
         const { error: loteErr } = await supabase.from(tableName).upsert(cleanLotes, { onConflict });
@@ -7035,12 +7131,11 @@ async function upsertInBatches(
           } catch {}
         }
 
+        // Se persistir erro em geral_cnhs, anula apenas responsáveis/usuários faltantes, PRESERVANDO memorando_id e candidato_id
         const safeBatch = batch.map((item: any) => ({
           ...item,
           responsavel_id: null,
-          usuario_id: null,
-          memorando_id: null,
-          candidato_id: null
+          usuario_id: null
         }));
         const { error: safeErr } = await supabase.from(tableName).upsert(safeBatch, { onConflict });
         if (!safeErr) {
@@ -7072,7 +7167,12 @@ async function upsertInBatches(
             if (singleErr) {
               // Tenta limpar campos extras
               const itemCopy = { ...singleItem };
-              if (tableName === "lotes") delete itemCopy.pdf_tamanho;
+              if (tableName === "lotes") {
+                delete itemCopy.pdf_tamanho;
+                if (itemCopy.pdf_url && typeof itemCopy.pdf_url === "string" && itemCopy.pdf_url.startsWith("data:") && itemCopy.pdf_url.length > 150000) {
+                  itemCopy.pdf_url = null;
+                }
+              }
               if (tableName === "declaracoes") {
                 if (itemCopy.procurador_telefone) itemCopy.procurador_fone = itemCopy.procurador_telefone;
                 delete itemCopy.procurador_telefone;
@@ -7914,22 +8014,22 @@ export async function syncSingleTable(
   } else if (tableKey === "candidatos") {
     const deletedCandIds = getDeletedIds("candidatos");
     const deletedMemoIds = getDeletedIds("memorandos");
-    const cands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS).filter(
+    let localCands = getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+    if (localCands.length === 0) {
+      const idbCands = await idbGet<Candidato[]>("detran_cnh_candidatos");
+      if (idbCands && idbCands.length > 0) {
+        localCands = idbCands;
+        memoryStore["candidatos"] = idbCands;
+      }
+    }
+    const cands = localCands.filter(
       c => !deletedCandIds.has(c.id) && !deletedMemoIds.has(c.memorando_id)
     );
-    const mems = getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
-    const validMemoIds = new Set(mems.map(m => m.id));
-    if (isSupabaseConfigured()) {
-      try {
-        const { data: remoteMemos } = await supabase.from("memorandos").select("id").limit(5000);
-        remoteMemos?.forEach((m: any) => validMemoIds.add(m.id));
-      } catch {}
-    }
     if (cands.length > 0) {
       log(`📦 Enviando ${cands.length} candidatos para o Supabase...`);
       const payload = cands.map(c => ({
         id: c.id || `cand-${c.memorando_id}-${c.numero || "01"}`,
-        memorando_id: cleanFK(c.memorando_id, validMemoIds),
+        memorando_id: c.memorando_id ? c.memorando_id.trim() : null,
         numero: c.numero || null,
         nome: c.nome,
         cpf: c.cpf,
@@ -7943,40 +8043,22 @@ export async function syncSingleTable(
   } else if (tableKey === "geral") {
     const rawGeral = await getLocalGeralCNHs();
     const { cleanList: geral } = deduplicateCNHRecords(rawGeral);
-    const validMemoIds = new Set((getStoredList<Memorando>("memorandos", SEED_MEMORANDOS)).map(m => m.id));
-    const validCandIds = new Set((getStoredList<Candidato>("candidatos", SEED_CANDIDATOS)).map(c => c.id));
-    const validUserIds = new Set((getStoredList<Usuario>("usuarios", SEED_USUARIOS)).map(u => u.id));
-    const validRespIds = new Set((getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS)).map(r => r.id));
-    if (isSupabaseConfigured()) {
-      try {
-        const [uRes, rRes, mRes, cRes] = await Promise.all([
-          supabase.from("usuarios").select("id").limit(2000),
-          supabase.from("responsaveis").select("id").limit(5000),
-          supabase.from("memorandos").select("id").limit(5000),
-          supabase.from("candidatos").select("id").limit(10000)
-        ]);
-        uRes.data?.forEach((u: any) => validUserIds.add(u.id));
-        rRes.data?.forEach((r: any) => validRespIds.add(r.id));
-        mRes.data?.forEach((m: any) => validMemoIds.add(m.id));
-        cRes.data?.forEach((c: any) => validCandIds.add(c.id));
-      } catch {}
-    }
     if (geral.length > 0) {
       log(`📦 Enviando ${geral.length} registros de CNHs para o Supabase...`);
       const payload = geral.map(g => ({
         id: g.id || `cnh-${g.ordem}`,
         ordem: g.ordem,
-        memorando_id: cleanFK(g.memorando_id, validMemoIds),
-        candidato_id: cleanFK(g.candidato_id, validCandIds),
+        memorando_id: g.memorando_id ? g.memorando_id.trim() : null,
+        candidato_id: g.candidato_id ? g.candidato_id.trim() : null,
         nome: g.nome,
         cpf: g.cpf,
         gaveta: g.gaveta || "",
         reparticao: g.reparticao || "",
         situacao: g.situacao,
-        responsavel_id: cleanFK(g.responsavel_id, validRespIds),
+        responsavel_id: g.responsavel_id ? g.responsavel_id.trim() : null,
         responsavel_nome: g.responsavel_nome || null,
         data_movimento: g.data_movimento || new Date().toISOString(),
-        usuario_id: cleanFK(g.usuario_id, validUserIds),
+        usuario_id: g.usuario_id ? g.usuario_id.trim() : null,
         usuario_nome: g.usuario_nome || null,
         memorando_numero: g.memorando_numero || null,
         remessa: g.remessa || null,
@@ -7993,21 +8075,24 @@ export async function syncSingleTable(
     const activeLotes = lotesList.filter(l => !deletedLoteIds.has(l.id));
     if (activeLotes.length > 0) {
       log(`📦 Enviando ${activeLotes.length} lotes para o Supabase...`);
-      const payload = activeLotes.map(l => ({
-        id: l.id,
-        numero: Number(l.numero) || 0,
-        data_recebimento: l.data_recebimento ? l.data_recebimento.split("T")[0] : new Date().toISOString().split("T")[0],
-        documentos_impressos: Number(l.documentos_impressos) || 0,
-        pdf_nome: l.pdf_nome || null,
-        pdf_url: l.pdf_url || null,
-        pdf_tamanho: l.pdf_tamanho !== undefined ? l.pdf_tamanho : null,
-        observacao: l.observacao || null,
-        usuario_id: l.usuario_id || null,
-        usuario_nome: l.usuario_nome || null,
-        created_at: l.created_at || new Date().toISOString(),
-        updated_at: l.updated_at || new Date().toISOString()
-      }));
-      await upsertInBatches("lotes", payload, 50);
+      const payload = activeLotes.map(l => {
+        const isHugeBase64 = l.pdf_url && typeof l.pdf_url === "string" && l.pdf_url.startsWith("data:") && l.pdf_url.length > 150000;
+        return {
+          id: l.id,
+          numero: Number(l.numero) || 0,
+          data_recebimento: l.data_recebimento ? l.data_recebimento.split("T")[0] : new Date().toISOString().split("T")[0],
+          documentos_impressos: Number(l.documentos_impressos) || 0,
+          pdf_nome: l.pdf_nome || null,
+          pdf_url: isHugeBase64 ? null : (l.pdf_url || null),
+          pdf_tamanho: l.pdf_tamanho !== undefined ? l.pdf_tamanho : null,
+          observacao: l.observacao || null,
+          usuario_id: l.usuario_id || null,
+          usuario_nome: l.usuario_nome || null,
+          created_at: l.created_at || new Date().toISOString(),
+          updated_at: l.updated_at || new Date().toISOString()
+        };
+      });
+      await upsertInBatches("lotes", payload, 25);
       log(`✅ Lotes enviados com sucesso.`);
     }
   } else if (tableKey === "declaracoes") {
@@ -8145,7 +8230,20 @@ export async function syncSingleTable(
 
   if (tableKey === "lotes") {
     const deletedLoteSet = getDeletedIds("lotes");
-    const filtered = (remoteData || []).filter((l: any) => !deletedLoteSet.has(l.id));
+    const localExisting = await getLotes();
+    const localPdfMap = new Map(
+      localExisting
+        .filter(l => !!l.pdf_url)
+        .map(l => [l.id, { url: l.pdf_url, nome: l.pdf_nome, tam: l.pdf_tamanho }])
+    );
+    const mergedRemote = (remoteData || []).map((rem: any) => {
+      if (!rem.pdf_url && localPdfMap.has(rem.id)) {
+        const lp = localPdfMap.get(rem.id)!;
+        return { ...rem, pdf_url: lp.url, pdf_nome: rem.pdf_nome || lp.nome, pdf_tamanho: rem.pdf_tamanho || lp.tam };
+      }
+      return rem;
+    });
+    const filtered = mergedRemote.filter((l: any) => !deletedLoteSet.has(l.id));
     saveStoredList("lotes", filtered);
     if (dexieDb.lotes) {
       await dexieDb.lotes.clear();
@@ -8156,11 +8254,13 @@ export async function syncSingleTable(
     const deletedMemoSet = getDeletedIds("memorandos");
     const filtered = (remoteData || []).filter((m: any) => !deletedMemoSet.has(m.id));
     saveStoredList("memorandos", filtered);
+    await idbSet("detran_cnh_memorandos", filtered);
     notifyDataSync("memorandos", true);
   } else if (tableKey === "candidatos") {
     const deletedCandSet = getDeletedIds("candidatos");
     const filtered = (remoteData || []).filter((c: any) => !deletedCandSet.has(c.id));
     saveStoredList("candidatos", filtered);
+    await idbSet("detran_cnh_candidatos", filtered);
     notifyDataSync("candidatos", true);
   } else if (tableKey === "declaracoes") {
     const deletedDeclSet = getDeletedIds("declaracoes");

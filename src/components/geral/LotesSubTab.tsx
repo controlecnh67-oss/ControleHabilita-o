@@ -59,6 +59,7 @@ export const LotesSubTab: React.FC = () => {
 
   // Notificação toast
   const [toastMessage, setToastMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
+  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const showToast = (text: string, type: "success" | "error" = "success") => {
     setToastMessage({ text, type });
@@ -67,16 +68,16 @@ export const LotesSubTab: React.FC = () => {
     }, 4000);
   };
 
-  const loadData = async () => {
+  const loadData = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent && lotes.length === 0) setLoading(true);
       const data = await getLotes();
       setLotes(data);
     } catch (err) {
       console.error("Erro ao carregar lotes:", err);
-      showToast("Erro ao carregar lista de lotes", "error");
+      if (!silent) showToast("Erro ao carregar lista de lotes", "error");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -85,12 +86,16 @@ export const LotesSubTab: React.FC = () => {
 
     const handleSync = (e: any) => {
       if (!e.detail?.type || e.detail.type === "all" || e.detail.type === "lotes") {
-        loadData();
+        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+        syncTimeoutRef.current = setTimeout(() => {
+          loadData(true);
+        }, 400);
       }
     };
 
     window.addEventListener("detran_sync_updated", handleSync);
     return () => {
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
       window.removeEventListener("detran_sync_updated", handleSync);
     };
   }, []);
@@ -245,7 +250,7 @@ export const LotesSubTab: React.FC = () => {
         const userId = user?.id || "operador";
         const userNome = user?.nome_curto || user?.nome || "Operador";
 
-        await updateLote(
+        const updated = await updateLote(
           targetLoteForUpload.id,
           {
             pdf_nome: file.name,
@@ -257,7 +262,8 @@ export const LotesSubTab: React.FC = () => {
         );
 
         showToast(`PDF anexado com sucesso ao Lote #${targetLoteForUpload.numero}!`);
-        await loadData();
+        // Atualiza diretamente no estado local para resposta instantânea e ZERO piscadeira
+        setLotes((prev) => prev.map((l) => (l.id === targetLoteForUpload.id ? updated : l)));
       } catch (err: any) {
         showToast(err?.message || "Erro ao anexar arquivo PDF", "error");
       } finally {
@@ -387,7 +393,7 @@ export const LotesSubTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6 animate-fadeIn">
+    <div className="space-y-6">
       {/* Input oculto para upload rápido na linha da tabela */}
       <input
         type="file"

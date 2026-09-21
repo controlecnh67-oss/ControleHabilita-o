@@ -179,37 +179,41 @@ export const MapaArquivoFisicoCard: React.FC<Props> = ({ data, onSelectRepartica
     }
   };
 
+  // Capacidade física estimada de cada repartição (compartimento/pasta suspensa)
+  const CAPACIDADE_REPARTICAO = 300;
+
   // Helper para cor de intensidade da repartição com base na quantidade
+  // Faixas: Vazio (0) - branca, Baixa (1-100) - verde, Média (101-200) - laranja, Alta (>200) - vermelha
   const getReparticaoColor = (total: number) => {
     if (total === 0) {
       return {
-        bg: "bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500",
-        badge: "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700",
-        bar: "bg-slate-300 dark:bg-slate-700",
+        bg: "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500 hover:border-slate-300 dark:hover:border-slate-700 shadow-2xs",
+        badge: "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700",
+        bar: "bg-slate-200 dark:bg-slate-700",
         tag: "Vazio"
       };
     }
-    if (total <= 15) {
+    if (total <= 100) {
       return {
-        bg: "bg-blue-50/70 dark:bg-blue-950/20 border-blue-200 dark:border-blue-900/60 text-blue-950 dark:text-blue-200 hover:border-blue-300 dark:hover:border-blue-700",
-        badge: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800",
-        bar: "bg-blue-500",
-        tag: "Baixo"
+        bg: "bg-emerald-50/80 dark:bg-emerald-950/25 border-emerald-200 dark:border-emerald-800/70 text-emerald-950 dark:text-emerald-100 hover:border-emerald-300 dark:hover:border-emerald-700 shadow-2xs",
+        badge: "bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800",
+        bar: "bg-emerald-500 dark:bg-emerald-400",
+        tag: "Baixa"
       };
     }
-    if (total <= 35) {
+    if (total <= 200) {
       return {
-        bg: "bg-indigo-50/80 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800 text-indigo-950 dark:text-indigo-200 hover:border-indigo-300 dark:hover:border-indigo-700",
-        badge: "bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-700",
-        bar: "bg-indigo-500",
-        tag: "Médio"
+        bg: "bg-amber-50/85 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800/70 text-amber-950 dark:text-amber-100 hover:border-amber-400 dark:hover:border-amber-600 shadow-2xs",
+        badge: "bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700",
+        bar: "bg-amber-500 dark:bg-amber-400",
+        tag: "Média"
       };
     }
     return {
-      bg: "bg-purple-50 dark:bg-purple-950/40 border-purple-300 dark:border-purple-800 text-purple-950 dark:text-purple-200 hover:border-purple-400 dark:hover:border-purple-600 shadow-sm",
-      badge: "bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-200 border-purple-300 dark:border-purple-700",
-      bar: "bg-purple-600",
-      tag: "Alto"
+      bg: "bg-rose-50/90 dark:bg-rose-950/35 border-rose-300 dark:border-rose-800 text-rose-950 dark:text-rose-100 hover:border-rose-400 dark:hover:border-rose-600 shadow-xs",
+      badge: "bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-200 border-rose-300 dark:border-rose-700",
+      bar: "bg-rose-600 dark:bg-rose-500",
+      tag: "Alta"
     };
   };
 
@@ -672,24 +676,24 @@ export const MapaArquivoFisicoCard: React.FC<Props> = ({ data, onSelectRepartica
           ))}
         </div>
 
-        {/* Legenda de Densidade */}
-        <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-          <span className="font-semibold text-slate-400">Legenda:</span>
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-sm bg-slate-200 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 inline-block" />
+        {/* Legenda de Densidade e Ocupação (Baseada na capacidade de 300 CNHs por repartição) */}
+        <div className="flex items-center gap-2.5 text-[11px] text-slate-500 dark:text-slate-400 flex-wrap">
+          <span className="font-semibold text-slate-500 dark:text-slate-300">Legenda (Cap. 300 CNHs):</span>
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="w-3 h-3 rounded-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 inline-block shadow-2xs" />
             Vazio (0)
           </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-sm bg-blue-300 dark:bg-blue-700 inline-block" />
-            Baixo (1-15)
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="w-3 h-3 rounded-xs bg-emerald-500 inline-block shadow-2xs" />
+            Baixa (1-100)
           </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-sm bg-indigo-500 dark:bg-indigo-600 inline-block" />
-            Médio (16-35)
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="w-3 h-3 rounded-xs bg-amber-500 inline-block shadow-2xs" />
+            Média (101-200)
           </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-sm bg-purple-600 dark:bg-purple-700 inline-block" />
-            Alto (&gt;35)
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="w-3 h-3 rounded-xs bg-rose-600 inline-block shadow-2xs" />
+            Alta (&gt;200)
           </span>
         </div>
       </div>
@@ -797,7 +801,7 @@ export const MapaArquivoFisicoCard: React.FC<Props> = ({ data, onSelectRepartica
                       )}
                     </div>
 
-                    {/* Quantidade em Destaque Grande */}
+                    {/* Quantidade em Destaque Grande e Percentual de Ocupação da Repartição (Base 300 CNHs) */}
                     <div className="my-1 flex items-baseline justify-between">
                       <div>
                         <span className="text-xl font-black tracking-tight font-mono">
@@ -805,16 +809,22 @@ export const MapaArquivoFisicoCard: React.FC<Props> = ({ data, onSelectRepartica
                         </span>
                         <span className="text-[10px] opacity-70 ml-1 font-semibold">CNHs</span>
                       </div>
-                      <span className="text-[10px] font-mono text-slate-400">
-                        {rep.percentualGaveta}%
+                      <span 
+                        className="text-[10px] font-mono font-semibold text-slate-400"
+                        title={`Ocupação da repartição: ${rep.total} de ${CAPACIDADE_REPARTICAO} CNHs (${Math.round((rep.total / CAPACIDADE_REPARTICAO) * 100)}% da capacidade)`}
+                      >
+                        {Math.round((rep.total / CAPACIDADE_REPARTICAO) * 100)}%
                       </span>
                     </div>
 
-                    {/* Mini barra de preenchimento */}
-                    <div className="w-full bg-slate-200/70 dark:bg-slate-700/60 h-1.5 rounded-full overflow-hidden mt-1">
+                    {/* Mini barra de preenchimento proporcional à capacidade de 300 CNHs */}
+                    <div 
+                      className="w-full bg-slate-200/70 dark:bg-slate-700/60 h-1.5 rounded-full overflow-hidden mt-1"
+                      title={`Ocupação física: ${rep.total} de ${CAPACIDADE_REPARTICAO} CNHs (${Math.round((rep.total / CAPACIDADE_REPARTICAO) * 100)}%)`}
+                    >
                       <div
                         className={`h-full ${colors.bar} transition-all duration-300`}
-                        style={{ width: `${Math.min(100, (rep.total / (gaveta.total || 1)) * 100)}%` }}
+                        style={{ width: `${Math.min(100, (rep.total / CAPACIDADE_REPARTICAO) * 100)}%` }}
                       />
                     </div>
                   </div>
@@ -854,7 +864,7 @@ export const MapaArquivoFisicoCard: React.FC<Props> = ({ data, onSelectRepartica
                   <h4 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2 flex-wrap">
                     <span>Gaveta {modalReparticao.gavetaNum} • Repartição {modalReparticao.repNum}</span>
                     <span className="px-2.5 py-0.5 text-xs font-bold rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                      {cnhsReparticao.length} CNHs em estoque
+                      {cnhsReparticao.length} / {CAPACIDADE_REPARTICAO} CNHs ({Math.round((cnhsReparticao.length / CAPACIDADE_REPARTICAO) * 100)}% ocupado)
                     </span>
                   </h4>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
