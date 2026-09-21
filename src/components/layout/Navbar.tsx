@@ -35,7 +35,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }) => {
-  const { user, logout, timeRemaining, loginAsProfile, updateCurrentUser } = useAuth();
+  const { user, logout, loginAsProfile, updateCurrentUser } = useAuth();
   const autoSyncState = useAutoSync();
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [showDbInfo, setShowDbInfo] = useState(false);

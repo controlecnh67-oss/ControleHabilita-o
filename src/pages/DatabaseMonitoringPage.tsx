@@ -32,8 +32,10 @@ import {
 import { syncGeralWithSupabase, getSyncStats, SyncStats } from "../services/dexieDb";
 import { invalidateSupabaseCache } from "../services/db";
 import { isSupabaseConfigured } from "../services/supabase";
+import { SystemAuditSection } from "../components/monitoring/SystemAuditSection";
 
 export const DatabaseMonitoringPage: React.FC = () => {
+  const [monitorTab, setMonitorTab] = useState<"audit" | "egress">("audit");
   const [summary, setSummary] = useState<EgressSummary>(getEgressSummary);
   const [syncStats, setSyncStats] = useState<SyncStats | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -175,7 +177,44 @@ export const DatabaseMonitoringPage: React.FC = () => {
         </div>
       )}
 
-      {/* Cartões Principais de Telemetria */}
+      {/* Abas Superiores de Navegação do Monitoramento */}
+      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+        <button
+          onClick={() => setMonitorTab("audit")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+            monitorTab === "audit"
+              ? "bg-blue-600 text-white shadow-xs"
+              : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+          }`}
+        >
+          <Cpu className="w-4 h-4" />
+          Diagnóstico de RAM & Auditoria do Sistema
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+            monitorTab === "audit" ? "bg-blue-500 text-white" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+          }`}>
+            Ao Vivo
+          </span>
+        </button>
+
+        <button
+          onClick={() => setMonitorTab("egress")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+            monitorTab === "egress"
+              ? "bg-blue-600 text-white shadow-xs"
+              : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+          }`}
+        >
+          <Activity className="w-4 h-4" />
+          Tráfego de Rede & Egress (5 GB)
+        </button>
+      </div>
+
+      {/* Conteúdo da Aba Selecionada */}
+      {monitorTab === "audit" ? (
+        <SystemAuditSection />
+      ) : (
+        <>
+          {/* Cartões Principais de Telemetria */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* 1. Tráfego Real Egress */}
         <div className="bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between">
@@ -535,6 +574,8 @@ export const DatabaseMonitoringPage: React.FC = () => {
           </table>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { AuthProvider, useAuth } from "./context/AuthContext";
+import { AuthProvider, useAuth, SessionCountdownBadge } from "./context/AuthContext";
 import { Navbar } from "./components/layout/Navbar";
 import { Sidebar } from "./components/layout/Sidebar";
 import { LoginPage } from "./pages/LoginPage";
@@ -28,7 +28,7 @@ import { notifyDataSync, invalidateSupabaseCache } from "./services/db";
 import { initAutoSyncService } from "./services/autoSyncService";
 
 const MainLayout: React.FC = () => {
-  const { user, isAuthenticated, isLoading, timeRemaining, logout } = useAuth();
+  const { user, isAuthenticated, isLoading, logout } = useAuth();
   
   const [isPublicConsulta, setIsPublicConsulta] = useState(() => {
     if (typeof window !== "undefined") {
@@ -188,12 +188,6 @@ const MainLayout: React.FC = () => {
     return typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
   });
 
-  const formatCountdown = (secs: number = 0) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${m}:${s < 10 ? "0" : ""}${s}`;
-  };
-
   if (isPublicConsulta) {
     return <ConsultaPublicaPage onBackToLogin={closePublicConsulta} />;
   }
@@ -256,7 +250,7 @@ const MainLayout: React.FC = () => {
             <span className="flex items-center gap-1.5 font-medium">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> Sistema Online
             </span>
-            <span>Sessão expira em: <strong className="font-mono text-slate-300">{formatCountdown(timeRemaining)}</strong></span>
+            <span>Sessão expira em: <SessionCountdownBadge /></span>
           </div>
           <div className="flex gap-4 font-mono">
             <span>v2.4.0-stable</span>

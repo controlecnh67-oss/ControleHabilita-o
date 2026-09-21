@@ -764,6 +764,18 @@ function addDeletedIdsBulk(key: string, ids: string[]): void {
   } catch {}
 }
 
+/**
+ * Limpa buffers e caches temporários da memória RAM sem apagar dados do IndexedDB.
+ * Libera heap de memória e memória RAM do navegador imediatamente.
+ */
+export function clearAllMemoryCaches(): void {
+  for (const k of Object.keys(memoryStore)) {
+    if (Array.isArray(memoryStore[k]) && memoryStore[k].length > 100) {
+      memoryStore[k] = memoryStore[k].slice(0, 100);
+    }
+  }
+}
+
 export function resetDemoData(): void {
   for (const k of Object.keys(memoryStore)) {
     delete memoryStore[k];

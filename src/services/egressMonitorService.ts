@@ -74,6 +74,16 @@ function loadPersistedSummary(): EgressSummary {
   };
 }
 
+let saveSummaryTimer: any = null;
+
+function scheduleSaveSummary() {
+  if (saveSummaryTimer) return;
+  saveSummaryTimer = setTimeout(() => {
+    saveSummaryTimer = null;
+    saveSummary();
+  }, 1000);
+}
+
 function saveSummary() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(inMemorySummary));
@@ -187,7 +197,7 @@ export function trackEgress(
 
   inMemorySummary.recentLogs = [logEntry, ...inMemorySummary.recentLogs.slice(0, MAX_LOGS - 1)];
 
-  saveSummary();
+  scheduleSaveSummary();
   notifyListeners();
 }
 

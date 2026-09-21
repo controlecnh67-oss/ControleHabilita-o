@@ -20,11 +20,26 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const TIMEOUT_INACTIVITY_MS = 30 * 60 * 1000; // 30 minutos
 
+// Store leve para o cronômetro de inatividade sem provocar re-render da árvore inteira
+const sessionCountdownListeners = new Set<(secs: number) => void>();
+let currentCountdownSecs = 30 * 60;
+
+export function subscribeSessionCountdown(callback: (secs: number) => void): () => void {
+  sessionCountdownListeners.add(callback);
+  callback(currentCountdownSecs);
+  return () => {
+    sessionCountdownListeners.delete(callback);
+  };
+}
+
+export function getSessionRemainingSeconds(): number {
+  return currentCountdownSecs;
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<Usuario | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const lastActivityRef = useRef<number>(Date.now());
-  const [timeRemaining, setTimeRemaining] = useState<number>(30 * 60);
 
   // Carregar sessão salva ao inicializar e ouvir mudanças no Supabase Auth
   useEffect(() => {
@@ -145,7 +160,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const timer = setInterval(() => {
       const elapsed = Date.now() - lastActivityRef.current;
       const remainingSecs = Math.max(0, Math.floor((TIMEOUT_INACTIVITY_MS - elapsed) / 1000));
-      setTimeRemaining((prev) => (prev !== remainingSecs ? remainingSecs : prev));
+      if (currentCountdownSecs !== remainingSecs) {
+        currentCountdownSecs = remainingSecs;
+        sessionCountdownListeners.forEach((listener) => {
+          try {
+            listener(remainingSecs);
+          } catch {}
+        });
+      }
 
       if (elapsed >= TIMEOUT_INACTIVITY_MS) {
         console.warn("Sessão DETRAN expirada por inatividade (30 min).");
@@ -258,9 +280,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     hasAccess,
     canEdit,
     canManageUsers,
-    timeRemaining,
+    timeRemaining: currentCountdownSecs,
     updateCurrentUser
-  }), [user, isLoading, login, logout, hasAccess, canEdit, canManageUsers, timeRemaining, updateCurrentUser]);
+  }), [user, isLoading, login, logout, hasAccess, canEdit, canManageUsers, updateCurrentUser]);
 
   return (
     <AuthContext.Provider value={contextValue}>
@@ -276,3 +298,36 @@ export const useAuth = () => {
   }
   return context;
 };
+
+/**
+ * Hook leve para exibir a contagem regressiva da sessão sem forçar
+ * re-render em toda a aplicação ou no AuthContext.
+ */
+export function useSessionCountdown(): number {
+  const [seconds, setSeconds] = useState<number>(getSessionRemainingSeconds);
+
+  useEffect(() => {
+    return subscribeSessionCountdown(setSeconds);
+  }, []);
+
+  return seconds;
+}
+
+/**
+ * Formata segundos no formato MM:SS
+ */
+function formatSessionCountdown(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+}
+
+/**
+ * Componente isolado para o indicador de tempo restante da sessão.
+ * Renderiza apenas a si mesmo no DOM a cada segundo, sem tocar em nenhum outro componente.
+ */
+export const SessionCountdownBadge: React.FC<{ className?: string }> = ({ className = "font-mono text-slate-300" }) => {
+  const seconds = useSessionCountdown();
+  return <strong className={className}>{formatSessionCountdown(seconds)}</strong>;
+};
+
