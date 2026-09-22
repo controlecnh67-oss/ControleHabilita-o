@@ -781,13 +781,13 @@ GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, servi
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 GRANT ALL ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 GRANT ALL ON TABLE public.declaracoes TO postgres, anon, authenticated, service_role;
-GRANT ALL ON TABLE public.lotes TO postgres, anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, anon, authenticated, service_role;
 
+
 -- ==============================================================================
--- 19. TABELA DE LOTES (PROTOCOLO GERAL)
+-- 19. TABELA DE LOTES DE CNHs (CNHs RECEBIDAS) E STORAGE
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.lotes (
     id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
@@ -796,6 +796,7 @@ CREATE TABLE IF NOT EXISTS public.lotes (
     documentos_impressos INTEGER NOT NULL DEFAULT 0,
     pdf_nome TEXT,
     pdf_url TEXT,
+    pdf_tamanho BIGINT,
     observacao TEXT,
     usuario_id TEXT,
     usuario_nome VARCHAR(255),
@@ -803,16 +804,85 @@ CREATE TABLE IF NOT EXISTS public.lotes (
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS pdf_nome TEXT;
+ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS pdf_url TEXT;
+ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS pdf_tamanho BIGINT;
+ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS observacao TEXT;
+ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS usuario_id TEXT;
+ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS usuario_nome VARCHAR(255);
+
+CREATE OR REPLACE FUNCTION public.set_lotes_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = timezone('utc'::text, now());
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_lotes_updated_at ON public.lotes;
+CREATE TRIGGER trigger_lotes_updated_at
+BEFORE UPDATE ON public.lotes
+FOR EACH ROW EXECUTE FUNCTION public.set_lotes_updated_at();
+
 CREATE INDEX IF NOT EXISTS idx_lotes_numero ON public.lotes(numero);
 CREATE INDEX IF NOT EXISTS idx_lotes_data_recebimento ON public.lotes(data_recebimento DESC);
 CREATE INDEX IF NOT EXISTS idx_lotes_created_at ON public.lotes(created_at DESC);
 
 ALTER TABLE public.lotes ENABLE ROW LEVEL SECURITY;
+
 DROP POLICY IF EXISTS "lotes_read_policy" ON public.lotes;
-CREATE POLICY "lotes_read_policy" ON public.lotes FOR SELECT TO authenticated, anon USING (true);
+CREATE POLICY "lotes_read_policy" ON public.lotes
+    FOR SELECT TO authenticated, anon USING (true);
+
 DROP POLICY IF EXISTS "lotes_write_policy" ON public.lotes;
-CREATE POLICY "lotes_write_policy" ON public.lotes FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "lotes_write_policy" ON public.lotes
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
 DROP POLICY IF EXISTS "lotes_anon_write_policy" ON public.lotes;
-CREATE POLICY "lotes_anon_write_policy" ON public.lotes FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "lotes_anon_write_policy" ON public.lotes
+    FOR ALL TO anon USING (true) WITH CHECK (true);
+
 GRANT ALL ON TABLE public.lotes TO postgres, anon, authenticated, service_role;
 
+-- Bucket app_images para anexos de PDFs e imagens
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'app_images', 
+  'app_images', 
+  true, 
+  20971520,
+  ARRAY['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'application/pdf']
+)
+ON CONFLICT (id) DO UPDATE SET 
+  public = true,
+  file_size_limit = 20971520,
+  allowed_mime_types = ARRAY['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'application/pdf'];
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'app_images_public_read'
+    ) THEN
+        CREATE POLICY "app_images_public_read" ON storage.objects
+            FOR SELECT TO public USING (bucket_id = 'app_images');
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'app_images_public_insert'
+    ) THEN
+        CREATE POLICY "app_images_public_insert" ON storage.objects
+            FOR INSERT TO public WITH CHECK (bucket_id = 'app_images');
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'app_images_public_update'
+    ) THEN
+        CREATE POLICY "app_images_public_update" ON storage.objects
+            FOR UPDATE TO public USING (bucket_id = 'app_images');
+    END IF;
+END $$;

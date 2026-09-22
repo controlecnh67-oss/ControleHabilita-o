@@ -40,6 +40,10 @@ import {
   saveOrgaoConfig
 } from "./orgaoService";
 import { trackEgress } from "./egressMonitorService";
+import { 
+  uploadLoteAnexoToSupabase, 
+  syncPendingLoteAnexosToSupabase 
+} from "./lotesStorageService";
 
 // Verificação de credenciais Supabase reais via variáveis de ambiente VITE_ ou utilitário
 export function isSupabaseConnected(): boolean {
@@ -3811,9 +3815,25 @@ export async function getLotes(): Promise<Lote[]> {
           }
         }
         const local = getStoredList<Lote>("lotes", SEED_LOTES).filter((l) => !deletedIds.has(l.id));
-        const remoteIds = new Set(validRemote.map((l) => l.id));
+        const localMap = new Map(local.map((l) => [l.id, l]));
+
+        // Preserva anexo local caso o remoto ainda não tenha URL preenchida
+        const mergedRemote = validRemote.map((rem) => {
+          const loc = localMap.get(rem.id);
+          if (loc && !rem.pdf_url && loc.pdf_url) {
+            return {
+              ...rem,
+              pdf_url: loc.pdf_url,
+              pdf_nome: rem.pdf_nome || loc.pdf_nome,
+              pdf_tamanho: rem.pdf_tamanho || loc.pdf_tamanho
+            };
+          }
+          return rem;
+        });
+
+        const remoteIds = new Set(mergedRemote.map((l) => l.id));
         const localOnly = local.filter((l) => !remoteIds.has(l.id) && !deletedIds.has(l.id));
-        const merged = [...validRemote, ...localOnly].filter((l) => !deletedIds.has(l.id));
+        const merged = [...mergedRemote, ...localOnly].filter((l) => !deletedIds.has(l.id));
         saveStoredList("lotes", merged);
         try {
           if (dexieDb.lotes) {
@@ -3872,14 +3892,33 @@ export async function createLote(
     : `lote-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
   const now = new Date().toISOString();
+  let finalPdfUrl: string | undefined = data.pdf_url || undefined;
+
+  // 1. Upload do anexo para o Supabase Storage e imagens_sync se for Base64 (Data URL)
+  if (data.pdf_url && data.pdf_url.startsWith("data:")) {
+    try {
+      const uploadRes = await uploadLoteAnexoToSupabase(
+        loteId,
+        data.pdf_nome || `Lote_${num}.pdf`,
+        data.pdf_url,
+        data.pdf_tamanho
+      );
+      if (uploadRes.publicUrl) {
+        finalPdfUrl = uploadRes.publicUrl;
+      }
+    } catch (upErr) {
+      console.warn("Aviso ao enviar anexo de lote para o Supabase Storage:", upErr);
+    }
+  }
+
   const novo: Lote = {
     id: loteId,
     numero: num,
-    data_recebimento: data.data_recebimento || now.split("T")[0],
+    data_recebimento: data.data_recebimento ? String(data.data_recebimento).split("T")[0] : now.split("T")[0],
     documentos_impressos: docCount,
     pdf_nome: data.pdf_nome || undefined,
     pdf_tamanho: data.pdf_tamanho || undefined,
-    pdf_url: data.pdf_url || undefined,
+    pdf_url: finalPdfUrl,
     observacao: data.observacao?.trim() || undefined,
     usuario_id: userId,
     usuario_nome: userNome,
@@ -3887,30 +3926,60 @@ export async function createLote(
     updated_at: now
   };
 
+  // 2. Gravação no Supabase (Tabela public.lotes)
   if (isSupabaseConfigured()) {
     try {
-      let lotePayload: any = { ...novo };
-      // Se pdf_url for base64 muito grande (>150KB), não envia o base64 para o Supabase para evitar erro 413, mantendo metadados
-      const isHugeBase64 = lotePayload.pdf_url && typeof lotePayload.pdf_url === "string" && lotePayload.pdf_url.startsWith("data:") && lotePayload.pdf_url.length > 150000;
-      if (isHugeBase64) {
+      const lotePayload: any = {
+        id: novo.id,
+        numero: Number(novo.numero),
+        data_recebimento: String(novo.data_recebimento).split("T")[0],
+        documentos_impressos: Number(novo.documentos_impressos) || 0,
+        pdf_nome: novo.pdf_nome || null,
+        pdf_url: novo.pdf_url || null,
+        observacao: novo.observacao || null,
+        usuario_id: novo.usuario_id || null,
+        usuario_nome: novo.usuario_nome || null,
+        created_at: novo.created_at,
+        updated_at: novo.updated_at
+      };
+
+      if (novo.pdf_tamanho !== undefined && novo.pdf_tamanho !== null) {
+        lotePayload.pdf_tamanho = Number(novo.pdf_tamanho);
+      }
+
+      // Se pdf_url for base64 excessivo por falha no storage, não envia base64 gigante no payload REST
+      if (lotePayload.pdf_url && typeof lotePayload.pdf_url === "string" && lotePayload.pdf_url.startsWith("data:") && lotePayload.pdf_url.length > 200000) {
         lotePayload.pdf_url = null;
       }
+
       let { error } = await supabase.from("lotes").upsert([lotePayload], { onConflict: "id" });
+
+      // Se der erro por coluna pdf_tamanho não existente na tabela remota do usuário, remove e retenta
       if (error && (error.message?.includes("pdf_tamanho") || error.message?.includes("column"))) {
         delete lotePayload.pdf_tamanho;
         const retry = await supabase.from("lotes").upsert([lotePayload], { onConflict: "id" });
         error = retry.error;
       }
+
+      // Se der erro por payload muito grande (ex: PDF em base64 residual)
       if (error && (error.message?.includes("payload") || error.message?.includes("too large") || error.code === "413")) {
         lotePayload.pdf_url = null;
         const retry = await supabase.from("lotes").upsert([lotePayload], { onConflict: "id" });
         error = retry.error;
       }
+
       if (error) {
-        console.warn("Aviso ao salvar lote no Supabase (mantido localmente):", error.message);
+        console.error("Erro ao salvar lote no Supabase:", error.message);
+        if (error.message?.includes("relation") && error.message?.includes("does not exist")) {
+          throw new Error("A tabela 'lotes' ainda não foi criada no banco do Supabase. Por favor, execute o script SQL atualizado na aba 'Backup & Sincronização'.");
+        }
+        throw new Error(`Erro ao salvar lote no Supabase: ${error.message}`);
       }
-    } catch (e) {
-      console.warn("Erro ao inserir lote no Supabase:", e);
+    } catch (e: any) {
+      console.warn("Aviso ou erro ao inserir lote no Supabase:", e);
+      if (e?.message?.includes("tabela 'lotes' ainda não foi criada") || e?.message?.includes("Erro ao salvar lote no Supabase")) {
+        throw e;
+      }
     }
   }
 
@@ -3962,11 +4031,32 @@ export async function updateLote(
     }
   }
 
+  let finalPdfUrl: string | undefined = data.pdf_url !== undefined ? data.pdf_url : ant.pdf_url;
+
+  // Se for anexo Base64 (Data URL), envia para o Supabase Storage e imagens_sync
+  if (data.pdf_url && data.pdf_url.startsWith("data:")) {
+    try {
+      const uploadRes = await uploadLoteAnexoToSupabase(
+        id,
+        data.pdf_nome || ant.pdf_nome || `Lote_${ant.numero}.pdf`,
+        data.pdf_url,
+        data.pdf_tamanho || ant.pdf_tamanho
+      );
+      if (uploadRes.publicUrl) {
+        finalPdfUrl = uploadRes.publicUrl;
+      }
+    } catch (upErr) {
+      console.warn("Aviso ao enviar anexo atualizado para o Supabase Storage:", upErr);
+    }
+  }
+
   const atualizado: Lote = {
     ...ant,
     ...data,
     numero: data.numero !== undefined ? Number(data.numero) : ant.numero,
+    data_recebimento: data.data_recebimento ? String(data.data_recebimento).split("T")[0] : ant.data_recebimento,
     documentos_impressos: data.documentos_impressos !== undefined ? Number(data.documentos_impressos) : ant.documentos_impressos,
+    pdf_url: finalPdfUrl,
     updated_at: new Date().toISOString()
   };
 
@@ -3974,12 +4064,29 @@ export async function updateLote(
 
   if (isSupabaseConfigured()) {
     try {
-      let updatePayload: any = { ...atualizado };
-      // Se pdf_url for base64 muito grande (>150KB), não envia o base64 para o Supabase para evitar erro 413, mantendo metadados
-      const isHugeBase64 = updatePayload.pdf_url && typeof updatePayload.pdf_url === "string" && updatePayload.pdf_url.startsWith("data:") && updatePayload.pdf_url.length > 150000;
-      if (isHugeBase64) {
+      const updatePayload: any = {
+        id: atualizado.id,
+        numero: Number(atualizado.numero),
+        data_recebimento: String(atualizado.data_recebimento).split("T")[0],
+        documentos_impressos: Number(atualizado.documentos_impressos) || 0,
+        pdf_nome: atualizado.pdf_nome || null,
+        pdf_url: atualizado.pdf_url || null,
+        observacao: atualizado.observacao || null,
+        usuario_id: atualizado.usuario_id || null,
+        usuario_nome: atualizado.usuario_nome || null,
+        created_at: atualizado.created_at || new Date().toISOString(),
+        updated_at: atualizado.updated_at
+      };
+
+      if (atualizado.pdf_tamanho !== undefined && atualizado.pdf_tamanho !== null) {
+        updatePayload.pdf_tamanho = Number(atualizado.pdf_tamanho);
+      }
+
+      // Se pdf_url for base64 excessivo por falha no storage, não envia base64 gigante no payload REST
+      if (updatePayload.pdf_url && typeof updatePayload.pdf_url === "string" && updatePayload.pdf_url.startsWith("data:") && updatePayload.pdf_url.length > 200000) {
         updatePayload.pdf_url = null;
       }
+
       let { error } = await supabase.from("lotes").upsert([updatePayload], { onConflict: "id" });
       if (error && (error.message?.includes("pdf_tamanho") || error.message?.includes("column"))) {
         delete updatePayload.pdf_tamanho;
@@ -3992,10 +4099,17 @@ export async function updateLote(
         error = retry.error;
       }
       if (error) {
-        console.warn("Aviso ao atualizar lote no Supabase:", error.message);
+        console.error("Erro ao atualizar lote no Supabase:", error.message);
+        if (error.message?.includes("relation") && error.message?.includes("does not exist")) {
+          throw new Error("A tabela 'lotes' ainda não foi criada no banco do Supabase. Por favor, execute o script SQL atualizado na aba 'Backup & Sincronização'.");
+        }
+        throw new Error(`Erro ao atualizar lote no Supabase: ${error.message}`);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn("Erro ao atualizar lote no Supabase:", e);
+      if (e?.message?.includes("tabela 'lotes' ainda não foi criada") || e?.message?.includes("Erro ao atualizar lote no Supabase")) {
+        throw e;
+      }
     }
   }
 
@@ -7595,26 +7709,38 @@ export async function syncLocalToSupabase(
     log(`ℹ️ Aviso em 'orgao_config': ${err.message}`);
   }
 
-  // 11. Sincronizar Lotes de CNHs
+  // 11. Sincronizar Lotes de CNHs e seus Anexos (Storage)
   try {
     const lotesList = await getLotes();
     const activeLotes = lotesList.filter(l => !deletedLoteIds.has(l.id));
     if (activeLotes.length > 0) {
-      log("📦 Sincronizando tabela 'lotes'...");
-      const payload = activeLotes.map(l => ({
-        id: l.id,
-        numero: Number(l.numero) || 0,
-        data_recebimento: l.data_recebimento ? l.data_recebimento.split("T")[0] : new Date().toISOString().split("T")[0],
-        documentos_impressos: Number(l.documentos_impressos) || 0,
-        pdf_nome: l.pdf_nome || null,
-        pdf_url: l.pdf_url || null,
-        pdf_tamanho: l.pdf_tamanho !== undefined ? l.pdf_tamanho : null,
-        observacao: l.observacao || null,
-        usuario_id: l.usuario_id || null,
-        usuario_nome: l.usuario_nome || null,
-        created_at: l.created_at || new Date().toISOString(),
-        updated_at: l.updated_at || new Date().toISOString()
-      }));
+      log(`📦 Sincronizando anexos e registros da tabela 'lotes' (${activeLotes.length} lotes)...`);
+      try {
+        const migrados = await syncPendingLoteAnexosToSupabase(activeLotes);
+        if (migrados > 0) {
+          log(`📎 ${migrados} anexo(s) de lote enviados para o Supabase Storage.`);
+        }
+      } catch (errStorage) {
+        console.warn("Aviso ao enviar anexos de lotes no syncLocalToSupabase:", errStorage);
+      }
+
+      const payload = activeLotes.map(l => {
+        const isHugeBase64 = l.pdf_url && typeof l.pdf_url === "string" && l.pdf_url.startsWith("data:") && l.pdf_url.length > 200000;
+        return {
+          id: l.id,
+          numero: Number(l.numero) || 0,
+          data_recebimento: l.data_recebimento ? l.data_recebimento.split("T")[0] : new Date().toISOString().split("T")[0],
+          documentos_impressos: Number(l.documentos_impressos) || 0,
+          pdf_nome: l.pdf_nome || null,
+          pdf_url: isHugeBase64 ? null : (l.pdf_url || null),
+          pdf_tamanho: l.pdf_tamanho !== undefined ? l.pdf_tamanho : null,
+          observacao: l.observacao || null,
+          usuario_id: l.usuario_id || null,
+          usuario_nome: l.usuario_nome || null,
+          created_at: l.created_at || new Date().toISOString(),
+          updated_at: l.updated_at || new Date().toISOString()
+        };
+      });
       const synced = await upsertInBatches("lotes", payload, 50);
       log(`✅ Tabela 'lotes' sincronizada (${synced} registros).`);
       totalSynced += synced;
@@ -8074,9 +8200,18 @@ export async function syncSingleTable(
     const deletedLoteIds = getDeletedIds("lotes");
     const activeLotes = lotesList.filter(l => !deletedLoteIds.has(l.id));
     if (activeLotes.length > 0) {
-      log(`📦 Enviando ${activeLotes.length} lotes para o Supabase...`);
+      log(`📦 Sincronizando anexos e registros de ${activeLotes.length} lotes para o Supabase...`);
+      try {
+        const migrados = await syncPendingLoteAnexosToSupabase(activeLotes);
+        if (migrados > 0) {
+          log(`📎 ${migrados} anexo(s) de lote enviados para o Supabase Storage.`);
+        }
+      } catch (errStorage) {
+        console.warn("Aviso ao sincronizar anexos de lotes com o Storage:", errStorage);
+      }
+
       const payload = activeLotes.map(l => {
-        const isHugeBase64 = l.pdf_url && typeof l.pdf_url === "string" && l.pdf_url.startsWith("data:") && l.pdf_url.length > 150000;
+        const isHugeBase64 = l.pdf_url && typeof l.pdf_url === "string" && l.pdf_url.startsWith("data:") && l.pdf_url.length > 200000;
         return {
           id: l.id,
           numero: Number(l.numero) || 0,
@@ -8093,7 +8228,7 @@ export async function syncSingleTable(
         };
       });
       await upsertInBatches("lotes", payload, 25);
-      log(`✅ Lotes enviados com sucesso.`);
+      log(`✅ Lotes e anexos enviados com sucesso ao Supabase.`);
     }
   } else if (tableKey === "declaracoes") {
     const declList = getStoredList<Declaracao>("declaracoes", []);

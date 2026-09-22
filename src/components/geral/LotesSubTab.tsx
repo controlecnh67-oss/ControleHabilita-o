@@ -192,14 +192,20 @@ export const LotesSubTab: React.FC = () => {
     const userId = user?.id || "operador";
     const userNome = user?.nome_curto || user?.nome || "Operador";
 
-    if (loteToEdit) {
-      await updateLote(loteToEdit.id, data, userId, userNome);
-      showToast(`Lote #${data.numero} atualizado com sucesso!`);
-    } else {
-      await createLote(data, userId, userNome);
-      showToast(`Lote #${data.numero} cadastrado com sucesso!`);
+    try {
+      if (loteToEdit) {
+        await updateLote(loteToEdit.id, data, userId, userNome);
+        showToast(`Lote #${data.numero} atualizado com sucesso!`);
+      } else {
+        await createLote(data, userId, userNome);
+        showToast(`Lote #${data.numero} cadastrado com sucesso!`);
+      }
+      await loadData();
+    } catch (err: any) {
+      console.error("Erro ao salvar lote:", err);
+      showToast(err?.message || "Erro ao salvar o lote no banco de dados.", "error");
+      throw err;
     }
-    await loadData();
   };
 
   const handleDeleteConfirm = async () => {
@@ -280,15 +286,39 @@ export const LotesSubTab: React.FC = () => {
   };
 
   // Download do PDF
-  const handleDownloadPdf = (lote: Lote) => {
+  const handleDownloadPdf = async (lote: Lote) => {
     if (!lote.pdf_url) return;
-    const a = document.createElement("a");
-    a.href = lote.pdf_url;
-    a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    showToast(`Iniciando download do PDF do Lote #${lote.numero}`);
+    try {
+      showToast(`Iniciando download do PDF do Lote #${lote.numero}...`);
+      if (lote.pdf_url.startsWith("http")) {
+        const response = await fetch(lote.pdf_url);
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(blobUrl);
+      } else {
+        const a = document.createElement("a");
+        a.href = lote.pdf_url;
+        a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    } catch {
+      const a = document.createElement("a");
+      a.href = lote.pdf_url;
+      a.target = "_blank";
+      a.rel = "noreferrer";
+      a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
   };
 
   // Exportar Excel (.xlsx)

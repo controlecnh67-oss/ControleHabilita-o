@@ -1,6 +1,6 @@
 -- ==============================================================================
--- SCRIPT DE CRIAÇÃO DA TABELA: LOTES (DETRAN - PROTOCOLO GERAL)
--- Executar no SQL Editor do Supabase para criar a nova tabela com todas as permissões
+-- SCRIPT DE CRIAÇÃO DA TABELA: LOTES (DETRAN - PROTOCOLO GERAL) E STORAGE
+-- Executar no SQL Editor do Supabase para criar a tabela com todas as permissões e bucket de PDFs
 -- ==============================================================================
 
 -- 1. EXTENSÃO UUID
@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS public.lotes (
     documentos_impressos INTEGER NOT NULL DEFAULT 0,
     pdf_nome TEXT,
     pdf_url TEXT,
+    pdf_tamanho BIGINT,
     observacao TEXT,
     usuario_id TEXT,
     usuario_nome VARCHAR(255),
@@ -26,6 +27,7 @@ ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT
 ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
 ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS pdf_nome TEXT;
 ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS pdf_url TEXT;
+ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS pdf_tamanho BIGINT;
 ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS observacao TEXT;
 ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS usuario_id TEXT;
 ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS usuario_nome VARCHAR(255);
@@ -72,14 +74,13 @@ DROP POLICY IF EXISTS "lotes_read_policy" ON public.lotes;
 CREATE POLICY "lotes_read_policy" ON public.lotes
     FOR SELECT TO authenticated, anon USING (true);
 
--- Gravação permitida para operadores autenticados
+-- Gravação total permitida para autenticados e anon da aplicação
 DROP POLICY IF EXISTS "lotes_write_policy" ON public.lotes;
 CREATE POLICY "lotes_write_policy" ON public.lotes
     FOR ALL TO authenticated
     USING (true)
     WITH CHECK (true);
 
--- Gravação permitida para a chave anon da aplicação
 DROP POLICY IF EXISTS "lotes_anon_write_policy" ON public.lotes;
 CREATE POLICY "lotes_anon_write_policy" ON public.lotes
     FOR ALL TO anon
@@ -88,3 +89,45 @@ CREATE POLICY "lotes_anon_write_policy" ON public.lotes
 
 -- 7. PERMISSÕES DE ACESSO (GRANTS)
 GRANT ALL ON TABLE public.lotes TO postgres, anon, authenticated, service_role;
+
+-- 8. BUCKET DE ANEXOS (PDFs E IMAGENS) NO SUPABASE STORAGE
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'app_images', 
+  'app_images', 
+  true, 
+  20971520, -- 20MB
+  ARRAY['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'application/pdf']
+)
+ON CONFLICT (id) DO UPDATE SET 
+  public = true,
+  file_size_limit = 20971520,
+  allowed_mime_types = ARRAY['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'application/pdf'];
+
+-- Políticas de Storage para o bucket app_images (Upload e Leitura pública de PDFs)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'app_images_public_read'
+    ) THEN
+        CREATE POLICY "app_images_public_read" ON storage.objects
+            FOR SELECT TO public USING (bucket_id = 'app_images');
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'app_images_public_insert'
+    ) THEN
+        CREATE POLICY "app_images_public_insert" ON storage.objects
+            FOR INSERT TO public WITH CHECK (bucket_id = 'app_images');
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'app_images_public_update'
+    ) THEN
+        CREATE POLICY "app_images_public_update" ON storage.objects
+            FOR UPDATE TO public USING (bucket_id = 'app_images');
+    END IF;
+END $$;

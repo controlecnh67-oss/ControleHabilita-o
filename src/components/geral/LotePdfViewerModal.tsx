@@ -16,18 +16,46 @@ export const LotePdfViewerModal: React.FC<LotePdfViewerModalProps> = ({
 }) => {
   if (!isOpen || !lote || !lote.pdf_url) return null;
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!lote.pdf_url) return;
-    const a = document.createElement("a");
-    a.href = lote.pdf_url;
-    a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    try {
+      if (lote.pdf_url.startsWith("http")) {
+        const response = await fetch(lote.pdf_url);
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(blobUrl);
+      } else {
+        const a = document.createElement("a");
+        a.href = lote.pdf_url;
+        a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    } catch {
+      const a = document.createElement("a");
+      a.href = lote.pdf_url;
+      a.target = "_blank";
+      a.rel = "noreferrer";
+      a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
   };
 
   const handleOpenNewTab = () => {
     if (!lote.pdf_url) return;
+    if (lote.pdf_url.startsWith("http")) {
+      window.open(lote.pdf_url, "_blank", "noopener,noreferrer");
+      return;
+    }
     const win = window.open();
     if (win) {
       win.document.write(
