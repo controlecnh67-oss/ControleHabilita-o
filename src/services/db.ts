@@ -31,7 +31,8 @@ import {
   deleteLocalGeralCNHsBulk,
   getLocalGeralCNHs,
   syncGeralWithSupabase,
-  deduplicateCNHRecords
+  deduplicateCNHRecords,
+  reconcileOrdersWithSupabase
 } from "./dexieDb";
 import { 
   uploadLogoToSupabaseStorage, 
@@ -3954,6 +3955,13 @@ export async function createLote(
 
       let { error } = await supabase.from("lotes").upsert([lotePayload], { onConflict: "id" });
 
+      // Se der erro por chave estrangeira em usuario_id (ex: operador não cadastrado na auth)
+      if (error && (error.message?.includes("foreign key") || error.message?.includes("fkey") || error.message?.includes("usuario_id"))) {
+        lotePayload.usuario_id = null;
+        const retry = await supabase.from("lotes").upsert([lotePayload], { onConflict: "id" });
+        error = retry.error;
+      }
+
       // Se der erro por coluna pdf_tamanho não existente na tabela remota do usuário, remove e retenta
       if (error && (error.message?.includes("pdf_tamanho") || error.message?.includes("column"))) {
         delete lotePayload.pdf_tamanho;
@@ -3968,6 +3976,21 @@ export async function createLote(
         error = retry.error;
       }
 
+      // Se ainda falhar por coluna não reconhecida, tenta payload mínimo
+      if (error && error.message?.includes("column")) {
+        const minimalPayload = {
+          id: novo.id,
+          numero: Number(novo.numero),
+          data_recebimento: String(novo.data_recebimento).split("T")[0],
+          documentos_impressos: Number(novo.documentos_impressos) || 0,
+          observacao: novo.observacao || null,
+          created_at: novo.created_at,
+          updated_at: novo.updated_at
+        };
+        const retry = await supabase.from("lotes").upsert([minimalPayload], { onConflict: "id" });
+        error = retry.error;
+      }
+
       if (error) {
         console.error("Erro ao salvar lote no Supabase:", error.message);
         if (error.message?.includes("relation") && error.message?.includes("does not exist")) {
@@ -3975,6 +3998,9 @@ export async function createLote(
         }
         throw new Error(`Erro ao salvar lote no Supabase: ${error.message}`);
       }
+
+      // Invalida cache de lotes para que a listagem traga os dados frescos imediatamente
+      invalidateSupabaseCache("lotes");
     } catch (e: any) {
       console.warn("Aviso ou erro ao inserir lote no Supabase:", e);
       if (e?.message?.includes("tabela 'lotes' ainda não foi criada") || e?.message?.includes("Erro ao salvar lote no Supabase")) {
@@ -4088,6 +4114,14 @@ export async function updateLote(
       }
 
       let { error } = await supabase.from("lotes").upsert([updatePayload], { onConflict: "id" });
+
+      // Se der erro por chave estrangeira em usuario_id
+      if (error && (error.message?.includes("foreign key") || error.message?.includes("fkey") || error.message?.includes("usuario_id"))) {
+        updatePayload.usuario_id = null;
+        const retry = await supabase.from("lotes").upsert([updatePayload], { onConflict: "id" });
+        error = retry.error;
+      }
+
       if (error && (error.message?.includes("pdf_tamanho") || error.message?.includes("column"))) {
         delete updatePayload.pdf_tamanho;
         const retry = await supabase.from("lotes").upsert([updatePayload], { onConflict: "id" });
@@ -4098,6 +4132,21 @@ export async function updateLote(
         const retry = await supabase.from("lotes").upsert([updatePayload], { onConflict: "id" });
         error = retry.error;
       }
+
+      // Se ainda falhar por coluna não reconhecida, tenta payload mínimo
+      if (error && error.message?.includes("column")) {
+        const minimalPayload = {
+          id: atualizado.id,
+          numero: Number(atualizado.numero),
+          data_recebimento: String(atualizado.data_recebimento).split("T")[0],
+          documentos_impressos: Number(atualizado.documentos_impressos) || 0,
+          observacao: atualizado.observacao || null,
+          updated_at: atualizado.updated_at
+        };
+        const retry = await supabase.from("lotes").upsert([minimalPayload], { onConflict: "id" });
+        error = retry.error;
+      }
+
       if (error) {
         console.error("Erro ao atualizar lote no Supabase:", error.message);
         if (error.message?.includes("relation") && error.message?.includes("does not exist")) {
@@ -4105,6 +4154,9 @@ export async function updateLote(
         }
         throw new Error(`Erro ao atualizar lote no Supabase: ${error.message}`);
       }
+
+      // Invalida cache de lotes
+      invalidateSupabaseCache("lotes");
     } catch (e: any) {
       console.warn("Erro ao atualizar lote no Supabase:", e);
       if (e?.message?.includes("tabela 'lotes' ainda não foi criada") || e?.message?.includes("Erro ao atualizar lote no Supabase")) {
@@ -4340,12 +4392,23 @@ export async function getGeralCNHs(): Promise<GeralCNH[]> {
   let rawList: GeralCNH[] = await getLocalGeralCNHs();
 
   // Se o Supabase estiver configurado e ainda não houver dados locais, faz carga inicial
-  if (isSupabaseConfigured() && rawList.length === 0) {
-    try {
-      await syncGeralWithSupabase(true);
-      rawList = await getLocalGeralCNHs();
-    } catch (err) {
-      console.warn("Aviso ao sincronizar inicialmente com Supabase:", err);
+  if (isSupabaseConfigured()) {
+    if (rawList.length === 0) {
+      try {
+        await syncGeralWithSupabase(true);
+        rawList = await getLocalGeralCNHs();
+      } catch (err) {
+        console.warn("Aviso ao sincronizar inicialmente com Supabase:", err);
+      }
+    } else if (rawList.some((r) => Number(r.ordem) > 15000)) {
+      // Se a memória do navegador ou cache restaurou números anômalos (> 15000),
+      // retifica imediatamente para mostrar com precisão o que está no banco de dados!
+      try {
+        await reconcileOrdersWithSupabase();
+        rawList = await getLocalGeralCNHs();
+      } catch (err) {
+        console.warn("Aviso ao reconciliar ordens com o Supabase:", err);
+      }
     }
   }
 
@@ -5863,7 +5926,24 @@ export async function updateGeralCNH(
   if (index === -1) throw new Error("Registro CNH não encontrado");
   const ant = geralList[index];
   // Garante imutabilidade absoluta da coluna ordem nas edições de outros campos
-  const finalOrdem = (data.ordem !== undefined && Number(data.ordem) > 0) ? Number(data.ordem) : ant.ordem;
+  let finalOrdem = Number(ant.ordem) || 0;
+  if (data.ordem !== undefined && Number(data.ordem) > 0 && Number(data.ordem) <= 15000) {
+    finalOrdem = Number(data.ordem);
+  }
+  // Se a ordem for anômala (> 15000) vinda de cache/memória do navegador, recupera do Supabase para manter fidelidade ao banco
+  if (finalOrdem > 15000 && isSupabaseConfigured()) {
+    try {
+      const { data: dbItem } = await supabase
+        .from("geral_cnhs")
+        .select("ordem")
+        .eq("id", id)
+        .maybeSingle();
+      if (dbItem?.ordem && Number(dbItem.ordem) > 0 && Number(dbItem.ordem) <= 15000) {
+        finalOrdem = Number(dbItem.ordem);
+      }
+    } catch {}
+  }
+
   const atualizado = { ...ant, ...data, ordem: finalOrdem, data_movimento: new Date().toISOString(), usuario_id: userId, usuario_nome: userNome };
   geralList[index] = atualizado;
   saveStoredList("geral", geralList);

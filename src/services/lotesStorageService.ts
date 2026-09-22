@@ -70,54 +70,61 @@ export async function uploadLoteAnexoToSupabase(
     const storagePath = `lotes/${loteId}/${uniqueFileName}`;
     const contentType = blob.type || "application/pdf";
 
-    // 1. Tentar upload no bucket padrão 'app_images' (ou 'lotes')
-    let targetBucket = "app_images";
-    let uploadRes = await supabase.storage
-      .from(targetBucket)
-      .upload(storagePath, blob, {
-        contentType,
-        upsert: true,
-        cacheControl: "3600"
-      });
+    // 1. Tentar upload nos buckets conhecidos (app_images, lotes, documentos, public, arquivos)
+    const candidateBuckets = ["app_images", "lotes", "documentos", "public", "arquivos"];
+    let publicUrl: string | null = null;
+    let lastUploadError: string | undefined;
 
-    // Se o bucket não existir, tenta criar ou usar fallback
-    if (uploadRes.error && uploadRes.error.message?.toLowerCase().includes("bucket not found")) {
+    // Se possível, descobre os buckets existentes
+    try {
+      const { data: existingBuckets } = await supabase.storage.listBuckets();
+      if (existingBuckets && existingBuckets.length > 0) {
+        for (const b of existingBuckets) {
+          if (!candidateBuckets.includes(b.name)) {
+            candidateBuckets.push(b.name);
+          }
+        }
+      }
+    } catch {}
+
+    for (const targetBucket of candidateBuckets) {
       try {
-        console.log(`Bucket '${targetBucket}' não encontrado. Tentando criar...`);
-        await supabase.storage.createBucket("app_images", { public: true });
-        uploadRes = await supabase.storage
+        const uploadRes = await supabase.storage
           .from(targetBucket)
           .upload(storagePath, blob, {
             contentType,
             upsert: true,
             cacheControl: "3600"
           });
-      } catch (createErr) {
-        console.warn("Não foi possível auto-criar bucket app_images:", createErr);
+
+        if (!uploadRes.error) {
+          const { data: urlData } = supabase.storage
+            .from(targetBucket)
+            .getPublicUrl(storagePath);
+
+          if (urlData?.publicUrl) {
+            publicUrl = urlData.publicUrl;
+            console.log(`✅ [Supabase Storage] Anexo do Lote ${loteId} enviado com sucesso no bucket '${targetBucket}':`, publicUrl);
+            break;
+          }
+        } else {
+          lastUploadError = uploadRes.error.message;
+        }
+      } catch (bucketErr: any) {
+        lastUploadError = bucketErr?.message;
       }
     }
 
-    let publicUrl: string | null = null;
-
-    if (!uploadRes.error) {
-      const { data: urlData } = supabase.storage
-        .from(targetBucket)
-        .getPublicUrl(storagePath);
-      
-      if (urlData?.publicUrl) {
-        publicUrl = urlData.publicUrl;
-        console.log(`✅ [Supabase Storage] Anexo do Lote ${loteId} enviado com sucesso:`, publicUrl);
-      }
-    } else {
-      console.warn("Aviso ao fazer upload para o Supabase Storage:", uploadRes.error.message);
-    }
-
-    // 2. Redundância na tabela 'imagens_sync' (backup resiliente para garantir que nunca se perca)
+    // 2. Redundância na tabela 'imagens_sync' (backup garantido para caso o storage esteja restrito)
     try {
-      const isReasonableSize = blob.size <= 2 * 1024 * 1024; // Guarda base64 se <= 2MB
-      const base64Data = isReasonableSize && typeof fileData === "string" && fileData.startsWith("data:")
-        ? fileData
-        : null;
+      // Gera ou obtém base64 se disponível
+      let base64Data: string | null = null;
+      if (typeof fileData === "string" && fileData.startsWith("data:")) {
+        // Guarda no banco até 5MB
+        if (fileData.length <= 7 * 1024 * 1024) {
+          base64Data = fileData;
+        }
+      }
 
       await supabase.from("imagens_sync").upsert({
         id: `lote_${loteId}`,
@@ -130,11 +137,12 @@ export async function uploadLoteAnexoToSupabase(
         url_publica: publicUrl || null,
         created_at: new Date().toISOString()
       }, { onConflict: "id" });
+      console.log(`✅ [imagens_sync] Backup do anexo do lote ${loteId} registrado no banco de dados.`);
     } catch (syncTableErr) {
       console.warn("Aviso ao gravar anexo na tabela imagens_sync:", syncTableErr);
     }
 
-    return { publicUrl, error: uploadRes.error?.message };
+    return { publicUrl, error: publicUrl ? undefined : lastUploadError };
   } catch (err: any) {
     console.error("Erro inesperado no upload do anexo do lote:", err);
     return { publicUrl: null, error: err?.message || "Erro inesperado no upload" };
@@ -186,4 +194,38 @@ export async function syncPendingLoteAnexosToSupabase(
   }
 
   return migrados;
+}
+
+/**
+ * Resolve a URL do PDF do lote recuperando do Storage ou do backup resiliente imagens_sync se necessário
+ */
+export async function resolveLotePdfUrl(lote: Lote): Promise<string | undefined> {
+  if (lote.pdf_url && (lote.pdf_url.startsWith("http") || lote.pdf_url.startsWith("data:"))) {
+    return lote.pdf_url;
+  }
+
+  if (!isSupabaseConfigured() || !lote.id) {
+    return lote.pdf_url;
+  }
+
+  try {
+    // 1. Tenta recuperar da tabela imagens_sync
+    const { data: syncRow } = await supabase
+      .from("imagens_sync")
+      .select("url_publica, dados_base64")
+      .or(`registro_id.eq.${lote.id},id.eq.lote_${lote.id}`)
+      .limit(1)
+      .maybeSingle();
+
+    if (syncRow?.url_publica) {
+      return syncRow.url_publica;
+    }
+    if (syncRow?.dados_base64) {
+      return syncRow.dados_base64;
+    }
+  } catch (err) {
+    console.warn("Aviso ao resolver anexo de lote via imagens_sync:", err);
+  }
+
+  return lote.pdf_url;
 }

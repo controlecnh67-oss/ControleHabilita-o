@@ -1,7 +1,8 @@
-import React from "react";
-import { X, Download, ExternalLink, FileText, Calendar, Layers, Hash } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { X, Download, ExternalLink, FileText, Calendar, Layers, Hash, Loader2 } from "lucide-react";
 import { Lote } from "../../types";
 import { formatDate } from "../../lib/utils";
+import { resolveLotePdfUrl } from "../../services/lotesStorageService";
 
 interface LotePdfViewerModalProps {
   isOpen: boolean;
@@ -14,13 +15,38 @@ export const LotePdfViewerModal: React.FC<LotePdfViewerModalProps> = ({
   onClose,
   lote
 }) => {
-  if (!isOpen || !lote || !lote.pdf_url) return null;
+  const [resolvedUrl, setResolvedUrl] = useState<string | undefined>(lote?.pdf_url);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || !lote) {
+      setResolvedUrl(undefined);
+      return;
+    }
+
+    if (lote.pdf_url) {
+      setResolvedUrl(lote.pdf_url);
+    } else {
+      setLoading(true);
+      resolveLotePdfUrl(lote)
+        .then((url) => {
+          setResolvedUrl(url);
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    }
+  }, [isOpen, lote]);
+
+  if (!isOpen || !lote) return null;
+
+  const activeUrl = resolvedUrl || lote.pdf_url;
 
   const handleDownload = async () => {
-    if (!lote.pdf_url) return;
+    if (!activeUrl) return;
     try {
-      if (lote.pdf_url.startsWith("http")) {
-        const response = await fetch(lote.pdf_url);
+      if (activeUrl.startsWith("http")) {
+        const response = await fetch(activeUrl);
         const blob = await response.blob();
         const blobUrl = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -32,7 +58,7 @@ export const LotePdfViewerModal: React.FC<LotePdfViewerModalProps> = ({
         window.URL.revokeObjectURL(blobUrl);
       } else {
         const a = document.createElement("a");
-        a.href = lote.pdf_url;
+        a.href = activeUrl;
         a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
         document.body.appendChild(a);
         a.click();
@@ -40,7 +66,7 @@ export const LotePdfViewerModal: React.FC<LotePdfViewerModalProps> = ({
       }
     } catch {
       const a = document.createElement("a");
-      a.href = lote.pdf_url;
+      a.href = activeUrl;
       a.target = "_blank";
       a.rel = "noreferrer";
       a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
@@ -51,15 +77,15 @@ export const LotePdfViewerModal: React.FC<LotePdfViewerModalProps> = ({
   };
 
   const handleOpenNewTab = () => {
-    if (!lote.pdf_url) return;
-    if (lote.pdf_url.startsWith("http")) {
-      window.open(lote.pdf_url, "_blank", "noopener,noreferrer");
+    if (!activeUrl) return;
+    if (activeUrl.startsWith("http")) {
+      window.open(activeUrl, "_blank", "noopener,noreferrer");
       return;
     }
     const win = window.open();
     if (win) {
       win.document.write(
-        `<iframe src="${lote.pdf_url}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`
+        `<iframe src="${activeUrl}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`
       );
       win.document.title = lote.pdf_nome || `Lote ${lote.numero}`;
     }
@@ -122,11 +148,23 @@ export const LotePdfViewerModal: React.FC<LotePdfViewerModalProps> = ({
 
         {/* Corpo do PDF */}
         <div className="flex-1 bg-slate-100 dark:bg-slate-950 p-2 sm:p-4 overflow-hidden relative">
-          <iframe
-            src={lote.pdf_url}
-            title={`PDF Lote ${lote.numero}`}
-            className="w-full h-full rounded-xl border border-slate-200 dark:border-slate-800 shadow-inner bg-white"
-          />
+          {loading ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3 text-slate-500 dark:text-slate-400">
+              <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+              <p className="text-sm font-medium">Carregando anexo do lote...</p>
+            </div>
+          ) : activeUrl ? (
+            <iframe
+              src={activeUrl}
+              title={`PDF Lote ${lote.numero}`}
+              className="w-full h-full rounded-xl border border-slate-200 dark:border-slate-800 shadow-inner bg-white"
+            />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full gap-2 text-slate-400">
+              <FileText className="w-12 h-12 stroke-[1.5]" />
+              <p className="text-sm font-medium">Nenhum documento PDF disponível para este lote.</p>
+            </div>
+          )}
         </div>
 
         {/* Rodapé informativo */}

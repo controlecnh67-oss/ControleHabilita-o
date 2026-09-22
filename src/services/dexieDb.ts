@@ -310,11 +310,24 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
 
   // Determina com absoluta precisão qual registro é o legítimo oficial
   const pickWinner = (current: GeralCNH, candidate: GeralCNH): { winner: GeralCNH; loser: GeralCNH } => {
+    const ordemCurrent = Number(current.ordem) || 0;
+    const ordemCand = Number(candidate.ordem) || 0;
+
+    // 1. Ordem oficial do Supabase tem prioridade máxima absoluta:
+    // Números de ordem inflados (ex: > 15000 gerados por recálculo em memória) NUNCA podem substituir
+    // a numeração legítima oficial gravada no banco de dados (ex: 10886)
+    if (ordemCurrent > 15000 && ordemCand > 0 && ordemCand <= 15000) {
+      return { winner: candidate, loser: current };
+    }
+    if (ordemCand > 15000 && ordemCurrent > 0 && ordemCurrent <= 15000) {
+      return { winner: current, loser: candidate };
+    }
+
     const sitCurrent = getSituacaoWeight(current.situacao);
     const sitCand = getSituacaoWeight(candidate.situacao);
 
-    // 1. Se um registro já foi Recebido, Entregue ou Pendente e o outro é apenas "Remetida",
-    // o já movimentado/recebido VENCE SEMPRE
+    // 2. Se um registro já foi Recebido, Entregue ou Pendente e o outro é apenas "Remetida",
+    // o já movimentado/recebido VENCE
     if (sitCand > sitCurrent) {
       return { winner: candidate, loser: current };
     }
@@ -322,16 +335,8 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
       return { winner: current, loser: candidate };
     }
 
-    // 2. Ordem oficial do Supabase:
-    // Números de ordem inflados (ex: > 15000 gerados por recálculo em lote) NUNCA podem substituir
-    // a numeração histórica legítima do Supabase (ex: 9917)
-    const ordemCurrent = Number(current.ordem) || 0;
-    const ordemCand = Number(candidate.ordem) || 0;
-
     if (ordemCurrent > 0 && ordemCand > 0 && ordemCurrent !== ordemCand) {
-      // Se houver discrepância de numeração (ex: ordem espúria 15229..15237 vs ordem real 9909..9917)
       if (Math.abs(ordemCurrent - ordemCand) > 100) {
-        // A menor ordem é a histórica legítima original do banco de dados
         return ordemCurrent < ordemCand
           ? { winner: current, loser: candidate }
           : { winner: candidate, loser: current };
@@ -378,11 +383,6 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
     } else if (hasValidCpf && byCpf.has(cpfDigits)) {
       const existingCpfRecord = byCpf.get(cpfDigits);
       const existingOrdem = Number(existingCpfRecord?.ordem) || 0;
-      // Só considera conflito/duplicata por CPF se:
-      // 1) Algum dos registros tiver ordem inválida/zerada ou ordem inflada (> 15000), OU
-      // 2) Tiverem exatamente a mesma ordem ou mesmo ID.
-      // Se ambos tiverem ordens válidas e distintas no sistema (ex: CNH anterior no estoque/entregue e nova CNH recebida),
-      // são registros legítimos distintos do mesmo condutor (nova via/emissão).
       if (
         existingCpfRecord &&
         (validOrdem === 0 || existingOrdem === 0 || validOrdem > 15000 || existingOrdem > 15000 || validOrdem === existingOrdem)
@@ -396,20 +396,31 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
     if (conflictingRecord && conflictingRecord.id !== item.id) {
       const { winner, loser } = pickWinner(conflictingRecord, item);
 
-      duplicateIdsSet.add(loser.id);
-      keptIdMap.delete(loser.id);
-
-      // Preserva a menor ordem histórica legítima caso o perdedor tivesse a ordem do Supabase
+      // Preserva a menor ordem histórica legítima caso o perdedor tivesse a ordem oficial do Supabase
       const ordemWinner = Number(winner.ordem) || 0;
       const ordemLoser = Number(loser.ordem) || 0;
       let finalOrdem = ordemWinner;
-      if (ordemLoser > 0 && (ordemWinner === 0 || (ordemWinner > 15000 && ordemLoser < 15000))) {
+      if (ordemLoser > 0 && (ordemWinner === 0 || (ordemWinner > 15000 && ordemLoser <= 15000))) {
         finalOrdem = ordemLoser;
       }
+
+      // Se o perdedor tiver UUID do Supabase e o vencedor for ID gerado localmente, preserva o ID oficial do Supabase!
+      const isWinnerUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(winner.id);
+      const isLoserUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(loser.id);
+      let preservedId = winner.id;
+      let idToPurge = loser.id;
+      if (!isWinnerUUID && isLoserUUID) {
+        preservedId = loser.id;
+        idToPurge = winner.id;
+      }
+
+      duplicateIdsSet.add(idToPurge);
+      keptIdMap.delete(idToPurge);
 
       const mergedRecord: GeralCNH = {
         ...loser,
         ...winner,
+        id: preservedId,
         ordem: finalOrdem,
         // Garante que campos físicos preenchidos nunca sejam apagados
         gaveta: (winner.gaveta && winner.gaveta.trim()) ? winner.gaveta : loser.gaveta,
@@ -418,7 +429,7 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
         usuario_id: (winner.usuario_id && winner.usuario_id !== "sistema") ? winner.usuario_id : (loser.usuario_id || winner.usuario_id),
       };
 
-      keptIdMap.set(winner.id, mergedRecord);
+      keptIdMap.set(preservedId, mergedRecord);
       if (finalOrdem > 0) byOrdem.set(finalOrdem, mergedRecord);
       const mergedCpfDigits = (mergedRecord.cpf || "").replace(/\D/g, "");
       if (mergedCpfDigits.length === 11) byCpf.set(mergedCpfDigits, mergedRecord);
@@ -436,7 +447,79 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
 }
 
 /**
- * Saneia e deduplica profundamente a base geral local (IndexedDB e localStorage)
+ * Reconcilia estritamente as ordens locais com o banco de dados Supabase.
+ * A ordem gravada no Supabase é a fonte da verdade absoluta.
+ * Qualquer registro local com ordem divergente (especialmente números restaurados da memória > 15000)
+ * é retificado para a numeração oficial do banco de dados.
+ */
+export async function reconcileOrdersWithSupabase(): Promise<number> {
+  if (!isSupabaseConfigured()) return 0;
+
+  try {
+    const { data: dbRecords, error } = await supabase
+      .from("geral_cnhs")
+      .select("id, ordem, cpf, nome, situacao, gaveta, reparticao, updated_at")
+      .order("ordem", { ascending: false });
+
+    if (error || !dbRecords || dbRecords.length === 0) return 0;
+
+    const dbMapById = new Map<string, any>();
+    const dbMapByCpf = new Map<string, any>();
+    for (const d of dbRecords) {
+      if (d.id) dbMapById.set(d.id, d);
+      const cleanCpf = (d.cpf || "").replace(/\D/g, "");
+      if (cleanCpf.length === 11 && !dbMapByCpf.has(cleanCpf)) {
+        dbMapByCpf.set(cleanCpf, d);
+      }
+    }
+
+    const localRecords = await dexieDb.geral.toArray();
+    const recordsToUpdate: GeralCNH[] = [];
+    const idsToDelete: string[] = [];
+
+    for (const local of localRecords) {
+      const cleanCpf = (local.cpf || "").replace(/\D/g, "");
+      const dbMatch = dbMapById.get(local.id) || (cleanCpf.length === 11 ? dbMapByCpf.get(cleanCpf) : undefined);
+
+      if (dbMatch) {
+        const dbOrdem = Number(dbMatch.ordem) || 0;
+        const localOrdem = Number(local.ordem) || 0;
+
+        // Se a ordem local divergir da ordem do banco de dados (ex: local tem 15036 e banco tem 10886),
+        // ou se o ID local for temporário e diferente do UUID oficial do Supabase:
+        if (dbOrdem > 0 && (localOrdem !== dbOrdem || local.id !== dbMatch.id)) {
+          recordsToUpdate.push({
+            ...local,
+            id: dbMatch.id, // Garante que o ID oficial do Supabase seja o preservado
+            ordem: dbOrdem, // A ORDEM DO BANCO DE DADOS É SOBERANA!
+            updated_at: dbMatch.updated_at || local.updated_at
+          });
+          if (local.id !== dbMatch.id) {
+            idsToDelete.push(local.id);
+          }
+        }
+      }
+    }
+
+    if (recordsToUpdate.length > 0) {
+      await dexieDb.geral.bulkPut(recordsToUpdate);
+      console.log(`🎯 [Ordem Banco de Dados] ${recordsToUpdate.length} registros tiveram a ORDEM retificada para o valor oficial do Supabase.`);
+    }
+    if (idsToDelete.length > 0) {
+      await dexieDb.geral.bulkDelete(idsToDelete);
+    }
+
+    return recordsToUpdate.length;
+  } catch (err) {
+    console.warn("Aviso ao reconciliar ordens com o Supabase:", err);
+    return 0;
+  }
+}
+
+/**
+ * Saneia e deduplica profundamente a base geral local (IndexedDB e localStorage).
+ * NOTA DE SEGURANÇA: Esta rotina atua ESTRITAMENTE na base local do navegador
+ * e NUNCA deleta registros da tabela remota do Supabase.
  */
 export async function cleanAndDeduplicateGeralTable(): Promise<{ totalCleaned: number; duplicatesRemoved: number }> {
   try {
@@ -448,26 +531,12 @@ export async function cleanAndDeduplicateGeralTable(): Promise<{ totalCleaned: n
     const { cleanList, duplicateIds } = deduplicateCNHRecords(allRecords);
 
     if (duplicateIds.length > 0) {
-      console.log(`🧹 [Dexie Saneamento] Expurgando ${duplicateIds.length} registros duplicados locais...`);
+      console.log(`🧹 [Dexie Saneamento Local] Expurgando ${duplicateIds.length} registros duplicados locais...`);
       await dexieDb.geral.bulkDelete(duplicateIds);
       if (typeof window !== "undefined") {
         try {
           localStorage.setItem("detran_cnh_geral", JSON.stringify(cleanList.slice(0, 1000)));
         } catch {}
-      }
-
-      // Se o Supabase estiver configurado, expurga as duplicatas redundantes também da nuvem
-      if (isSupabaseConfigured()) {
-        (async () => {
-          try {
-            for (let i = 0; i < duplicateIds.length; i += 50) {
-              const chunk = duplicateIds.slice(i, i + 50);
-              await supabase.from("geral_cnhs").delete().in("id", chunk);
-            }
-          } catch (e) {
-            console.warn("Aviso ao sincronizar limpeza de duplicatas no Supabase:", e);
-          }
-        })().catch(() => {});
       }
     }
 
@@ -659,24 +728,30 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
               if (!local) {
                 recordsToPut.push(rec);
               } else {
-                // Proteção: se o registro local já foi recebido/entregue e o remoto está como apenas Remetida, não rebaixa!
+                // Proteção: se o registro local já foi recebido/entregue e o remoto está como apenas Remetida, não rebaixa a situação!
                 const localIsAdvanced = local.situacao && local.situacao !== "Remetida";
                 const remoteIsRemetida = rec.situacao === "Remetida";
-                if (localIsAdvanced && remoteIsRemetida) {
-                  continue;
-                }
-
-                // Preserva ordem legítima do Supabase
                 const localOrdem = Number(local.ordem) || 0;
                 const recOrdem = Number(rec.ordem) || 0;
-                let finalOrdem = recOrdem;
-                if (localOrdem > 0 && (recOrdem > 15000 || recOrdem === 0)) {
-                  finalOrdem = localOrdem;
+                // A ORDEM DO BANCO DE DADOS É SOBERANA (sempre respeita o valor gravado no Supabase)
+                const finalOrdem = recOrdem > 0 ? recOrdem : localOrdem;
+
+                if (localIsAdvanced && remoteIsRemetida) {
+                  // Preserva a situação avançada do local, mas garante que a ordem reflita rigorosamente o banco de dados!
+                  if (recOrdem > 0 && localOrdem !== recOrdem) {
+                    recordsToPut.push({
+                      ...local,
+                      ordem: recOrdem
+                    });
+                  }
+                  continue;
                 }
 
                 const localTime = local.updated_at ? new Date(local.updated_at).getTime() : 0;
                 const remoteTime = rec.updated_at ? new Date(rec.updated_at).getTime() : 0;
-                if (remoteTime > localTime) {
+                // Se a ordem for diferente (ex: número inflado da memória 15036 vs ordem oficial 10886)
+                // OU se o registro remoto for mais recente, atualiza o Dexie!
+                if (remoteTime >= localTime || (recOrdem > 0 && localOrdem !== recOrdem)) {
                   recordsToPut.push({
                     ...rec,
                     ordem: finalOrdem,
@@ -714,6 +789,9 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
           // Nenhum registro novo: apenas 120 bytes de payload de cabeçalho
           trackEgress("geral_cnhs", "SELECT", 128, false, reqDuration, "Delta verificado: Nenhum registro alterado na nuvem (0 novas linhas)");
         }
+
+        // Garante reconciliação de ordens com o banco de dados Supabase
+        await reconcileOrdersWithSupabase();
 
         const syncTime = new Date().toISOString();
         const duration = Date.now() - startTime;
@@ -800,6 +878,27 @@ export function notifySyncUpdated(type: string = "geral") {
 export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
   const normalized = normalizeCNHRecord(record);
   normalized.updated_at = new Date().toISOString();
+
+  // Proteção: Nunca permitir que número de ordem corrompido/inflado da memória do navegador (> 15000)
+  // sobrescreva a ordem oficial do banco de dados Supabase
+  if (isSupabaseConfigured()) {
+    try {
+      if (normalized.ordem > 15000 || !normalized.ordem) {
+        const { data: dbItem } = await supabase
+          .from("geral_cnhs")
+          .select("id, ordem")
+          .or(`id.eq.${normalized.id},cpf.eq.${normalized.cpf}`)
+          .maybeSingle();
+
+        if (dbItem?.ordem && Number(dbItem.ordem) > 0) {
+          normalized.ordem = Number(dbItem.ordem);
+          if (dbItem.id && dbItem.id !== normalized.id) {
+            normalized.id = dbItem.id;
+          }
+        }
+      }
+    } catch {}
+  }
 
   // Limpa possíveis registros locais conflitantes com o mesmo número de ordem mas ID diferente
   if (normalized.ordem > 0) {

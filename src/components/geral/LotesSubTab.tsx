@@ -28,6 +28,7 @@ import autoTable from "jspdf-autotable";
 import { Lote, LoteInput } from "../../types";
 import { getLotes, createLote, updateLote, deleteLote } from "../../services/db";
 import { getOrgaoConfig, addPDFHeaderLogo } from "../../services/orgaoService";
+import { resolveLotePdfUrl } from "../../services/lotesStorageService";
 import { useAuth } from "../../context/AuthContext";
 import { LoteModal } from "./LoteModal";
 import { LotePdfViewerModal } from "./LotePdfViewerModal";
@@ -287,11 +288,18 @@ export const LotesSubTab: React.FC = () => {
 
   // Download do PDF
   const handleDownloadPdf = async (lote: Lote) => {
-    if (!lote.pdf_url) return;
+    let activeUrl = lote.pdf_url;
+    if (!activeUrl) {
+      activeUrl = await resolveLotePdfUrl(lote);
+    }
+    if (!activeUrl) {
+      showToast("Nenhum arquivo PDF encontrado para este lote.", "error");
+      return;
+    }
     try {
       showToast(`Iniciando download do PDF do Lote #${lote.numero}...`);
-      if (lote.pdf_url.startsWith("http")) {
-        const response = await fetch(lote.pdf_url);
+      if (activeUrl.startsWith("http")) {
+        const response = await fetch(activeUrl);
         const blob = await response.blob();
         const blobUrl = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -303,7 +311,7 @@ export const LotesSubTab: React.FC = () => {
         window.URL.revokeObjectURL(blobUrl);
       } else {
         const a = document.createElement("a");
-        a.href = lote.pdf_url;
+        a.href = activeUrl;
         a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
         document.body.appendChild(a);
         a.click();
@@ -311,7 +319,7 @@ export const LotesSubTab: React.FC = () => {
       }
     } catch {
       const a = document.createElement("a");
-      a.href = lote.pdf_url;
+      a.href = activeUrl;
       a.target = "_blank";
       a.rel = "noreferrer";
       a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
