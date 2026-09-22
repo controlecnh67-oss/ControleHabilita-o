@@ -35,6 +35,7 @@ import {
   Smartphone,
   MessageSquare,
   Copy,
+  CopyPlus,
   Check,
   ExternalLink,
   ScanLine,
@@ -223,8 +224,50 @@ export const GeralPage: React.FC = () => {
   // Modal Impressão PDF
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
-  // Modal 1: Cadastro Manual
+  // Modal 1: Cadastro Manual e Duplicação
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+  const [duplicateCnhData, setDuplicateCnhData] = useState<GeralCNH | null>(null);
+
+  // Copiar campo (PA, Nome, CPF) com feedback visual
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const handleCopyText = (text: string, key: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!text) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setCopiedKey(key);
+      setTimeout(() => {
+        setCopiedKey((prev) => (prev === key ? null : prev));
+      }, 1500);
+    } catch (err) {
+      console.error("Erro ao copiar texto:", err);
+    }
+  };
+
+  // Próxima ordem sequencial disponível para novo cadastro ou duplicação
+  const nextAvailableOrdem = useMemo(() => {
+    const ordensValidas = cnhs
+      .map((c) => Number(c.ordem) || 0)
+      .filter((o) => o > 0 && o < 15000);
+    return (ordensValidas.length > 0 ? Math.max(...ordensValidas) : 0) + 1;
+  }, [cnhs]);
+
+  const handleDuplicateCNH = (cnh: GeralCNH) => {
+    setDuplicateCnhData(cnh);
+    setIsManualModalOpen(true);
+  };
 
   // Modal: Receber CNH (Escolha de Gaveta e Repartição)
   const [isReceberModalOpen, setIsReceberModalOpen] = useState(false);
@@ -852,6 +895,7 @@ export const GeralPage: React.FC = () => {
 
   // Botão ➕ Cadastro Manual
   const handleOpenManualModal = () => {
+    setDuplicateCnhData(null);
     setIsManualModalOpen(true);
   };
 
@@ -1846,9 +1890,23 @@ export const GeralPage: React.FC = () => {
                             className="w-24 px-2 py-1 text-xs font-mono bg-amber-50/70 dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded focus:outline-none focus:ring-1 focus:ring-amber-500 font-bold"
                           />
                         ) : c.pa ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 font-mono font-bold text-xs border border-emerald-200 dark:border-emerald-800">
-                            {c.pa}
-                          </span>
+                          <div className="inline-flex items-center gap-1.5 group/pa">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 font-mono font-bold text-xs border border-emerald-200 dark:border-emerald-800">
+                              {c.pa}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => handleCopyText(c.pa!, `pa-${c.id}`, e)}
+                              title="Copiar PA"
+                              className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer inline-flex items-center justify-center shrink-0"
+                            >
+                              {copiedKey === `pa-${c.id}` ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-500" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-blue-600" />
+                              )}
+                            </button>
+                          </div>
                         ) : (
                           <span className="text-slate-400 italic text-[11px]">-</span>
                         )}
@@ -1867,9 +1925,21 @@ export const GeralPage: React.FC = () => {
                             className="w-full px-2 py-1 text-xs bg-amber-50/70 dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold"
                           />
                         ) : (
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 group/nome">
                             <User className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
                             <span>{c.nome}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => handleCopyText(c.nome, `nome-${c.id}`, e)}
+                              title="Copiar Nome"
+                              className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer inline-flex items-center justify-center shrink-0"
+                            >
+                              {copiedKey === `nome-${c.id}` ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-500" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-blue-600" />
+                              )}
+                            </button>
                           </div>
                         )}
                       </td>
@@ -1878,9 +1948,23 @@ export const GeralPage: React.FC = () => {
                     {/* CPF */}
                     {visibleColumns.cpf && (
                       <td className="py-2 px-4 whitespace-nowrap min-w-[170px]">
-                        <div className="flex items-center gap-1.5 font-mono text-sm font-extrabold text-slate-800 dark:text-slate-100 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5 font-mono text-sm font-extrabold text-slate-800 dark:text-slate-100 whitespace-nowrap group/cpf">
                           <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
                           <span className="tracking-wide whitespace-nowrap">{c.cpf ? formatCPF(c.cpf) : "-"}</span>
+                          {c.cpf && (
+                            <button
+                              type="button"
+                              onClick={(e) => handleCopyText(formatCPF(c.cpf), `cpf-${c.id}`, e)}
+                              title="Copiar CPF"
+                              className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer inline-flex items-center justify-center shrink-0"
+                            >
+                              {copiedKey === `cpf-${c.id}` ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-500" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-blue-600" />
+                              )}
+                            </button>
+                          )}
                         </div>
                       </td>
                     )}
@@ -2136,6 +2220,21 @@ export const GeralPage: React.FC = () => {
                             </button>
                           )}
 
+                          {/* Botão de Duplicar Registro */}
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDuplicateCNH(c);
+                              }}
+                              title="Duplicar CNH (abre cadastro com nova ordem e dados preenchidos)"
+                              className="p-1 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded transition-colors cursor-pointer"
+                            >
+                              <CopyPlus className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
                           {/* Botão de Edição/Pendente */}
                           {canEdit && (
                             <button
@@ -2232,11 +2331,16 @@ export const GeralPage: React.FC = () => {
           </div>
         )}
 
-      {/* MODAL 1: ➕ CADASTRO MANUAL (Isolado e Otimizado para Digitação Rápida em Caixa Alta) */}
+      {/* MODAL 1: ➕ CADASTRO MANUAL / DUPLICAÇÃO DE CNH */}
       <CadastroManualModal
         isOpen={isManualModalOpen}
-        onClose={() => setIsManualModalOpen(false)}
+        onClose={() => {
+          setIsManualModalOpen(false);
+          setDuplicateCnhData(null);
+        }}
         user={user}
+        initialData={duplicateCnhData}
+        nextOrdem={nextAvailableOrdem}
         onSuccess={(nova, situacao) => {
           // Atualização otimista imediata na lista de CNHs locais para refletir instantaneamente
           setCnhs((prev) => {
@@ -2244,6 +2348,7 @@ export const GeralPage: React.FC = () => {
             if (exists) return prev;
             return [nova, ...prev];
           });
+          setDuplicateCnhData(null);
 
           if (situacao === "Entregue") {
             setMessage({
