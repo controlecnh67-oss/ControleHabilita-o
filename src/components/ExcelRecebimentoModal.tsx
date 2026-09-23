@@ -198,7 +198,20 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
     });
   }, [results, filterCategory, searchTerm]);
 
-  if (!isOpen) return null;
+  // Fechar dropdown de PDF ao clicar fora
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (pdfMenuRef.current && !pdfMenuRef.current.contains(event.target as Node)) {
+        setShowPdfDropdown(false);
+      }
+    };
+    if (showPdfDropdown) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showPdfDropdown]);
 
   // Detecção inteligente de colunas (Foco em NOME e PA)
   const autoDetectColumns = (headers: string[], sampleRows: any[] = []) => {
@@ -543,21 +556,6 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
     }
   };
 
-  // Fechar dropdown de PDF ao clicar fora
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (pdfMenuRef.current && !pdfMenuRef.current.contains(event.target as Node)) {
-        setShowPdfDropdown(false);
-      }
-    };
-    if (showPdfDropdown) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [showPdfDropdown]);
-
   const getActiveTabLabel = () => {
     switch (filterCategory) {
       case "localizadas":
@@ -747,6 +745,8 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
       });
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
