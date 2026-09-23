@@ -645,7 +645,8 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
           }
         }
 
-        await cleanAndDeduplicateGeralTable();
+        // Não executa deduplicação destrutiva em registros consolidados baixados da nuvem
+        const finalCount = await dexieDb.geral.count();
 
         const syncTime = new Date().toISOString();
         const duration = Date.now() - startTime;
@@ -764,7 +765,6 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
 
             if (recordsToPut.length > 0) {
               await dexieDb.geral.bulkPut(recordsToPut);
-              await cleanAndDeduplicateGeralTable();
             }
           }
 
@@ -1013,10 +1013,14 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
 
   const { cleanList, duplicateIds } = deduplicateCNHRecords(normalized);
 
-  // Salva no Dexie os registros deduplicados
-  await dexieDb.geral.bulkPut(cleanList);
-  if (duplicateIds.length > 0) {
-    await dexieDb.geral.bulkDelete(duplicateIds).catch(() => {});
+  // Salva no Dexie: se os dados vêm da nuvem (skipRemote = true), preserva todos os registros remotos legítimos
+  if (skipRemote) {
+    await dexieDb.geral.bulkPut(normalized);
+  } else {
+    await dexieDb.geral.bulkPut(cleanList);
+    if (duplicateIds.length > 0) {
+      await dexieDb.geral.bulkDelete(duplicateIds).catch(() => {});
+    }
   }
 
   // Save to Supabase (somente se não for download da nuvem)

@@ -151,7 +151,7 @@ async function handleIncomingMutation(data: TableMutationEvent) {
         saveStoredList("geral", storedGeral);
         notifySyncUpdated("geral");
       }
-      notifyDataSync("geral");
+      notifyDataSync("geral", true);
     } else if (table === "lotes") {
       if ((action === "insert" || action === "update") && record) {
         if (dexieDb.lotes) await dexieDb.lotes.put(record);
@@ -165,7 +165,7 @@ async function handleIncomingMutation(data: TableMutationEvent) {
         const list = getStoredList<any>("lotes", []).filter((l) => l.id !== id);
         saveStoredList("lotes", list);
       }
-      notifyDataSync("lotes");
+      notifyDataSync("lotes", true);
     } else if (table === "memorandos") {
       if ((action === "insert" || action === "update") && record) {
         const list = getStoredList<any>("memorandos", []);
@@ -177,7 +177,7 @@ async function handleIncomingMutation(data: TableMutationEvent) {
         const list = getStoredList<any>("memorandos", []).filter((m) => m.id !== id);
         saveStoredList("memorandos", list);
       }
-      notifyDataSync("memorandos");
+      notifyDataSync("memorandos", true);
     } else if (table === "candidatos") {
       if ((action === "insert" || action === "update") && record) {
         const list = getStoredList<any>("candidatos", []);
@@ -189,8 +189,8 @@ async function handleIncomingMutation(data: TableMutationEvent) {
         const list = getStoredList<any>("candidatos", []).filter((c) => c.id !== id);
         saveStoredList("candidatos", list);
       }
-      notifyDataSync("candidatos");
-      notifyDataSync("memorandos");
+      notifyDataSync("candidatos", true);
+      notifyDataSync("memorandos", true);
     } else if (table === "declaracoes") {
       if ((action === "insert" || action === "update") && record) {
         const list = getStoredList<any>("declaracoes", []);
@@ -202,7 +202,7 @@ async function handleIncomingMutation(data: TableMutationEvent) {
         const list = getStoredList<any>("declaracoes", []).filter((d) => d.id !== id);
         saveStoredList("declaracoes", list);
       }
-      notifyDataSync("declaracoes");
+      notifyDataSync("declaracoes", true);
     } else if (table === "responsaveis" || table === "mapeamento_localizacao" || table === "usuarios") {
       const key = table === "mapeamento_localizacao" ? "mapeamento" : table;
       if ((action === "insert" || action === "update") && record) {
@@ -215,9 +215,9 @@ async function handleIncomingMutation(data: TableMutationEvent) {
         const list = getStoredList<any>(key, []).filter((item) => item.id !== id);
         saveStoredList(key, list);
       }
-      notifyDataSync(key);
+      notifyDataSync(key, true);
     } else {
-      notifyDataSync(table);
+      notifyDataSync(table, true);
     }
 
     updateState({

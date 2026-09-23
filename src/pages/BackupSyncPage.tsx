@@ -62,6 +62,7 @@ export const BackupSyncPage: React.FC = () => {
   const [copiedSql, setCopiedSql] = useState<boolean>(false);
   const [copiedFullSql, setCopiedFullSql] = useState<boolean>(false);
   const [copiedImagesSql, setCopiedImagesSql] = useState<boolean>(false);
+  const [copiedLotesSql, setCopiedLotesSql] = useState<boolean>(false);
   const [pingStatus, setPingStatus] = useState<{ status: 'idle' | 'testing' | 'success' | 'error'; message?: string; latency?: number }>({ status: 'idle' });
 
   const handleCopyFullSchemaSql = () => {
@@ -312,7 +313,7 @@ CREATE TABLE IF NOT EXISTS public.imagens_sync (
 -- 12. TABELA DE LOTES DE CNHs (CNHs RECEBIDAS)
 CREATE TABLE IF NOT EXISTS public.lotes (
     id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-    numero INTEGER NOT NULL,
+    numero BIGINT NOT NULL,
     data_recebimento DATE NOT NULL DEFAULT CURRENT_DATE,
     documentos_impressos INTEGER NOT NULL DEFAULT 0,
     pdf_nome TEXT,
@@ -365,6 +366,7 @@ CREATE INDEX IF NOT EXISTS idx_lotes_data_recebimento ON public.lotes(data_receb
 CREATE INDEX IF NOT EXISTS idx_declaracoes_numero ON public.declaracoes(numero);
 
 -- Garantir colunas compatíveis em bancos legados
+ALTER TABLE public.lotes ALTER COLUMN numero TYPE BIGINT;
 ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS pdf_tamanho BIGINT;
 ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS procurador_telefone VARCHAR(50);
 ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS procurador_fone VARCHAR(50);
@@ -557,13 +559,20 @@ USING (bucket_id = 'app_images');
   const supabaseUrl = creds.url;
   const autoSyncState = useAutoSync();
 
+  const isLoadingStatsRef = useRef(false);
+
   useEffect(() => {
     loadStats();
+    let debounceTimer: any = null;
     const handleSyncUpdated = () => {
-      loadStats();
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadStats();
+      }, 1200);
     };
     window.addEventListener("detran_sync_updated", handleSyncUpdated);
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener("detran_sync_updated", handleSyncUpdated);
     };
   }, []);
@@ -618,6 +627,8 @@ USING (bucket_id = 'app_images');
   };
 
   const loadStats = async () => {
+    if (isLoadingStatsRef.current) return;
+    isLoadingStatsRef.current = true;
     setIsLoadingStats(true);
     try {
       const items = await checkSyncStatus();
@@ -626,6 +637,7 @@ USING (bucket_id = 'app_images');
       console.error("Erro ao carregar status de sincronia:", err);
     } finally {
       setIsLoadingStats(false);
+      isLoadingStatsRef.current = false;
     }
   };
 
@@ -828,6 +840,21 @@ ANALYZE public.imagens_sync;
     navigator.clipboard.writeText(sql);
     setCopiedAnalyzeSql(true);
     setTimeout(() => setCopiedAnalyzeSql(false), 3000);
+  };
+
+  const handleCopyLotesBigIntSql = () => {
+    const sql = `-- =========================================================================
+-- CORREÇÃO DA TABELA DE LOTES: SUPORTE A NÚMEROS LONGOS / IMPORTADOS (BIGINT)
+-- =========================================================================
+-- Corrige o erro "value '...' is out of range for type integer" no Supabase:
+
+ALTER TABLE IF EXISTS public.lotes ALTER COLUMN numero TYPE BIGINT;
+ALTER TABLE IF EXISTS public.lotes ADD COLUMN IF NOT EXISTS pdf_tamanho BIGINT;
+ANALYZE public.lotes;
+`;
+    navigator.clipboard.writeText(sql);
+    setCopiedLotesSql(true);
+    setTimeout(() => setCopiedLotesSql(false), 3000);
   };
 
   const handleExportJSON = () => {
@@ -1592,6 +1619,15 @@ END $$;`;
             >
               {copiedSql ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
               <span>{copiedSql ? "SQL Copiado!" : "SQL Realtime"}</span>
+            </button>
+
+            <button
+              onClick={handleCopyLotesBigIntSql}
+              className="py-2.5 px-3 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-2 border border-amber-200 dark:border-amber-800 cursor-pointer"
+              title="Executar no Supabase para corrigir 'out of range for type integer' em lotes longos"
+            >
+              {copiedLotesSql ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+              <span>{copiedLotesSql ? "SQL Lotes Copiado!" : "Corrigir Lotes (BIGINT)"}</span>
             </button>
 
             <button

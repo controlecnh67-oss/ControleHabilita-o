@@ -3928,6 +3928,15 @@ export async function createLote(
   };
 
   // 2. Gravação no Supabase (Tabela public.lotes)
+  // Salva localmente primeiro para garantir que nenhuma edição ou anexo do usuário seja perdido
+  saveStoredList("lotes", [novo, ...list.filter((l) => l.id !== novo.id)]);
+  try {
+    if (dexieDb.lotes) {
+      await dexieDb.lotes.put(novo);
+    }
+  } catch {}
+  notifyDataSync("lotes");
+
   if (isSupabaseConfigured()) {
     try {
       const lotePayload: any = {
@@ -3949,7 +3958,7 @@ export async function createLote(
       }
 
       // Se pdf_url for base64 excessivo por falha no storage, não envia base64 gigante no payload REST
-      if (lotePayload.pdf_url && typeof lotePayload.pdf_url === "string" && lotePayload.pdf_url.startsWith("data:") && lotePayload.pdf_url.length > 200000) {
+      if (lotePayload.pdf_url && typeof lotePayload.pdf_url === "string" && (lotePayload.pdf_url.startsWith("data:") || lotePayload.pdf_url.length > 2000)) {
         lotePayload.pdf_url = null;
       }
 
@@ -3996,26 +4005,23 @@ export async function createLote(
         if (error.message?.includes("relation") && error.message?.includes("does not exist")) {
           throw new Error("A tabela 'lotes' ainda não foi criada no banco do Supabase. Por favor, execute o script SQL atualizado na aba 'Backup & Sincronização'.");
         }
-        throw new Error(`Erro ao salvar lote no Supabase: ${error.message}`);
+        // Se a coluna ainda for INTEGER no Supabase e o número do lote for longo (> 2 bilhões)
+        if (error.message?.includes("out of range for type integer") || error.message?.includes("out of range") || error.code === "22003") {
+          console.warn(`[Supabase Lotes] O lote #${novo.numero} possui número longo e a coluna no Supabase ainda é INTEGER. Salvo localmente com sucesso! Execute no SQL Editor do Supabase: ALTER TABLE public.lotes ALTER COLUMN numero TYPE BIGINT;`);
+        } else {
+          throw new Error(`Erro ao salvar lote no Supabase: ${error.message}`);
+        }
       }
 
       // Invalida cache de lotes para que a listagem traga os dados frescos imediatamente
       invalidateSupabaseCache("lotes");
     } catch (e: any) {
       console.warn("Aviso ou erro ao inserir lote no Supabase:", e);
-      if (e?.message?.includes("tabela 'lotes' ainda não foi criada") || e?.message?.includes("Erro ao salvar lote no Supabase")) {
+      if (e?.message?.includes("tabela 'lotes' ainda não foi criada") || (e?.message?.includes("Erro ao salvar lote no Supabase") && !e?.message?.includes("out of range"))) {
         throw e;
       }
     }
   }
-
-  saveStoredList("lotes", [novo, ...list.filter((l) => l.id !== novo.id)]);
-  try {
-    if (dexieDb.lotes) {
-      await dexieDb.lotes.put(novo);
-    }
-  } catch {}
-  notifyDataSync("lotes");
 
   await logAuditoria(
     "lotes",
@@ -4088,6 +4094,15 @@ export async function updateLote(
 
   list[index] = atualizado;
 
+  // Salva localmente primeiro (IndexedDB / localStorage) para garantir que nenhuma alteração ou anexo seja perdido
+  saveStoredList("lotes", list);
+  try {
+    if (dexieDb.lotes) {
+      await dexieDb.lotes.put(atualizado);
+    }
+  } catch {}
+  notifyDataSync("lotes");
+
   if (isSupabaseConfigured()) {
     try {
       const updatePayload: any = {
@@ -4109,7 +4124,7 @@ export async function updateLote(
       }
 
       // Se pdf_url for base64 excessivo por falha no storage, não envia base64 gigante no payload REST
-      if (updatePayload.pdf_url && typeof updatePayload.pdf_url === "string" && updatePayload.pdf_url.startsWith("data:") && updatePayload.pdf_url.length > 200000) {
+      if (updatePayload.pdf_url && typeof updatePayload.pdf_url === "string" && (updatePayload.pdf_url.startsWith("data:") || updatePayload.pdf_url.length > 2000)) {
         updatePayload.pdf_url = null;
       }
 
@@ -4152,26 +4167,23 @@ export async function updateLote(
         if (error.message?.includes("relation") && error.message?.includes("does not exist")) {
           throw new Error("A tabela 'lotes' ainda não foi criada no banco do Supabase. Por favor, execute o script SQL atualizado na aba 'Backup & Sincronização'.");
         }
-        throw new Error(`Erro ao atualizar lote no Supabase: ${error.message}`);
+        // Se a coluna ainda for INTEGER no Supabase e o número do lote for longo (> 2 bilhões)
+        if (error.message?.includes("out of range for type integer") || error.message?.includes("out of range") || error.code === "22003") {
+          console.warn(`[Supabase Lotes] O lote #${atualizado.numero} possui número longo e a coluna no Supabase ainda é INTEGER. Salvo localmente com sucesso! Execute no SQL Editor do Supabase: ALTER TABLE public.lotes ALTER COLUMN numero TYPE BIGINT;`);
+        } else {
+          throw new Error(`Erro ao atualizar lote no Supabase: ${error.message}`);
+        }
       }
 
       // Invalida cache de lotes
       invalidateSupabaseCache("lotes");
     } catch (e: any) {
       console.warn("Erro ao atualizar lote no Supabase:", e);
-      if (e?.message?.includes("tabela 'lotes' ainda não foi criada") || e?.message?.includes("Erro ao atualizar lote no Supabase")) {
+      if (e?.message?.includes("tabela 'lotes' ainda não foi criada") || (e?.message?.includes("Erro ao atualizar lote no Supabase") && !e?.message?.includes("out of range"))) {
         throw e;
       }
     }
   }
-
-  saveStoredList("lotes", list);
-  try {
-    if (dexieDb.lotes) {
-      await dexieDb.lotes.put(atualizado);
-    }
-  } catch {}
-  notifyDataSync("lotes");
 
   await logAuditoria("lotes", String(atualizado.numero), "Alteração", userId, userNome, ant, atualizado);
   return atualizado;
@@ -7192,6 +7204,8 @@ export async function fetchAllRowsFromSupabase<T = any>(
           hasMore = false;
         } else {
           from += currentBatchSize;
+          // Libera o Event Loop para manter a UI 100% responsiva sem congelamento
+          await new Promise((r) => setTimeout(r, 10));
         }
       } else {
         hasMore = false;
@@ -7220,7 +7234,7 @@ export async function fetchAllRowsFromSupabase<T = any>(
   }
 }
 
-// Helper para enviar registros ao Supabase em lotes (evita erro de Payload Too Large)
+// Helper para enviar registros ao Supabase em lotes (evita erro de Payload Too Large e previne congelamento do navegador)
 async function upsertInBatches(
   tableName: string, 
   payload: any[], 
@@ -7248,7 +7262,6 @@ async function upsertInBatches(
         const adaptedBatch = batch.map((item: any) => {
           const copy = { ...item };
           delete copy[missingCol];
-          // Caso específico: se for procurador_telefone ausente, tentar procurador_fone se ainda não estiver definido
           if (missingCol === "procurador_telefone" && item.procurador_telefone && !copy.procurador_fone) {
             copy.procurador_fone = item.procurador_telefone;
           }
@@ -7259,18 +7272,21 @@ async function upsertInBatches(
           count += adaptedBatch.length;
           recovered = true;
           if (onProgress) onProgress(count, payload.length);
+          await new Promise((r) => setTimeout(r, 10));
           continue;
         }
       }
 
-      // Recuperação 2: Se for lotes e houver erro de coluna ou pdf_tamanho ou payload excessivo
+      // Recuperação 2: Se for lotes e houver erro de coluna, foreign key ou payload excessivo
       if (tableName === "lotes" && !recovered) {
         const cleanLotes = batch.map((item: any) => {
           const copy = { ...item };
           delete copy.pdf_tamanho;
-          if (copy.pdf_url && typeof copy.pdf_url === "string" && copy.pdf_url.startsWith("data:") && copy.pdf_url.length > 150000) {
+          if (copy.pdf_url && typeof copy.pdf_url === "string" && (copy.pdf_url.startsWith("data:") || copy.pdf_url.length > 2000)) {
             copy.pdf_url = null;
           }
+          // Remove usuario_id para evitar foreign key constraint violation
+          copy.usuario_id = null;
           return copy;
         });
         const { error: loteErr } = await supabase.from(tableName).upsert(cleanLotes, { onConflict });
@@ -7278,7 +7294,27 @@ async function upsertInBatches(
           count += cleanLotes.length;
           recovered = true;
           if (onProgress) onProgress(count, payload.length);
+          await new Promise((r) => setTimeout(r, 10));
           continue;
+        }
+
+        // Se falhou por out of range (coluna é INTEGER no Supabase mas há lotes com números longos > 2 bilhões)
+        if (loteErr && (loteErr.message?.includes("out of range") || error.message?.includes("out of range"))) {
+          const safeIntegerLotes = cleanLotes.filter((l: any) => Number(l.numero) <= 2147483647);
+          const bigIntLotes = cleanLotes.filter((l: any) => Number(l.numero) > 2147483647);
+          if (safeIntegerLotes.length > 0) {
+            const { error: safeErr } = await supabase.from(tableName).upsert(safeIntegerLotes, { onConflict });
+            if (!safeErr) {
+              count += safeIntegerLotes.length;
+              recovered = true;
+              if (bigIntLotes.length > 0) {
+                console.warn(`[Supabase Lotes] ${bigIntLotes.length} lote(s) com números longos aguardando migração para BIGINT no Supabase (executar: ALTER TABLE public.lotes ALTER COLUMN numero TYPE BIGINT;).`);
+              }
+              if (onProgress) onProgress(count, payload.length);
+              await new Promise((r) => setTimeout(r, 10));
+              continue;
+            }
+          }
         }
       }
 
@@ -7297,6 +7333,7 @@ async function upsertInBatches(
           count += cleanDecl.length;
           recovered = true;
           if (onProgress) onProgress(count, payload.length);
+          await new Promise((r) => setTimeout(r, 10));
           continue;
         }
       }
@@ -7320,6 +7357,7 @@ async function upsertInBatches(
               count += batch.length;
               recovered = true;
               if (onProgress) onProgress(count, payload.length);
+              await new Promise((r) => setTimeout(r, 10));
               continue;
             }
           } catch {}
@@ -7336,6 +7374,7 @@ async function upsertInBatches(
           count += safeBatch.length;
           recovered = true;
           if (onProgress) onProgress(count, payload.length);
+          await new Promise((r) => setTimeout(r, 10));
           continue;
         }
       } else if (tableName === "historico_movimentacoes") {
@@ -7349,23 +7388,24 @@ async function upsertInBatches(
           count += safeBatch.length;
           recovered = true;
           if (onProgress) onProgress(count, payload.length);
+          await new Promise((r) => setTimeout(r, 10));
           continue;
         }
       }
 
-      // Recuperação 5: Inserção item a item para isolar registros problemáticos sem abortar a sincronização
+      // Recuperação 5: Inserção com pequenos blocos para isolar registros problemáticos sem abortar a sincronização
       if (!recovered) {
         for (const singleItem of batch) {
           try {
             let { error: singleErr } = await supabase.from(tableName).upsert([singleItem], { onConflict });
             if (singleErr) {
-              // Tenta limpar campos extras
               const itemCopy = { ...singleItem };
               if (tableName === "lotes") {
                 delete itemCopy.pdf_tamanho;
-                if (itemCopy.pdf_url && typeof itemCopy.pdf_url === "string" && itemCopy.pdf_url.startsWith("data:") && itemCopy.pdf_url.length > 150000) {
+                if (itemCopy.pdf_url && typeof itemCopy.pdf_url === "string" && (itemCopy.pdf_url.startsWith("data:") || itemCopy.pdf_url.length > 2000)) {
                   itemCopy.pdf_url = null;
                 }
+                itemCopy.usuario_id = null;
               }
               if (tableName === "declaracoes") {
                 if (itemCopy.procurador_telefone) itemCopy.procurador_fone = itemCopy.procurador_telefone;
@@ -7379,9 +7419,11 @@ async function upsertInBatches(
             } else {
               console.warn(`Item descartado em '${tableName}':`, singleErr.message);
             }
+            await new Promise((r) => setTimeout(r, 5));
           } catch {}
         }
         if (onProgress) onProgress(count, payload.length);
+        await new Promise((r) => setTimeout(r, 10));
         continue;
       }
     }
@@ -7391,6 +7433,8 @@ async function upsertInBatches(
     if (onProgress) {
       onProgress(count, payload.length);
     }
+    // Libera a thread do navegador para garantir animações suaves e evitar congelamento
+    await new Promise((r) => setTimeout(r, 10));
   }
   return count;
 }
@@ -8282,26 +8326,27 @@ export async function syncSingleTable(
     if (activeLotes.length > 0) {
       log(`📦 Sincronizando anexos e registros de ${activeLotes.length} lotes para o Supabase...`);
       try {
-        const migrados = await syncPendingLoteAnexosToSupabase(activeLotes);
-        if (migrados > 0) {
-          log(`📎 ${migrados} anexo(s) de lote enviados para o Supabase Storage.`);
-        }
+        await Promise.race([
+          syncPendingLoteAnexosToSupabase(activeLotes),
+          new Promise<number>((r) => setTimeout(() => r(0), 4000))
+        ]);
       } catch (errStorage) {
         console.warn("Aviso ao sincronizar anexos de lotes com o Storage:", errStorage);
       }
 
       const payload = activeLotes.map(l => {
-        const isHugeBase64 = l.pdf_url && typeof l.pdf_url === "string" && l.pdf_url.startsWith("data:") && l.pdf_url.length > 200000;
+        const isBase64 = l.pdf_url && typeof l.pdf_url === "string" && (l.pdf_url.startsWith("data:") || l.pdf_url.length > 2000);
+        const validUserId = l.usuario_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(l.usuario_id) ? l.usuario_id : null;
         return {
           id: l.id,
           numero: Number(l.numero) || 0,
           data_recebimento: l.data_recebimento ? l.data_recebimento.split("T")[0] : new Date().toISOString().split("T")[0],
           documentos_impressos: Number(l.documentos_impressos) || 0,
           pdf_nome: l.pdf_nome || null,
-          pdf_url: isHugeBase64 ? null : (l.pdf_url || null),
-          pdf_tamanho: l.pdf_tamanho !== undefined ? l.pdf_tamanho : null,
+          pdf_url: isBase64 ? null : (l.pdf_url || null),
+          pdf_tamanho: l.pdf_tamanho !== undefined && l.pdf_tamanho !== null ? Number(l.pdf_tamanho) : null,
           observacao: l.observacao || null,
-          usuario_id: l.usuario_id || null,
+          usuario_id: validUserId,
           usuario_nome: l.usuario_nome || null,
           created_at: l.created_at || new Date().toISOString(),
           updated_at: l.updated_at || new Date().toISOString()
@@ -8458,29 +8503,33 @@ export async function syncSingleTable(
       }
       return rem;
     });
-    const filtered = mergedRemote.filter((l: any) => !deletedLoteSet.has(l.id));
-    saveStoredList("lotes", filtered);
+    // Se o banco remoto ainda estiver em processo de carga, combina garantindo que nenhum lote local seja perdido
+    const finalLotes = mergedRemote.length >= localExisting.length ? mergedRemote : localExisting;
+    saveStoredList("lotes", finalLotes);
     if (dexieDb.lotes) {
       await dexieDb.lotes.clear();
-      await dexieDb.lotes.bulkPut(filtered);
+      await dexieDb.lotes.bulkPut(finalLotes);
     }
     notifyDataSync("lotes", true);
+  } else if (tableKey === "responsaveis") {
+    const list = remoteData && remoteData.length > 0 ? remoteData : getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
+    saveStoredList("responsaveis", list);
+    await idbSet("detran_cnh_responsaveis", list);
+    notifyDataSync("responsaveis", true);
   } else if (tableKey === "memorandos") {
-    const deletedMemoSet = getDeletedIds("memorandos");
-    const filtered = (remoteData || []).filter((m: any) => !deletedMemoSet.has(m.id));
-    saveStoredList("memorandos", filtered);
-    await idbSet("detran_cnh_memorandos", filtered);
+    const list = remoteData && remoteData.length > 0 ? remoteData : getStoredList<Memorando>("memorandos", SEED_MEMORANDOS);
+    saveStoredList("memorandos", list);
+    await idbSet("detran_cnh_memorandos", list);
     notifyDataSync("memorandos", true);
   } else if (tableKey === "candidatos") {
-    const deletedCandSet = getDeletedIds("candidatos");
-    const filtered = (remoteData || []).filter((c: any) => !deletedCandSet.has(c.id));
-    saveStoredList("candidatos", filtered);
-    await idbSet("detran_cnh_candidatos", filtered);
+    const list = remoteData && remoteData.length > 0 ? remoteData : getStoredList<Candidato>("candidatos", SEED_CANDIDATOS);
+    saveStoredList("candidatos", list);
+    await idbSet("detran_cnh_candidatos", list);
     notifyDataSync("candidatos", true);
   } else if (tableKey === "declaracoes") {
-    const deletedDeclSet = getDeletedIds("declaracoes");
-    const filtered = (remoteData || []).filter((d: any) => !deletedDeclSet.has(d.id));
-    saveStoredList("declaracoes", filtered);
+    const list = remoteData && remoteData.length > 0 ? remoteData : getStoredList<Declaracao>("declaracoes", []);
+    saveStoredList("declaracoes", list);
+    await idbSet("detran_cnh_declaracoes", list);
     notifyDataSync("declaracoes", true);
   } else if (tableKey === "orgao") {
     await loadOrgaoConfigFromSupabase();
@@ -8500,7 +8549,7 @@ export async function syncSingleTable(
       try {
         localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify((remoteData || []).slice(0, 1000)));
       } catch {}
-      idbSet("detran_acessos_cidadao_logs", remoteData || []).catch(() => {});
+      await idbSet("detran_acessos_cidadao_logs", remoteData || []);
     }
   } else if (tableKey === "historico") {
     saveStoredList("historico", remoteData || []);
@@ -8525,10 +8574,12 @@ export async function syncSingleTable(
     finalLocalCount = await dexieDb.lotes.count();
   } else if (tableKey === "geral") {
     finalLocalCount = await dexieDb.geral.count();
+  } else if (tableKey === "responsaveis") {
+    finalLocalCount = (await idbGet<any[]>("detran_cnh_responsaveis"))?.length || getStoredList("responsaveis", []).length;
   } else if (tableKey === "memorandos") {
-    finalLocalCount = getStoredList("memorandos", []).length;
+    finalLocalCount = (await idbGet<any[]>("detran_cnh_memorandos"))?.length || getStoredList("memorandos", []).length;
   } else if (tableKey === "candidatos") {
-    finalLocalCount = getStoredList("candidatos", []).length;
+    finalLocalCount = (await idbGet<any[]>("detran_cnh_candidatos"))?.length || getStoredList("candidatos", []).length;
   } else if (tableKey === "historico") {
     finalLocalCount = (await idbGet<any[]>("detran_cnh_historico"))?.length || getStoredList("historico", []).length;
   } else if (tableKey === "auditoria") {

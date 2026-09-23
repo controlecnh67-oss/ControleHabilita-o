@@ -9,7 +9,9 @@ import {
   Calendar,
   Layers,
   FileCheck,
-  RotateCcw
+  RotateCcw,
+  Copy,
+  Check
 } from "lucide-react";
 import { Lote, LoteInput } from "../../types";
 import { getNextLoteNumero } from "../../services/db";
@@ -40,6 +42,7 @@ export const LoteModal: React.FC<LoteModalProps> = ({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copiedSql, setCopiedSql] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -210,9 +213,30 @@ export const LoteModal: React.FC<LoteModalProps> = ({
         {/* Formulário */}
         <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto flex-1">
           {error && (
-            <div className="p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 rounded-xl flex items-start gap-2.5 text-red-700 dark:text-red-300 text-xs">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{error}</span>
+            <div className="p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 rounded-xl flex flex-col gap-2 text-red-700 dark:text-red-300 text-xs">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{error}</span>
+              </div>
+              {(error.includes("out of range") || error.includes("integer")) && (
+                <div className="mt-1 pt-2 border-t border-red-200 dark:border-red-800/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 bg-red-100/50 dark:bg-red-900/30 p-2 rounded-lg">
+                  <span className="text-[11px] text-red-800 dark:text-red-200 font-medium">
+                    A coluna no Supabase é INTEGER (máx ~2 bilhões). Altere para BIGINT:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText("ALTER TABLE public.lotes ALTER COLUMN numero TYPE BIGINT;");
+                      setCopiedSql(true);
+                      setTimeout(() => setCopiedSql(false), 2500);
+                    }}
+                    className="shrink-0 px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-md text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                  >
+                    {copiedSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedSql ? "Comando Copiado!" : "Copiar Comando SQL"}</span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -235,7 +259,9 @@ export const LoteModal: React.FC<LoteModalProps> = ({
                 />
               </div>
               <span className="text-[11px] text-slate-400 dark:text-slate-500 mt-1 block">
-                Identificador sequencial do malote/remessa
+                {typeof numero === "number" && numero > 2147483647
+                  ? "Código/Identificador longo de remessa (suportado via BIGINT)"
+                  : "Identificador sequencial do malote/remessa"}
               </span>
             </div>
 
