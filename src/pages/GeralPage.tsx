@@ -81,18 +81,18 @@ import { downloadCNHFichaPDF, buildCNHShareableText } from "../services/cnhFicha
 import { cn, formatCPF, formatPhone, formatDateTime, normalizeSearch, matchDigitsSafe } from "../lib/utils";
 import { DEFAULT_GAVETAS, DEFAULT_REPARTICOES } from "../lib/constants";
 
-// Helper para exibir Gaveta e Repartição de forma compacta (apenas número/código) na tabela
-const cleanGavetaText = (text?: string) => {
-  if (!text) return "";
-  const cleaned = text.replace(/^gaveta\s*/i, "").trim();
-  return cleaned || text;
+// Helper para exibir Gaveta e Repartição de forma compacta (apenas número/código) na tabela e no relatório
+const cleanNumeroApenas = (text?: string | number) => {
+  if (text === undefined || text === null || text === "") return "-";
+  const str = String(text).trim();
+  const match = str.match(/\d+/);
+  if (match) return match[0];
+  const cleaned = str.replace(/^(gaveta|gav\.?|repartição|reparticao|rep\.?)\s*/i, "").trim();
+  return cleaned || str || "-";
 };
 
-const cleanReparticaoText = (text?: string) => {
-  if (!text) return "";
-  const cleaned = text.replace(/^repartição\s*/i, "").replace(/^reparticao\s*/i, "").trim();
-  return cleaned || text;
-};
+const cleanGavetaText = (text?: string | number) => cleanNumeroApenas(text);
+const cleanReparticaoText = (text?: string | number) => cleanNumeroApenas(text);
 
 export const STORAGE_KEY_GERAL_COLUMNS = "detran_geral_visible_columns";
 
@@ -1157,27 +1157,28 @@ export const GeralPage: React.FC = () => {
 
       const dataStr = `Emissão: ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
 
-      // Corpo da tabela com Gaveta, Repartição, Data Mov. da CNH e CPF formatado
+      // Corpo da tabela com Gaveta e Repartição (apenas número), Data em branco (para assinatura manual) e CPF formatado
       const tableData = reportData.map((c) => [
         `#${c.ordem}`,
-        c.nome || "-",
+        (c.nome || "-").toUpperCase(),
         formatCPF(c.cpf),
-        cleanGavetaText(c.gaveta) || c.gaveta || "-",
-        c.reparticao || "-",
-        c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "-",
-        ""
+        cleanNumeroApenas(c.gaveta),
+        cleanNumeroApenas(c.reparticao),
+        "", // Coluna de Data em branco conforme solicitado para preenchimento manual na retirada
+        ""  // Coluna de Assinatura / Responsável
       ]);
 
       autoTable(doc, {
         startY: 28,
-        margin: { top: 28, bottom: 14, left: 14, right: 14 },
-        head: [["Ordem", "Nome do Titular", "CPF", "Gaveta", "Repartição", "Data Mov.", "Assinatura / Responsável"]],
+        margin: { top: 28, bottom: 14, left: 10, right: 10 },
+        head: [["Ordem", "Nome do Titular", "CPF", "Gav.", "Rep.", "Data", "Assinatura / Responsável"]],
         body: tableData,
         theme: "grid",
         styles: {
           font: "helvetica",
-          fontSize: 7.5,
-          cellPadding: 1.5,
+          fontSize: 7.2,
+          cellPadding: { top: 2, bottom: 2, left: 1.2, right: 1.2 },
+          minCellHeight: 6.2,
           textColor: [30, 41, 59],
           lineColor: [203, 213, 225],
           lineWidth: 0.2,
@@ -1190,22 +1191,23 @@ export const GeralPage: React.FC = () => {
           halign: "center",
         },
         columnStyles: {
-          0: { halign: "center", cellWidth: 14, fontStyle: "bold" },
-          1: { cellWidth: 46 },
-          2: { halign: "center", cellWidth: 26, font: "courier" },
-          3: { halign: "center", cellWidth: 16 },
-          4: { halign: "center", cellWidth: 20 },
-          5: { halign: "center", cellWidth: 20 },
-          6: { cellWidth: "auto" },
+          0: { halign: "center", cellWidth: 12, fontStyle: "bold" },
+          1: { cellWidth: 72, fontStyle: "bold", overflow: "ellipsize" }, // 72mm garante que o nome do titular fique em uma única linha
+          2: { halign: "center", cellWidth: 24, font: "helvetica" },
+          3: { halign: "center", cellWidth: 10, fontStyle: "bold" },
+          4: { halign: "center", cellWidth: 10, fontStyle: "bold" },
+          5: { halign: "center", cellWidth: 18 },
+          6: { cellWidth: 44 },
         },
         didDrawPage: (data) => {
           const pageWidth = doc.internal.pageSize.getWidth(); // 210mm
           const pageHeight = doc.internal.pageSize.getHeight(); // 297mm
-          const rightMarginX = pageWidth - 14; // 196mm
+          const leftMarginX = 10;
+          const rightMarginX = pageWidth - 10; // 200mm
 
           // Tenta desenhar a logo oficial no lado esquerdo do cabeçalho
-          const hasLogo = addPDFHeaderLogo(doc, 14, 5, 14, 14);
-          const startTextX = hasLogo ? 32 : 14;
+          const hasLogo = addPDFHeaderLogo(doc, leftMarginX, 5, 14, 14);
+          const startTextX = hasLogo ? 27 : leftMarginX;
 
           // Cabeçalho Oficial Repetido em TODAS as páginas
           doc.setFont("helvetica", "bold");
@@ -1230,13 +1232,13 @@ export const GeralPage: React.FC = () => {
           // Linha divisória
           doc.setDrawColor(203, 213, 225); // slate-300
           doc.setLineWidth(0.4);
-          doc.line(14, 21, rightMarginX, 21);
+          doc.line(leftMarginX, 21, rightMarginX, 21);
 
           // Rodapé em TODAS as páginas
           const pageStr = `Página ${data.pageNumber}`;
           doc.setFontSize(7.5);
           doc.setTextColor(148, 163, 184);
-          doc.text("Sistema DETRAN-PROT — Controle Operacional de Protocolo e Entregas (Orientação Vertical)", 14, pageHeight - 6);
+          doc.text("Sistema DETRAN-PROT — Controle Operacional de Protocolo e Entregas (Orientação Vertical)", leftMarginX, pageHeight - 6);
           doc.text(pageStr, rightMarginX, pageHeight - 6, { align: "right" });
         },
       });
@@ -2679,25 +2681,25 @@ export const GeralPage: React.FC = () => {
             <table className="w-full text-left text-[11px] border-collapse">
               <thead>
                 <tr className="border-b border-slate-300 dark:border-slate-700 font-bold text-slate-600 dark:text-slate-400">
-                  <th className="py-1 px-1">Ordem</th>
-                  <th className="py-1 px-2">Nome</th>
-                  <th className="py-1 px-2">CPF</th>
-                  <th className="py-1 px-1 text-center">Gaveta</th>
-                  <th className="py-1 px-1 text-center">Repartição</th>
-                  <th className="py-1 px-1 text-center">Data Mov.</th>
+                  <th className="py-1 px-1 text-center w-12">Ordem</th>
+                  <th className="py-1 px-2">Nome do Titular</th>
+                  <th className="py-1 px-2 text-center w-28">CPF</th>
+                  <th className="py-1 px-1 text-center w-10">Gav.</th>
+                  <th className="py-1 px-1 text-center w-10">Rep.</th>
+                  <th className="py-1 px-1 text-center w-16">Data</th>
                   <th className="py-1 px-2">Assinatura / Responsável</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {reportData.slice(0, 5).map((c, idx) => (
                   <tr key={idx} className="text-slate-700 dark:text-slate-300">
-                    <td className="py-1 px-1 font-bold">#{c.ordem}</td>
-                    <td className="py-1 px-2 font-medium truncate max-w-[120px]">{c.nome}</td>
-                    <td className="py-1 px-2 font-mono text-xs">{formatCPF(c.cpf)}</td>
-                    <td className="py-1 px-1 text-center font-mono">{cleanGavetaText(c.gaveta) || c.gaveta || "-"}</td>
-                    <td className="py-1 px-1 text-center">{c.reparticao || "-"}</td>
-                    <td className="py-1 px-1 text-center font-mono text-slate-500">{c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "-"}</td>
-                    <td className="py-1 px-2"></td>
+                    <td className="py-1.5 px-1 font-bold text-center">#{c.ordem}</td>
+                    <td className="py-1.5 px-2 font-medium whitespace-nowrap">{c.nome}</td>
+                    <td className="py-1.5 px-2 font-mono text-xs text-center">{formatCPF(c.cpf)}</td>
+                    <td className="py-1.5 px-1 text-center font-bold font-mono">{cleanNumeroApenas(c.gaveta)}</td>
+                    <td className="py-1.5 px-1 text-center font-bold font-mono">{cleanNumeroApenas(c.reparticao)}</td>
+                    <td className="py-1.5 px-1 text-center font-mono text-slate-400"></td>
+                    <td className="py-1.5 px-2 border-b border-dashed border-slate-200 dark:border-slate-700"></td>
                   </tr>
                 ))}
                 {reportData.length > 5 && (
