@@ -16,7 +16,7 @@ import {
   Building2,
   Loader2
 } from "lucide-react";
-import { Declaracao, DeclaracaoItemCondutor, Responsavel, GeralCNH } from "../../types";
+import { Declaracao, DeclaracaoItemCondutor, Responsavel, GeralCNH, TipoResponsavel } from "../../types";
 import {
   getResponsaveis,
   createResponsavel,
@@ -68,6 +68,7 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
 
   // Sub-modal: Cadastro rápido de novo procurador
   const [showNovoProcuradorModal, setShowNovoProcuradorModal] = useState(false);
+  const [novoProcTipo, setNovoProcTipo] = useState<TipoResponsavel>("Procurador");
   const [novoProcNome, setNovoProcNome] = useState("");
   const [novoProcCpf, setNovoProcCpf] = useState("");
   const [novoProcTelefone, setNovoProcTelefone] = useState("");
@@ -271,6 +272,7 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
       const created = await createResponsavel(
         {
           nome: novoProcNome.trim().toUpperCase(),
+          tipo: novoProcTipo,
           cpf: formattedCpf,
           telefone: formattedTel,
           observacao: novoProcEndereco ? `Endereço: ${novoProcEndereco.trim()}` : "",
@@ -290,6 +292,7 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
 
       // Fechar modal de criação rápida
       setShowNovoProcuradorModal(false);
+      setNovoProcTipo("Procurador");
       setNovoProcNome("");
       setNovoProcCpf("");
       setNovoProcTelefone("");
@@ -545,7 +548,11 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
               </h3>
               <button
                 type="button"
-                onClick={() => setShowNovoProcuradorModal(true)}
+                onClick={() => {
+                  setNovoProcError("");
+                  setNovoProcTipo("Procurador");
+                  setShowNovoProcuradorModal(true);
+                }}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 bg-blue-50 dark:bg-blue-950/50 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded-lg border border-blue-200 dark:border-blue-800 transition-colors shadow-xs"
               >
                 <UserPlus className="w-3.5 h-3.5" />
@@ -602,6 +609,8 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
                         type="button"
                         onClick={() => {
                           setNovoProcNome(procuradorSearch);
+                          setNovoProcTipo("Procurador");
+                          setNovoProcError("");
                           setShowNovoProcuradorModal(true);
                           setIsProcuradorDropdownOpen(false);
                         }}
@@ -1084,6 +1093,21 @@ export const DeclaracaoModal: React.FC<DeclaracaoModalProps> = ({
             )}
 
             <form onSubmit={handleSaveNovoProcurador} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Tipo de Responsável <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={novoProcTipo}
+                  onChange={(e) => setNovoProcTipo(e.target.value as TipoResponsavel)}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-medium focus:ring-2 focus:ring-blue-500 outline-hidden"
+                >
+                  <option value="Procurador">Procurador</option>
+                  <option value="Despachante">Despachante</option>
+                  <option value="Titular">Titular</option>
+                </select>
+              </div>
+
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Nome Completo <span className="text-rose-500">*</span>

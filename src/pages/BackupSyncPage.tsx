@@ -109,6 +109,7 @@ ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE;
 CREATE TABLE IF NOT EXISTS public.responsaveis (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     nome VARCHAR(255) NOT NULL,
+    tipo VARCHAR(50) DEFAULT 'Despachante',
     cpf VARCHAR(14) UNIQUE NOT NULL,
     telefone VARCHAR(50),
     registro VARCHAR(100),
@@ -118,6 +119,7 @@ CREATE TABLE IF NOT EXISTS public.responsaveis (
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS tipo VARCHAR(50) DEFAULT 'Despachante';
 ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
 ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
 ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE;
@@ -126,10 +128,11 @@ ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT T
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.responsaveis WHERE id = 'a0000000-0000-0000-0000-000000000001' OR cpf = '000.000.000-00') THEN
-        INSERT INTO public.responsaveis (id, nome, cpf, telefone, observacao, ativo)
+        INSERT INTO public.responsaveis (id, nome, tipo, cpf, telefone, observacao, ativo)
         VALUES (
             'a0000000-0000-0000-0000-000000000001',
             'Proprietário',
+            'Titular',
             '000.000.000-00',
             '(93) 00000-0000',
             'Titular da CNH retirando seu próprio documento no guichê',
@@ -137,7 +140,7 @@ BEGIN
         );
     ELSE
         UPDATE public.responsaveis 
-        SET nome = 'Proprietário', ativo = TRUE 
+        SET nome = 'Proprietário', tipo = 'Titular', ativo = TRUE 
         WHERE id = 'a0000000-0000-0000-0000-000000000001' OR cpf = '000.000.000-00';
     END IF;
 END $$;

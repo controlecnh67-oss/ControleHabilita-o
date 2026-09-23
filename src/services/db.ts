@@ -1531,6 +1531,28 @@ export function isProprietarioRecord(r?: { id?: string; nome?: string; cpf?: str
   );
 }
 
+// Estado dinâmico para compatibilidade do schema da tabela responsaveis no Supabase
+let supabaseSupportsResponsavelTipo: boolean | null = null;
+
+export function buildResponsavelSupabasePayload(r: Partial<Responsavel>, includeTipo = false) {
+  const payload: any = {
+    id: r.id,
+    nome: r.nome,
+    cpf: r.cpf ? r.cpf.trim() : null,
+    telefone: r.telefone ? r.telefone.trim() : null,
+    registro: r.registro ? r.registro.trim() : null,
+    observacao: r.observacao ? r.observacao.trim() : null,
+    ativo: r.ativo !== false,
+  };
+  if (r.created_at) {
+    payload.created_at = r.created_at;
+  }
+  if (includeTipo && r.tipo) {
+    payload.tipo = r.tipo;
+  }
+  return payload;
+}
+
 export function deduplicateResponsaveisList(list: Responsavel[]): {
   cleaned: Responsavel[];
   duplicateIds: string[];
@@ -1798,15 +1820,7 @@ export async function restoreResponsaveisInfoAndDatabase(
   if (isSupabaseConfigured()) {
     try {
       log("Gravando responsáveis mestres no banco de dados Supabase...");
-      const respPayloads = cleaned.map((r) => ({
-        id: r.id,
-        nome: r.nome,
-        cpf: r.cpf || null,
-        telefone: r.telefone || null,
-        tipo: r.tipo || "Despachante",
-        ativo: r.ativo !== false,
-        created_at: r.created_at || new Date().toISOString()
-      }));
+      const respPayloads = cleaned.map((r) => buildResponsavelSupabasePayload(r, false));
       for (let i = 0; i < respPayloads.length; i += 100) {
         await supabase.from("responsaveis").upsert(respPayloads.slice(i, i + 100), { onConflict: "id" });
       }
@@ -2112,7 +2126,8 @@ export async function deduplicateResponsaveis(
     if (isSupabaseConfigured()) {
       try {
         log("Sincronizando responsáveis mestres no banco de dados Supabase...");
-        await supabase.from("responsaveis").upsert(cleaned, { onConflict: "id" });
+        const safeResp = cleaned.map((r) => buildResponsavelSupabasePayload(r, false));
+        await supabase.from("responsaveis").upsert(safeResp, { onConflict: "id" });
       } catch (supErr: any) {
         console.warn("Erro ao sincronizar responsáveis mestres no Supabase:", supErr);
       }
@@ -2297,7 +2312,12 @@ export async function getResponsaveis(): Promise<Responsavel[]> {
     try {
       const data = await fetchAllRowsFromSupabase<Responsavel>("responsaveis", 1000, "nome", true);
       if (data && Array.isArray(data)) {
-        list = data;
+        const localList = getStoredList<Responsavel>("responsaveis", []);
+        const localMap = new Map(localList.map((r) => [r.id, r]));
+        list = data.map((d) => ({
+          ...d,
+          tipo: d.tipo || localMap.get(d.id)?.tipo || (isProprietarioRecord(d) ? "Titular" : "Despachante"),
+        }));
       }
     } catch (err) {
       console.warn("Aviso ao buscar responsáveis no Supabase:", err);
@@ -2389,17 +2409,38 @@ export async function createResponsavel(
 
   if (isSupabaseConfigured()) {
     try {
-      const { data: inserted, error } = await supabase.from("responsaveis").insert([novo]).select().single();
+      const shouldTryTipo = supabaseSupportsResponsavelTipo !== false && !!novo.tipo;
+      let payload = buildResponsavelSupabasePayload(novo, shouldTryTipo);
+      let { data: inserted, error } = await supabase.from("responsaveis").insert([payload]).select().single();
+
+      // Se a coluna 'tipo' não existir no schema do Supabase (PGRST204), retenta sem ela de forma transparente
+      if (error && (error.code === "PGRST204" || error.message?.includes("tipo"))) {
+        console.warn("Coluna 'tipo' não encontrada na tabela 'responsaveis' do Supabase. Salvando sem a coluna 'tipo'.");
+        supabaseSupportsResponsavelTipo = false;
+        payload = buildResponsavelSupabasePayload(novo, false);
+        const retry = await supabase.from("responsaveis").insert([payload]).select().single();
+        inserted = retry.data;
+        error = retry.error;
+      } else if (!error && shouldTryTipo) {
+        supabaseSupportsResponsavelTipo = true;
+      }
+
       if (error) {
         console.error("Erro no Supabase ao criar responsável:", error);
         throw new Error(`Erro no Supabase: ${error.message}`);
       }
+
       if (inserted) {
         const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
-        saveStoredList("responsaveis", [inserted as Responsavel, ...localList]);
+        const finalObj: Responsavel = {
+          ...novo,
+          ...(inserted as Responsavel),
+          tipo: novo.tipo || (inserted as any).tipo || "Despachante"
+        };
+        saveStoredList("responsaveis", [finalObj, ...localList]);
         notifyDataSync("responsaveis");
-        await logAuditoria("responsaveis", inserted.nome, "Inclusão", userId, userNome, null, inserted);
-        return inserted as Responsavel;
+        await logAuditoria("responsaveis", finalObj.nome, "Inclusão", userId, userNome, null, finalObj);
+        return finalObj;
       }
     } catch (err: any) {
       if (err.message && err.message.startsWith("Erro no Supabase")) throw err;
@@ -2467,15 +2508,35 @@ export async function updateResponsavel(
 
   if (isSupabaseConfigured()) {
     try {
-      const { data: updatedSup, error } = await supabase.from("responsaveis").update(atualizado).eq("id", id).select().single();
+      const shouldTryTipo = supabaseSupportsResponsavelTipo !== false && !!atualizado.tipo;
+      let payload = buildResponsavelSupabasePayload(atualizado, shouldTryTipo);
+      let { data: updatedSup, error } = await supabase.from("responsaveis").update(payload).eq("id", id).select().single();
+
+      // Se a coluna 'tipo' não existir no schema do Supabase (PGRST204), retenta sem ela de forma transparente
+      if (error && (error.code === "PGRST204" || error.message?.includes("tipo"))) {
+        console.warn("Coluna 'tipo' não encontrada na tabela 'responsaveis' do Supabase. Atualizando sem a coluna 'tipo'.");
+        supabaseSupportsResponsavelTipo = false;
+        payload = buildResponsavelSupabasePayload(atualizado, false);
+        const retry = await supabase.from("responsaveis").update(payload).eq("id", id).select().single();
+        updatedSup = retry.data;
+        error = retry.error;
+      } else if (!error && shouldTryTipo) {
+        supabaseSupportsResponsavelTipo = true;
+      }
+
       if (!error && updatedSup) {
         const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
         const lIndex = localList.findIndex((r) => r.id === id);
-        if (lIndex !== -1) localList[lIndex] = updatedSup as Responsavel;
+        const finalObj: Responsavel = {
+          ...atualizado,
+          ...(updatedSup as Responsavel),
+          tipo: atualizado.tipo || (updatedSup as any).tipo || "Despachante"
+        };
+        if (lIndex !== -1) localList[lIndex] = finalObj;
         saveStoredList("responsaveis", localList);
         notifyDataSync("responsaveis");
-        await logAuditoria("responsaveis", ant.nome, "Alteração", userId, userNome, ant, updatedSup);
-        return updatedSup as Responsavel;
+        await logAuditoria("responsaveis", ant.nome, "Alteração", userId, userNome, ant, finalObj);
+        return finalObj;
       }
     } catch (e) {
       console.warn("Aviso ao atualizar responsável no Supabase:", e);
