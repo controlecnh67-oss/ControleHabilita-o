@@ -28,7 +28,7 @@ import autoTable from "jspdf-autotable";
 import { Lote, LoteInput } from "../../types";
 import { getLotes, createLote, updateLote, deleteLote } from "../../services/db";
 import { getOrgaoConfig, addPDFHeaderLogo } from "../../services/orgaoService";
-import { resolveLotePdfUrl } from "../../services/lotesStorageService";
+import { resolveLotePdfUrl, dataUrlToBlob } from "../../services/lotesStorageService";
 import { useAuth } from "../../context/AuthContext";
 import { LoteModal } from "./LoteModal";
 import { LotePdfViewerModal } from "./LotePdfViewerModal";
@@ -298,34 +298,32 @@ export const LotesSubTab: React.FC = () => {
     }
     try {
       showToast(`Iniciando download do PDF do Lote #${lote.numero}...`);
+      const filename = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
+
       if (activeUrl.startsWith("http")) {
         const response = await fetch(activeUrl);
         const blob = await response.blob();
         const blobUrl = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = blobUrl;
-        a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        window.URL.revokeObjectURL(blobUrl);
+        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000);
       } else {
+        const blob = dataUrlToBlob(activeUrl);
+        const blobUrl = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
-        a.href = activeUrl;
-        a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
+        a.href = blobUrl;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
+        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000);
       }
     } catch {
-      const a = document.createElement("a");
-      a.href = activeUrl;
-      a.target = "_blank";
-      a.rel = "noreferrer";
-      a.download = lote.pdf_nome || `Lote_${lote.numero}_CNHs.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      showToast("Falha ao baixar arquivo PDF. Tente novamente.", "error");
     }
   };
 

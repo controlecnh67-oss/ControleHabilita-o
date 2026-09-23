@@ -1,5 +1,6 @@
 import { supabase, isSupabaseConfigured } from "./supabase";
 import { Lote } from "../types";
+import { dexieDb } from "./dexieDb";
 
 /**
  * Converte Data URL (Base64) em objeto Blob binário de forma otimizada
@@ -200,8 +201,20 @@ export async function syncPendingLoteAnexosToSupabase(
  * Resolve a URL do PDF do lote recuperando do Storage ou do backup resiliente imagens_sync se necessário
  */
 export async function resolveLotePdfUrl(lote: Lote): Promise<string | undefined> {
-  if (lote.pdf_url && (lote.pdf_url.startsWith("http") || lote.pdf_url.startsWith("data:"))) {
+  if (lote.pdf_url && (lote.pdf_url.startsWith("http") || lote.pdf_url.startsWith("data:") || lote.pdf_url.startsWith("blob:"))) {
     return lote.pdf_url;
+  }
+
+  // 1. Tenta recuperar do Dexie local (IndexedDB)
+  if (lote.id) {
+    try {
+      if (dexieDb.lotes) {
+        const localLote = await dexieDb.lotes.get(lote.id);
+        if (localLote?.pdf_url && (localLote.pdf_url.startsWith("http") || localLote.pdf_url.startsWith("data:") || localLote.pdf_url.startsWith("blob:"))) {
+          return localLote.pdf_url;
+        }
+      }
+    } catch {}
   }
 
   if (!isSupabaseConfigured() || !lote.id) {
@@ -209,7 +222,7 @@ export async function resolveLotePdfUrl(lote: Lote): Promise<string | undefined>
   }
 
   try {
-    // 1. Tenta recuperar da tabela imagens_sync
+    // 2. Tenta recuperar da tabela imagens_sync
     const { data: syncRow } = await supabase
       .from("imagens_sync")
       .select("url_publica, dados_base64")
