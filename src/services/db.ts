@@ -1258,8 +1258,8 @@ export async function getUsuarios(): Promise<Usuario[]> {
     try {
       const data = await fetchAllRowsFromSupabase<Usuario>("usuarios", 1000, "created_at", false);
       if (data && Array.isArray(data)) {
-        const activeUsers = data.filter((u) => u.ativo !== false && !deletedIds.has(u.id));
-        const { users: sanitizedUsers, repairedCount } = repairCorruptedUsuarios(activeUsers);
+        const nonDeletedUsers = data.filter((u) => !deletedIds.has(u.id));
+        const { users: sanitizedUsers, repairedCount } = repairCorruptedUsuarios(nonDeletedUsers);
         saveStoredList("usuarios", sanitizedUsers);
         if (repairedCount > 0) {
           // Corrige imediatamente no Supabase para restaurar os e-mails e logins originais no banco remoto
@@ -1279,7 +1279,7 @@ export async function getUsuarios(): Promise<Usuario[]> {
             console.warn("Erro ao atualizar usuários reparados no Supabase:", e)
           );
         }
-        return sanitizedUsers;
+        return sanitizedUsers.filter((u) => u.ativo !== false);
       }
     } catch (err) {
       console.warn("Aviso ao buscar usuários do Supabase, caindo para local:", err);
@@ -6149,7 +6149,8 @@ export async function deleteMultipleGeralCNHs(
 // ============================================================================
 
 export async function getHistoricoList(): Promise<HistoricoMovimentacao[]> {
-  const localList = getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO);
+  const idbHist = await idbGet<HistoricoMovimentacao[]>("detran_cnh_historico");
+  const localList = (idbHist && idbHist.length > 0) ? idbHist : getStoredList<HistoricoMovimentacao>("historico", SEED_HISTORICO);
   let mergedMap = new Map<string, HistoricoMovimentacao>();
   localList.forEach((h) => mergedMap.set(h.id, h));
 
@@ -6222,7 +6223,8 @@ export async function getHistoricoList(): Promise<HistoricoMovimentacao[]> {
 }
 
 export async function getAuditoriaList(): Promise<Auditoria[]> {
-  const localList = getStoredList<Auditoria>("auditoria", SEED_AUDITORIA);
+  const idbAud = await idbGet<Auditoria[]>("detran_cnh_auditoria");
+  const localList = (idbAud && idbAud.length > 0) ? idbAud : getStoredList<Auditoria>("auditoria", SEED_AUDITORIA);
   const mergedMap = new Map<string, Auditoria>();
   localList.forEach((a) => mergedMap.set(a.id, a));
 
@@ -7141,10 +7143,7 @@ export async function checkSyncStatus(): Promise<SyncStatusItem[]> {
 
         if (!error && count !== null) {
           supCount = count;
-          const isLogTable = item.key === "historico" || item.key === "auditoria" || item.key === "acessos_cidadao";
           if (localCount === supCount) {
-            status = 'synced';
-          } else if (isLogTable && localCount >= 250 && supCount >= 250) {
             status = 'synced';
           } else {
             status = 'pending';
@@ -7210,11 +7209,14 @@ export async function fetchAllRowsFromSupabase<T = any>(
   orderColumn?: string,
   ascending = true,
   forceRefresh = false,
-  maxRows?: number
+  maxRows?: number,
+  onProgress?: (loadedCount: number) => void
 ): Promise<T[]> {
-  // Para tabelas de log volumosas, aplicar limite seguro padrão de 250 itens mais recentes
+  // Para tabelas de log volumosas:
+  // - Se maxRows === 0: sincronização completa sem limite, baixa 100% das linhas do Supabase
+  // - Se maxRows for undefined (consultas comuns de UI): limite padrão de 250 registros para fluidez imediata
   const isLogTable = tableName === "auditoria" || tableName === "historico_movimentacoes" || tableName === "acessos_cidadao";
-  const effectiveMaxRows = maxRows || (isLogTable ? 250 : undefined);
+  const effectiveMaxRows = maxRows === 0 ? undefined : (maxRows !== undefined ? maxRows : (isLogTable ? 250 : undefined));
   const effectiveOrderCol = orderColumn || (isLogTable ? "data_hora" : undefined);
   const effectiveAscending = isLogTable && orderColumn === undefined ? false : ascending;
 
@@ -7260,6 +7262,10 @@ export async function fetchAllRowsFromSupabase<T = any>(
         allRows = allRows.concat(data as T[]);
         const chunkBytes = JSON.stringify(data).length;
         totalBytes += chunkBytes;
+
+        if (onProgress) {
+          onProgress(allRows.length);
+        }
 
         if (data.length < currentBatchSize || (effectiveMaxRows && allRows.length >= effectiveMaxRows)) {
           hasMore = false;
@@ -8062,7 +8068,19 @@ export async function syncSupabaseToLocal(
   for (const item of tables) {
     try {
       log(`📥 Baixando tabela '${item.name}'...`);
-      const data = await fetchAllRowsFromSupabase(item.name, 1000, item.orderCol, item.asc);
+      const data = await fetchAllRowsFromSupabase(
+        item.name, 
+        1000, 
+        item.orderCol, 
+        item.asc, 
+        true, 
+        0, 
+        (count) => {
+          if (count % 3000 === 0) {
+            log(` ⏳ Carregando '${item.name}': ${count} registros...`);
+          }
+        }
+      );
       if (data && data.length > 0) {
         let filteredData = data;
         if (item.key === "memorandos") {
@@ -8547,7 +8565,19 @@ export async function syncSingleTable(
 
   // PASSO 2: Baixar do Supabase e sincronizar localmente
   log(`📥 Baixando versão consolidada de '${info.tableName}' do Supabase...`);
-  const remoteData = await fetchAllRowsFromSupabase(info.tableName, 1000, info.orderCol, info.asc, true);
+  const remoteData = await fetchAllRowsFromSupabase(
+    info.tableName, 
+    1000, 
+    info.orderCol, 
+    info.asc, 
+    true, 
+    0, 
+    (count) => {
+      if (count % 2000 === 0 || count < 2000) {
+        log(` ⏳ Progresso download '${info.tableName}': ${count} registros recebidos...`);
+      }
+    }
+  );
 
   if (tableKey === "lotes") {
     const deletedLoteSet = getDeletedIds("lotes");
