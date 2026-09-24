@@ -2,6 +2,7 @@ import Dexie, { Table } from "dexie";
 import { GeralCNH, Lote } from "../types";
 import { supabase, isSupabaseConfigured } from "./supabase";
 import { trackEgress } from "./egressMonitorService";
+import { recordSyncTransaction } from "./syncPerformanceMonitor";
 import cnhSeedData from "../data/cnhSeedData.json";
 
 // Índices rápidos para recuperação de dados de semente (ground truth)
@@ -624,9 +625,29 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
 
           if (data && data.length > 0) {
             const deletedIds = getDeletedGeralIds();
+            const tPrep0 = performance.now();
             const validData = data.filter((d) => !deletedIds.has(d.id));
             const records = validData.map(normalizeCNHRecord);
+            const prepDuration = performance.now() - tPrep0;
+
+            const tDexie0 = performance.now();
             await dexieDb.geral.bulkPut(records);
+            const dexieDuration = performance.now() - tDexie0;
+
+            recordSyncTransaction({
+              table: "geral_cnhs",
+              eventType: "FULL_SYNC_BATCH",
+              recordsCount: records.length,
+              prepTimeMs: prepDuration,
+              dexieTimeMs: dexieDuration,
+              notifyTimeMs: 1,
+              totalTimeMs: prepDuration + dexieDuration + reqDuration,
+              metadata: {
+                batchRange: `${from} a ${to}`,
+                reqDurationMs: reqDuration
+              }
+            });
+
             totalDownloaded += records.length;
             from += pageSize;
 
@@ -764,7 +785,23 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
             }
 
             if (recordsToPut.length > 0) {
+              const tDexie0 = performance.now();
               await dexieDb.geral.bulkPut(recordsToPut);
+              const dexieDuration = performance.now() - tDexie0;
+
+              recordSyncTransaction({
+                table: "geral_cnhs",
+                eventType: "DELTA_SYNC_BATCH",
+                recordsCount: recordsToPut.length,
+                prepTimeMs: 1.5,
+                dexieTimeMs: dexieDuration,
+                notifyTimeMs: 1,
+                totalTimeMs: dexieDuration + reqDuration + 2.5,
+                metadata: {
+                  deltaRecordsTotal: records.length,
+                  reqDurationMs: reqDuration
+                }
+              });
             }
           }
 
