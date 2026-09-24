@@ -12,13 +12,18 @@ import {
   Check,
   User,
   ShieldAlert,
-  Edit3
+  Edit3,
+  Calendar,
+  Clock,
+  UserCheck,
+  Sparkles
 } from "lucide-react";
 import { GeralCNH, Usuario, SituacaoGeral, AcaoAuditoria } from "../types";
 import { DEFAULT_GAVETAS, DEFAULT_REPARTICOES } from "../lib/constants";
 import { saveLocalGeralCNHsBulk, notifySyncUpdated } from "../services/dexieDb";
-import { logAuditoriaBulk } from "../services/db";
-import { formatCPF, normalizeSearch } from "../lib/utils";
+import { logAuditoriaBulk, logHistoricoBulk } from "../services/db";
+import { formatCPF, formatDateTime, normalizeSearch } from "../lib/utils";
+import { useAuth } from "../context/AuthContext";
 
 interface AlterarGavetaReparticaoModalProps {
   isOpen: boolean;
@@ -39,7 +44,13 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
   filtroLoteAtual,
   onSuccess,
 }) => {
-  // Configurações de alteração
+  // Contexto de autenticação para garantia do usuário logado
+  const { user: authUser } = useAuth();
+  const activeUser = currentUser || authUser;
+  const userNome = activeUser?.nome_curto || activeUser?.nome || activeUser?.login || "Operador do Sistema";
+  const userId = activeUser?.id || "system";
+
+  // Configurações de alteração de Gaveta e Repartição
   const [alterarGaveta, setAlterarGaveta] = useState(true);
   const [selectedGaveta, setSelectedGaveta] = useState<string>("Gaveta 1");
   const [customGaveta, setCustomGaveta] = useState<string>("");
@@ -50,6 +61,16 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
   const [customReparticao, setCustomReparticao] = useState<string>("");
   const [isCustomReparticao, setIsCustomReparticao] = useState(false);
 
+  // Configuração da Data de Movimentação (Data Mov.)
+  const [atualizarDataMovimento, setAtualizarDataMovimento] = useState(true);
+  const [dataMovimentoModo, setDataMovimentoModo] = useState<"agora" | "customizado">("agora");
+  const [customDataHora, setCustomDataHora] = useState<string>(() => {
+    const d = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
+
+  // Opções complementares
   const [alterarSituacao, setAlterarSituacao] = useState(false);
   const [novaSituacao, setNovaSituacao] = useState<SituacaoGeral>("Recebida");
 
@@ -120,11 +141,21 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
   const finalGaveta = isCustomGaveta ? customGaveta.trim() : selectedGaveta.trim();
   const finalReparticao = isCustomReparticao ? customReparticao.trim() : selectedReparticao.trim();
 
+  // Data de movimentação calculada para pré-visualização e salvamento
+  const previewDataMovimento = useMemo(() => {
+    if (!atualizarDataMovimento) return null;
+    if (dataMovimentoModo === "customizado" && customDataHora) {
+      const parsed = new Date(customDataHora);
+      return !isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
+    }
+    return new Date().toISOString();
+  }, [atualizarDataMovimento, dataMovimentoModo, customDataHora]);
+
   // Executar salvamento em lote
   const handleConfirm = async () => {
     if (selectedCNHs.length === 0) return;
-    if (!alterarGaveta && !alterarReparticao && !alterarSituacao && !adicionarObservacao) {
-      setErrorMessage("Selecione pelo menos um campo para alterar (Gaveta, Repartição, Situação ou Observação).");
+    if (!alterarGaveta && !alterarReparticao && !alterarSituacao && !adicionarObservacao && !atualizarDataMovimento) {
+      setErrorMessage("Selecione pelo menos um campo para alterar (Gaveta, Repartição, Data Movimento, Situação ou Observação).");
       return;
     }
 
@@ -143,8 +174,15 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
 
     try {
       const now = new Date().toISOString();
-      const userNome = currentUser?.nome_curto || currentUser?.nome || "Usuário do Sistema";
-      const userId = currentUser?.id || "system";
+      let finalDataMovimento: string = now;
+      if (atualizarDataMovimento) {
+        if (dataMovimentoModo === "customizado" && customDataHora) {
+          const parsed = new Date(customDataHora);
+          finalDataMovimento = !isNaN(parsed.getTime()) ? parsed.toISOString() : now;
+        } else {
+          finalDataMovimento = now;
+        }
+      }
 
       const updatedRecords: GeralCNH[] = [];
       const auditEntries: Array<{
@@ -162,6 +200,9 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
         const prevReparticao = item.reparticao || "";
         const prevSituacao = item.situacao;
         const prevObs = item.observacao || "";
+        const prevDataMov = item.data_movimento;
+        const prevUsuarioId = item.usuario_id || "";
+        const prevUsuarioNome = item.usuario_nome || "";
 
         let nextGaveta = item.gaveta;
         if (alterarGaveta) {
@@ -184,12 +225,16 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
           nextObs = `${prefix}${observacaoTexto.trim()}`;
         }
 
+        // Data da movimentação: atualiza para a data do lote se ativo, ou preserva
+        const nextDataMovimento = atualizarDataMovimento ? finalDataMovimento : item.data_movimento;
+
         const updated: GeralCNH = {
           ...item,
           gaveta: nextGaveta,
           reparticao: nextReparticao,
           situacao: nextSituacao,
           observacao: nextObs,
+          data_movimento: nextDataMovimento,
           usuario_id: userId,
           usuario_nome: userNome,
           updated_at: now
@@ -207,13 +252,19 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
             gaveta: prevGaveta,
             reparticao: prevReparticao,
             situacao: prevSituacao,
-            observacao: prevObs
+            observacao: prevObs,
+            data_movimento: prevDataMov,
+            usuario_id: prevUsuarioId,
+            usuario_nome: prevUsuarioNome
           },
           valores_novos: {
             gaveta: nextGaveta,
             reparticao: nextReparticao,
             situacao: nextSituacao,
-            observacao: nextObs
+            observacao: nextObs,
+            data_movimento: nextDataMovimento,
+            usuario_id: userId,
+            usuario_nome: userNome
           }
         });
       }
@@ -221,12 +272,40 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
       // 1. Salvar no Dexie e Supabase via bulk helper
       await saveLocalGeralCNHsBulk(updatedRecords);
 
-      // 2. Registrar auditoria em massa
+      // 2. Registrar histórico de movimentações oficial
+      const histEntries = selectedCNHs.map((item) => {
+        const partesObs: string[] = [];
+        if (alterarGaveta) partesObs.push(`Gaveta: "${finalGaveta || 'Vazio'}"`);
+        if (alterarReparticao) partesObs.push(`Repartição: "${finalReparticao || 'Vazio'}"`);
+        if (adicionarObservacao && observacaoTexto.trim()) partesObs.push(`Obs: ${observacaoTexto.trim()}`);
+
+        return {
+          geral_id: item.id,
+          geral_ordem: item.ordem,
+          geral_nome: item.nome,
+          geral_cpf: item.cpf,
+          situacao_anterior: item.situacao,
+          situacao_nova: alterarSituacao ? novaSituacao : item.situacao,
+          usuario_id: userId,
+          usuario_nome: userNome,
+          observacao: `Alteração em lote: ${partesObs.join(", ")}${item.lote ? ` (Lote: ${item.lote})` : ""}`,
+        };
+      });
+
+      if (histEntries.length > 0) {
+        try {
+          await logHistoricoBulk(histEntries);
+        } catch (hErr) {
+          console.warn("Aviso ao salvar histórico bulk:", hErr);
+        }
+      }
+
+      // 3. Registrar auditoria em massa
       if (auditEntries.length > 0) {
         await logAuditoriaBulk(auditEntries);
       }
 
-      // 3. Notificar sincronização
+      // 4. Notificar sincronização
       notifySyncUpdated("geral");
 
       // Montar mensagem de sucesso
@@ -234,8 +313,10 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
       if (alterarGaveta) partes.push(`Gaveta: "${finalGaveta || 'Vazio'}"`);
       if (alterarReparticao) partes.push(`Repartição: "${finalReparticao || 'Vazio'}"`);
       if (alterarSituacao) partes.push(`Situação: "${novaSituacao}"`);
+      if (atualizarDataMovimento) partes.push(`Data Mov: ${formatDateTime(finalDataMovimento)}`);
+      partes.push(`Usuário: ${userNome}`);
 
-      const msg = `Localização de ${updatedRecords.length} CNHs atualizada com sucesso! (${partes.join(" | ")})`;
+      const msg = `Movimentação de ${updatedRecords.length} CNHs atualizada com sucesso! (${partes.join(" | ")})`;
 
       onSuccess(updatedRecords.length, msg);
       onClose();
@@ -252,7 +333,7 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/75 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
         
         {/* Header do Modal */}
         <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-gradient-to-r from-indigo-50/80 via-white to-slate-50 dark:from-indigo-950/30 dark:via-slate-900 dark:to-slate-900">
@@ -294,15 +375,15 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
         )}
 
         {/* Corpo do Modal */}
-        <div className="p-6 overflow-y-auto space-y-6 flex-1">
+        <div className="p-6 overflow-y-auto space-y-5 flex-1">
           
-          {/* Painel de Definição dos Novos Valores */}
+          {/* Painel de Definição dos Novos Valores (Gaveta & Repartição) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             
             {/* Bloco de Gaveta */}
             <div className={`p-4 rounded-2xl border transition-all ${
               alterarGaveta 
-                ? "bg-blue-50/40 dark:bg-blue-950/20 border-blue-200 dark:border-blue-900/60" 
+                ? "bg-blue-50/40 dark:bg-blue-950/20 border-blue-200 dark:border-blue-900/60 shadow-xs" 
                 : "bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 opacity-60"
             }`}>
               <div className="flex items-center justify-between mb-3">
@@ -361,7 +442,7 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
                     />
                   )}
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Nova gaveta que será atribuída às {selectedCNHs.length} CNHs.
+                    Nova gaveta que será atribuída às {selectedCNHs.length} CNHs marcadas.
                   </p>
                 </div>
               )}
@@ -370,7 +451,7 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
             {/* Bloco de Repartição */}
             <div className={`p-4 rounded-2xl border transition-all ${
               alterarReparticao 
-                ? "bg-indigo-50/40 dark:bg-indigo-950/20 border-indigo-200 dark:border-indigo-900/60" 
+                ? "bg-indigo-50/40 dark:bg-indigo-950/20 border-indigo-200 dark:border-indigo-900/60 shadow-xs" 
                 : "bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 opacity-60"
             }`}>
               <div className="flex items-center justify-between mb-3">
@@ -429,7 +510,7 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
                     />
                   )}
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Nova repartição que será atribuída às {selectedCNHs.length} CNHs.
+                    Nova repartição que será atribuída às {selectedCNHs.length} CNHs marcadas.
                   </p>
                 </div>
               )}
@@ -437,10 +518,123 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
 
           </div>
 
+          {/* NOVO BLOCO: 🕒 Data da Movimentação & 👤 Usuário do Sistema Logado */}
+          <div className="p-4 bg-gradient-to-r from-emerald-50/70 via-teal-50/50 to-blue-50/60 dark:from-emerald-950/20 dark:via-teal-950/20 dark:to-blue-950/20 rounded-2xl border border-emerald-200/80 dark:border-emerald-800/60 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 bg-emerald-600 text-white rounded-lg shadow-xs">
+                  <UserCheck className="w-4 h-4" />
+                </span>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                    Dados da Movimentação & Usuário do Sistema
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Estes dados atualizam as colunas <strong className="text-slate-800 dark:text-slate-200">Data Mov.</strong> e <strong className="text-slate-800 dark:text-slate-200">Usuário</strong> na tabela geral
+                  </p>
+                </div>
+              </div>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 rounded-full text-[11px] font-bold border border-emerald-200 dark:border-emerald-700/60">
+                <User className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Operador: {userNome}</span>
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1 border-t border-emerald-100 dark:border-emerald-900/40">
+              
+              {/* Usuário Logado */}
+              <div className="p-3 bg-white/80 dark:bg-slate-800/80 rounded-xl border border-emerald-100 dark:border-emerald-900/40 space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                  Operador do Sistema (Usuário Logado)
+                </span>
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <UserCheck className="w-4 h-4 text-emerald-600" />
+                    {userNome}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-[10px] font-semibold">
+                    {activeUser?.perfil || "Operador"}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  ID: <code className="font-mono text-[9px] text-slate-600 dark:text-slate-300">{userId}</code> — A coluna "Usuário" será atualizada com este nome.
+                </p>
+              </div>
+
+              {/* Data da Movimentação */}
+              <div className="p-3 bg-white/80 dark:bg-slate-800/80 rounded-xl border border-emerald-100 dark:border-emerald-900/40 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={atualizarDataMovimento}
+                      onChange={(e) => setAtualizarDataMovimento(e.target.checked)}
+                      className="w-4 h-4 text-emerald-600 rounded border-slate-300 dark:border-slate-700 focus:ring-emerald-500 cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      Atualizar Data da Movimentação
+                    </span>
+                  </label>
+
+                  {atualizarDataMovimento && (
+                    <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 p-0.5 bg-slate-50 dark:bg-slate-900 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => setDataMovimentoModo("agora")}
+                        className={`px-2 py-0.5 rounded-md font-bold transition-all cursor-pointer ${
+                          dataMovimentoModo === "agora"
+                            ? "bg-emerald-600 text-white shadow-2xs"
+                            : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                        }`}
+                      >
+                        Agora
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDataMovimentoModo("customizado")}
+                        className={`px-2 py-0.5 rounded-md font-bold transition-all cursor-pointer ${
+                          dataMovimentoModo === "customizado"
+                            ? "bg-emerald-600 text-white shadow-2xs"
+                            : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                        }`}
+                      >
+                        Definir Data
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {atualizarDataMovimento && (
+                  <div>
+                    {dataMovimentoModo === "agora" ? (
+                      <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 px-2.5 py-1 rounded-lg border border-emerald-200 dark:border-emerald-800">
+                        <Clock className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>Data Atual: {formatDateTime(new Date())}</span>
+                      </div>
+                    ) : (
+                      <input
+                        type="datetime-local"
+                        value={customDataHora}
+                        onChange={(e) => setCustomDataHora(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-mono text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-hidden"
+                      />
+                    )}
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+                      A coluna "Data Mov." será gravada com este timestamp oficial.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          </div>
+
           {/* Opções Complementares (Situação e Observação) */}
           <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
-            <div className="text-xs font-bold text-slate-700 dark:text-slate-300">
-              Opções Adicionais (Opcional)
+            <div className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              <span>Opções Adicionais (Opcional)</span>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -501,8 +695,8 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
           <div className="space-y-2">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200">
-                <span>Lista de CNHs a serem alteradas</span>
-                <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-full text-[11px] font-mono">
+                <span>Pré-visualização das CNHs selecionadas</span>
+                <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-full text-[11px] font-mono font-bold">
                   {previewList.length} {previewList.length === 1 ? "registro" : "registros"}
                 </span>
               </div>
@@ -519,7 +713,7 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
               </div>
             </div>
 
-            <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+            <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden max-h-60 overflow-y-auto">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 dark:bg-slate-800/80 text-[11px] uppercase font-bold text-slate-500 dark:text-slate-400 sticky top-0 border-b border-slate-200 dark:border-slate-700">
                   <tr>
@@ -528,20 +722,19 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
                     <th className="py-2 px-3">PA / Lote</th>
                     <th className="py-2 px-3">Gaveta</th>
                     <th className="py-2 px-3">Repartição</th>
+                    <th className="py-2 px-3">Data Movimento</th>
+                    <th className="py-2 px-3">Usuário</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {previewList.map((c) => {
-                    const willChangeGaveta = alterarGaveta && (c.gaveta || "") !== finalGaveta;
-                    const willChangeRep = alterarReparticao && (c.reparticao || "") !== finalReparticao;
-
                     return (
                       <tr key={c.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
                         <td className="py-2 px-3 font-mono font-bold text-blue-700 dark:text-blue-400">
                           #{c.ordem}
                         </td>
                         <td className="py-2 px-3">
-                          <div className="font-semibold text-slate-900 dark:text-slate-100 truncate max-w-[200px]">
+                          <div className="font-semibold text-slate-900 dark:text-slate-100 truncate max-w-[180px]">
                             {c.nome}
                           </div>
                           <div className="text-[10px] text-slate-400 font-mono">
@@ -596,6 +789,39 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
                             </span>
                           )}
                         </td>
+                        <td className="py-2 px-3 whitespace-nowrap">
+                          {atualizarDataMovimento && previewDataMovimento ? (
+                            <div className="flex items-center gap-1 font-mono text-[10px]">
+                              <span className="text-slate-400 line-through">
+                                {c.data_movimento ? formatDateTime(c.data_movimento).split(" ")[0] : "—"}
+                              </span>
+                              <ArrowRight className="w-2.5 h-2.5 text-emerald-600" />
+                              <span className="text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.5 rounded font-bold">
+                                {formatDateTime(previewDataMovimento)}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-slate-500 font-mono text-[10px]">
+                              {formatDateTime(c.data_movimento)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 whitespace-nowrap">
+                          <div className="flex items-center gap-1 text-[11px]">
+                            {c.usuario_nome && c.usuario_nome !== userNome ? (
+                              <>
+                                <span className="text-slate-400 line-through truncate max-w-[70px]">
+                                  {c.usuario_nome}
+                                </span>
+                                <ArrowRight className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                              </>
+                            ) : null}
+                            <span className="inline-flex items-center gap-1 font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.5 rounded">
+                              <User className="w-2.5 h-2.5" />
+                              {userNome}
+                            </span>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -609,7 +835,7 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
         {/* Rodapé da Modal com Ações */}
         <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900 flex items-center justify-between gap-3">
           <div className="text-xs text-slate-500 dark:text-slate-400">
-            Total selecionado: <strong className="text-slate-800 dark:text-slate-200 font-mono font-bold">{selectedCNHs.length}</strong> CNHs
+            Total selecionado: <strong className="text-slate-800 dark:text-slate-200 font-mono font-bold">{selectedCNHs.length}</strong> CNHs &bull; Operador: <strong className="text-emerald-700 dark:text-emerald-300">{userNome}</strong>
           </div>
 
           <div className="flex items-center gap-2">
