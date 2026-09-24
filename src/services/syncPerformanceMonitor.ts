@@ -58,22 +58,36 @@ export function recordSyncTransaction(params: {
   const notifyTimeMs = Math.round(params.notifyTimeMs * 100) / 100;
   const totalTimeMs = Math.round(params.totalTimeMs * 100) / 100;
 
-  // Determinação de status com base em thresholds de frames (16.6ms = 1 frame a 60fps)
+  // Determinação de status com base no tipo de operação (pontual vs lote/background)
   let status: "fast" | "warn" | "bottleneck" = "fast";
   let bottleneckReason: string | undefined = undefined;
 
-  if (totalTimeMs >= 60 || dexieTimeMs >= 50) {
-    status = "bottleneck";
-    if (dexieTimeMs > prepTimeMs && dexieTimeMs > notifyTimeMs) {
-      bottleneckReason = `I/O IndexedDB Lento (${dexieTimeMs}ms)`;
-    } else if (prepTimeMs > dexieTimeMs && prepTimeMs > notifyTimeMs) {
-      bottleneckReason = `Processamento/Normalização CPU (${prepTimeMs}ms)`;
-    } else {
-      bottleneckReason = `Cascata de Notificações / Render (${notifyTimeMs}ms)`;
+  const isBatchOrSync = recordsCount > 1 || params.eventType.includes("SYNC") || params.eventType.includes("BATCH");
+
+  if (isBatchOrSync) {
+    // Para operações em lote/background assíncronas (download e gravação de dezenas/centenas de registros)
+    if (dexieTimeMs >= 1500) {
+      status = "bottleneck";
+      bottleneckReason = `I/O IndexedDB em Lote Elevado (${dexieTimeMs}ms para ${recordsCount} registros)`;
+    } else if (dexieTimeMs >= 500) {
+      status = "warn";
+      bottleneckReason = `Operação em Lote Demorada (${dexieTimeMs}ms)`;
     }
-  } else if (totalTimeMs >= 16 || dexieTimeMs >= 14) {
-    status = "warn";
-    bottleneckReason = `Latência Acima de 1 Frame (${totalTimeMs}ms)`;
+  } else {
+    // Para transações pontuais / Realtime unitárias (orçamento de resposta interativa)
+    if (totalTimeMs >= 100 || dexieTimeMs >= 80) {
+      status = "bottleneck";
+      if (dexieTimeMs > prepTimeMs && dexieTimeMs > notifyTimeMs) {
+        bottleneckReason = `I/O IndexedDB Unitário Lento (${dexieTimeMs}ms)`;
+      } else if (prepTimeMs > dexieTimeMs && prepTimeMs > notifyTimeMs) {
+        bottleneckReason = `Processamento CPU (${prepTimeMs}ms)`;
+      } else {
+        bottleneckReason = `Notificação UI (${notifyTimeMs}ms)`;
+      }
+    } else if (totalTimeMs >= 35 || dexieTimeMs >= 30) {
+      status = "warn";
+      bottleneckReason = `Latência Acima do Ideal (${totalTimeMs}ms)`;
+    }
   }
 
   const metric: SyncTransactionMetric = {
@@ -125,22 +139,22 @@ function logTransactionToConsole(m: SyncTransactionMetric) {
 
   if (m.status === "bottleneck") {
     console.groupCollapsed(
-      `%c🚨 [Sync Perf - GARGALO] %c${m.table} (${m.eventType})${countStr} ➔ %cTotal: ${timeStr} %c(Dexie: ${dexieStr} | Prep: ${prepStr} | Notify: ${notifyStr})`,
-      "background: #ef4444; color: #ffffff; padding: 2px 6px; border-radius: 4px; font-weight: bold;",
-      "color: #ef4444; font-weight: bold;",
-      "color: #dc2626; font-weight: bold;",
+      `%c⚡ [Sync Perf: Atenção I/O] %c${m.table} (${m.eventType})${countStr} ➔ %cTotal: ${timeStr} %c(Dexie: ${dexieStr} | Prep: ${prepStr} | Notify: ${notifyStr})`,
+      "background: #f59e0b; color: #ffffff; padding: 2px 6px; border-radius: 4px; font-weight: bold;",
+      "color: #d97706; font-weight: bold;",
+      "color: #b45309; font-weight: bold;",
       "color: #64748b;"
     );
-    console.error(
-      `⚠️ GARGALO QUE CAUSA TRAVAMENTO DO NAVEGADOR:
-- Causa Principal: ${m.bottleneckReason || "Tempo excessivo na thread principal"}
-- Tempo Total: ${timeStr} (limite recomendado: < 16ms para não bloquear a UI)
+    console.warn(
+      `[Monitor de Performance - I/O Assíncrono]:
+- Diagnóstico: ${m.bottleneckReason || "Operação volumosa em processamento"}
+- Tempo Total: ${timeStr}
 - Tempo Dexie (IndexedDB): ${dexieStr}
 - Tempo de Normalização (CPU): ${prepStr}
 - Tempo de Notificação UI: ${notifyStr}
 - Tabela: ${m.table}${idStr}`
     );
-    if (m.error) console.error("Erro associado:", m.error);
+    if (m.error) console.warn("Erro associado:", m.error);
     if (m.metadata) console.log("Metadados:", m.metadata);
     console.groupEnd();
   } else if (m.status === "warn") {

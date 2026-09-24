@@ -268,6 +268,7 @@ export function normalizeCNHRecord(item: any): GeralCNH {
     usuario_nome: finalUsrNome,
     memorando_numero: item.memorando_numero || undefined,
     remessa: item.remessa || undefined,
+    lote: item.lote !== undefined && item.lote !== null ? String(item.lote).trim() : undefined,
     observacao: item.observacao || item.obs || (seed ? seed.observacao : undefined),
     created_at: item.created_at || dataMov || (seed ? seed.created_at : now),
     updated_at: item.updated_at || dataMov || item.created_at || now
@@ -631,7 +632,14 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
             const prepDuration = performance.now() - tPrep0;
 
             const tDexie0 = performance.now();
-            await dexieDb.geral.bulkPut(records);
+            if (records.length > 500) {
+              for (let i = 0; i < records.length; i += 500) {
+                await dexieDb.geral.bulkPut(records.slice(i, i + 500));
+                await new Promise((resolve) => setTimeout(resolve, 0));
+              }
+            } else {
+              await dexieDb.geral.bulkPut(records);
+            }
             const dexieDuration = performance.now() - tDexie0;
 
             recordSyncTransaction({
@@ -641,7 +649,7 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
               prepTimeMs: prepDuration,
               dexieTimeMs: dexieDuration,
               notifyTimeMs: 1,
-              totalTimeMs: prepDuration + dexieDuration + reqDuration,
+              totalTimeMs: prepDuration + dexieDuration,
               metadata: {
                 batchRange: `${from} a ${to}`,
                 reqDurationMs: reqDuration
@@ -786,7 +794,14 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
 
             if (recordsToPut.length > 0) {
               const tDexie0 = performance.now();
-              await dexieDb.geral.bulkPut(recordsToPut);
+              if (recordsToPut.length > 500) {
+                for (let i = 0; i < recordsToPut.length; i += 500) {
+                  await dexieDb.geral.bulkPut(recordsToPut.slice(i, i + 500));
+                  await new Promise((resolve) => setTimeout(resolve, 0));
+                }
+              } else {
+                await dexieDb.geral.bulkPut(recordsToPut);
+              }
               const dexieDuration = performance.now() - tDexie0;
 
               recordSyncTransaction({
@@ -796,7 +811,7 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
                 prepTimeMs: 1.5,
                 dexieTimeMs: dexieDuration,
                 notifyTimeMs: 1,
-                totalTimeMs: dexieDuration + reqDuration + 2.5,
+                totalTimeMs: dexieDuration + 2.5,
                 metadata: {
                   deltaRecordsTotal: records.length,
                   reqDurationMs: reqDuration
@@ -956,6 +971,7 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
     const primaryPayload: any = {
       id: normalized.id,
       ordem: normalized.ordem,
+      pa: normalized.pa || null,
       nome: normalized.nome,
       cpf: normalized.cpf,
       telefone: normalized.telefone || null,
@@ -969,6 +985,7 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
       usuario_nome: normalized.usuario_nome || null,
       memorando_numero: normalized.memorando_numero || null,
       remessa: normalized.remessa || null,
+      lote: normalized.lote || null,
       observacao: normalized.observacao || null,
       memorando_id: normalized.memorando_id || null,
       candidato_id: normalized.candidato_id || null,
@@ -1050,11 +1067,25 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
 
   const { cleanList, duplicateIds } = deduplicateCNHRecords(normalized);
 
-  // Salva no Dexie: se os dados vêm da nuvem (skipRemote = true), preserva todos os registros remotos legítimos
+  // Salva no Dexie com chunking assíncrono para garantir zero travamento da UI
   if (skipRemote) {
-    await dexieDb.geral.bulkPut(normalized);
+    if (normalized.length > 500) {
+      for (let i = 0; i < normalized.length; i += 500) {
+        await dexieDb.geral.bulkPut(normalized.slice(i, i + 500));
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    } else {
+      await dexieDb.geral.bulkPut(normalized);
+    }
   } else {
-    await dexieDb.geral.bulkPut(cleanList);
+    if (cleanList.length > 500) {
+      for (let i = 0; i < cleanList.length; i += 500) {
+        await dexieDb.geral.bulkPut(cleanList.slice(i, i + 500));
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    } else {
+      await dexieDb.geral.bulkPut(cleanList);
+    }
     if (duplicateIds.length > 0) {
       await dexieDb.geral.bulkDelete(duplicateIds).catch(() => {});
     }
@@ -1066,6 +1097,7 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
       const payloads = cleanList.map((r) => ({
         id: r.id,
         ordem: r.ordem,
+        pa: r.pa || null,
         nome: r.nome,
         cpf: r.cpf,
         telefone: r.telefone || null,
@@ -1079,6 +1111,7 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
         usuario_nome: r.usuario_nome || null,
         memorando_numero: r.memorando_numero || null,
         remessa: r.remessa || null,
+        lote: r.lote || null,
         observacao: r.observacao || null,
         memorando_id: r.memorando_id || null,
         candidato_id: r.candidato_id || null,

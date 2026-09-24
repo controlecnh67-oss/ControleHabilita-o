@@ -392,6 +392,7 @@ export interface GeralCNH {
   usuario_nome?: string;
   memorando_numero?: string;
   remessa?: string;
+  lote?: string;
   observacao?: string;
   notificado_whatsapp?: boolean;
   notificado_at?: string;
@@ -495,6 +496,7 @@ export const CadastroManualCNHSchema = z.object({
   nome: z.string().min(3, "Nome completo do titular da CNH"),
   cpf: z.string().min(14, "CPF incompleto").max(14, "CPF inválido"),
   pa: z.string().optional(),
+  lote: z.string().optional(),
   situacao: z.enum(["Remetida", "Recebida", "Pendente", "Entregue"]).default("Recebida"),
   observacao: z.string().optional(),
 });

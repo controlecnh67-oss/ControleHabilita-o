@@ -256,6 +256,7 @@ ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS responsavel_nome VARCHAR(
 ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS usuario_nome VARCHAR(255);
 ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS observacao TEXT;
 ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS telefone VARCHAR(50);
+ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS lote VARCHAR(100);
 
 CREATE OR REPLACE TRIGGER trigger_geral_cnhs_updated_at
 BEFORE UPDATE ON public.geral_cnhs

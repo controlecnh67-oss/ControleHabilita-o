@@ -19,6 +19,7 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
 }) => {
   const [nome, setNome] = useState("");
   const [cpf, setCpf] = useState("");
+  const [lote, setLote] = useState("");
   const [situacao, setSituacao] = useState<SituacaoGeral>("Remetida");
   const [gaveta, setGaveta] = useState("");
   const [reparticao, setReparticao] = useState("");
@@ -48,6 +49,7 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
     if (isOpen && cnh) {
       setNome((cnh.nome || "").toUpperCase());
       setCpf(cnh.cpf ? formatCPF(cnh.cpf) : "");
+      setLote(cnh.lote || "");
       setSituacao(cnh.situacao);
       setGaveta(cnh.gaveta || "");
       setReparticao(cnh.reparticao || "");
@@ -84,6 +86,7 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
       await onSave(cnh.id, {
         nome: nomeTrimmed,
         cpf: formattedCpf,
+        lote: lote.trim() || undefined,
         situacao,
         gaveta,
         reparticao,
@@ -150,24 +153,40 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
           {errors.nome && <p className="text-[11px] text-rose-500 mt-1">{errors.nome}</p>}
         </div>
 
-        {/* Campo: CPF */}
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-            CPF do Titular
-          </label>
-          <input
-            type="text"
-            value={cpf}
-            onChange={(e) => {
-              setCpf(formatCPF(e.target.value));
-              if (errors.cpf) setErrors((prev) => ({ ...prev, cpf: "" }));
-            }}
-            placeholder="000.000.000-00"
-            maxLength={14}
-            className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
-            autoComplete="off"
-          />
-          {errors.cpf && <p className="text-[11px] text-rose-500 mt-1">{errors.cpf}</p>}
+        {/* Campo: CPF e Lote */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              CPF do Titular
+            </label>
+            <input
+              type="text"
+              value={cpf}
+              onChange={(e) => {
+                setCpf(formatCPF(e.target.value));
+                if (errors.cpf) setErrors((prev) => ({ ...prev, cpf: "" }));
+              }}
+              placeholder="000.000.000-00"
+              maxLength={14}
+              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+              autoComplete="off"
+            />
+            {errors.cpf && <p className="text-[11px] text-rose-500 mt-1">{errors.cpf}</p>}
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Lote
+            </label>
+            <input
+              type="text"
+              value={lote}
+              onChange={(e) => setLote(e.target.value)}
+              placeholder="ex: Lote 01/2026"
+              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+              autoComplete="off"
+            />
+          </div>
         </div>
 
         <div>

@@ -77,6 +77,7 @@ import { CadastroManualModal } from "../components/CadastroManualModal";
 import { ReceberCNHModal } from "../components/ReceberCNHModal";
 import { EditarCNHModal } from "../components/EditarCNHModal";
 import { LotesSubTab } from "../components/geral/LotesSubTab";
+import { ImportarLoteModal } from "../components/ImportarLoteModal";
 import { downloadCNHFichaPDF, buildCNHShareableText } from "../services/cnhFichaPdfService";
 import { cn, formatCPF, formatPhone, formatDateTime, normalizeSearch, matchDigitsSafe } from "../lib/utils";
 import { DEFAULT_GAVETAS, DEFAULT_REPARTICOES } from "../lib/constants";
@@ -101,6 +102,7 @@ export const STORAGE_KEY_GERAL_COLUMNS = "detran_geral_visible_columns";
 export const DEFAULT_GERAL_VISIBLE_COLUMNS = {
   ordem: true,
   pa: false, // por padrão oculta
+  lote: false, // por padrão desmarcada/oculta
   nome: true,
   cpf: true,
   telefone: false,
@@ -154,6 +156,7 @@ export const GeralPage: React.FC = () => {
   // Filtros e Busca Instantânea
   const [searchTerm, setSearchTerm] = useState("");
   const [filtroSituacao, setFiltroSituacao] = useState<string>("todas");
+  const [filtroLote, setFiltroLote] = useState<string>("");
   const [filtroOrdemInicial, setFiltroOrdemInicial] = useState<string>("");
   const [filtroOrdemFinal, setFiltroOrdemFinal] = useState<string>("");
   
@@ -214,6 +217,9 @@ export const GeralPage: React.FC = () => {
 
   // Modal Importação Excel de CNHs Recebidas
   const [isExcelRecebidasModalOpen, setIsExcelRecebidasModalOpen] = useState(false);
+
+  // Modal Importação de Planilha para Cruzar e Vincular Lote
+  const [isImportLoteModalOpen, setIsImportLoteModalOpen] = useState(false);
 
   // Modal Varredura de Duplicatas
   const [isDuplicatasModalOpen, setIsDuplicatasModalOpen] = useState(false);
@@ -752,16 +758,18 @@ export const GeralPage: React.FC = () => {
         matchDigitsSafe(c.cpf, searchTerm) ||
         (c.cpf && c.cpf.includes(searchTerm.trim())) ||
         (c.pa && c.pa.includes(searchTerm.trim())) ||
+        (c.lote && normalizeSearch(c.lote).includes(normSearch)) ||
         c.ordem.toString().includes(searchTerm.trim()) ||
         normalizeSearch(c.gaveta).includes(normSearch) ||
         normalizeSearch(c.reparticao).includes(normSearch) ||
         normalizeSearch(c.observacao).includes(normSearch);
 
       const matchSituacao = filtroSituacao === "todas" || c.situacao === filtroSituacao;
+      const matchLote = !filtroLote.trim() || (Boolean(c.lote) && normalizeSearch(c.lote!).includes(normalizeSearch(filtroLote)));
       const matchOrdemInicial = !filtroOrdemInicial || Number(c.ordem) >= Number(filtroOrdemInicial);
       const matchOrdemFinal = !filtroOrdemFinal || Number(c.ordem) <= Number(filtroOrdemFinal);
 
-      return matchSearch && matchSituacao && matchOrdemInicial && matchOrdemFinal;
+      return matchSearch && matchSituacao && matchLote && matchOrdemInicial && matchOrdemFinal;
     }).sort((a, b) => {
       const valA = a[sortColumn];
       const valB = b[sortColumn];
@@ -779,7 +787,7 @@ export const GeralPage: React.FC = () => {
         ? String(valA || "").localeCompare(String(valB || ""))
         : String(valB || "").localeCompare(String(valA || ""));
     });
-  }, [cnhs, searchTerm, filtroSituacao, filtroOrdemInicial, filtroOrdemFinal, sortColumn, sortDirection]);
+  }, [cnhs, searchTerm, filtroSituacao, filtroLote, filtroOrdemInicial, filtroOrdemFinal, sortColumn, sortDirection]);
 
   // Paginação
   const totalPages = Math.ceil(filteredData.length / itemsPerPage);
@@ -1336,6 +1344,17 @@ export const GeralPage: React.FC = () => {
 
               {canEdit && (
                 <button
+                  onClick={() => setIsImportLoteModalOpen(true)}
+                  title="Importar planilha com identificação de colunas (Nome e PA) para localizar CNHs e preencher/vincular a informação de Lote"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900 text-indigo-800 dark:text-indigo-200 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-indigo-300 dark:border-indigo-800"
+                >
+                  <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <span>📦 Vincular Lote (Planilha)</span>
+                </button>
+              )}
+
+              {canEdit && (
+                <button
                   onClick={handleOpenManualModal}
                   className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md shadow-blue-600/20 text-xs transition-all shrink-0 cursor-pointer"
                 >
@@ -1416,11 +1435,11 @@ export const GeralPage: React.FC = () => {
       {/* Barra de Filtros e Pesquisa Instantânea */}
       <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-          <div className="md:col-span-8 relative">
+          <div className="md:col-span-6 relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Pesquisa instantânea por Ordem, Nome, CPF, Gaveta, Repartição, Observação..."
+              placeholder="Pesquisa instantânea por Ordem, Nome, CPF, PA, Lote, Gaveta, Repartição..."
               value={searchTerm}
               onChange={(e) => {
                 setSearchTerm(e.target.value);
@@ -1431,14 +1450,40 @@ export const GeralPage: React.FC = () => {
             {searchTerm && (
               <button
                 onClick={() => setSearchTerm("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             )}
           </div>
 
-          <div className="md:col-span-4">
+          <div className="md:col-span-3 relative">
+            <Layers className="w-3.5 h-3.5 text-indigo-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Filtrar por Lote..."
+              value={filtroLote}
+              onChange={(e) => {
+                setFiltroLote(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full pl-9 pr-7 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 transition-all"
+            />
+            {filtroLote && (
+              <button
+                onClick={() => {
+                  setFiltroLote("");
+                  setCurrentPage(1);
+                }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                title="Limpar filtro de lote"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="md:col-span-3">
             <div className="relative">
               <Filter className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <select
@@ -1447,7 +1492,7 @@ export const GeralPage: React.FC = () => {
                   setFiltroSituacao(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="w-full pl-9 pr-8 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-hidden appearance-none"
+                className="w-full pl-9 pr-8 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-hidden appearance-none cursor-pointer"
               >
                 <option value="todas">Todas as Situações</option>
                 <option value="Remetida">🟡 Remetida (Em Trânsito)</option>
@@ -1620,6 +1665,7 @@ export const GeralPage: React.FC = () => {
                   {[
                     { key: "ordem", label: "Ordem (#)" },
                     { key: "pa", label: "PA (9 dígitos CNH)" },
+                    { key: "lote", label: "Lote" },
                     { key: "nome", label: "Nome do Titular" },
                     { key: "cpf", label: "CPF" },
                     { key: "telefone", label: "Telefone / Contato" },
@@ -1744,6 +1790,15 @@ export const GeralPage: React.FC = () => {
                       <div className="flex items-center gap-1.5 font-mono">
                         <ShieldAlert className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
                         <span>PA</span>
+                        <ArrowUpDown className="w-3 h-3" />
+                      </div>
+                    </th>
+                  )}
+                  {visibleColumns.lote && (
+                    <th onClick={() => handleSort("lote" as keyof GeralCNH)} className="py-2 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors whitespace-nowrap">
+                      <div className="flex items-center gap-1.5 font-semibold">
+                        <Layers className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                        <span>Lote</span>
                         <ArrowUpDown className="w-3 h-3" />
                       </div>
                     </th>
@@ -1906,6 +1961,42 @@ export const GeralPage: React.FC = () => {
                                 <Check className="w-3.5 h-3.5 text-emerald-500" />
                               ) : (
                                 <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-blue-600" />
+                              )}
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 italic text-[11px]">-</span>
+                        )}
+                      </td>
+                    )}
+
+                    {/* Lote */}
+                    {visibleColumns.lote && (
+                      <td className="py-2 px-4 whitespace-nowrap text-xs" onClick={(e) => quickEditMode && e.stopPropagation()}>
+                        {quickEditMode ? (
+                          <input
+                            type="text"
+                            placeholder="ex: Lote 01"
+                            value={c.lote || ""}
+                            onChange={(e) => handleQuickEditCell(c.id, "lote" as any, e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-28 px-2 py-1 text-xs bg-amber-50/70 dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded focus:outline-hidden focus:ring-1 focus:ring-amber-500 font-semibold"
+                          />
+                        ) : c.lote ? (
+                          <div className="inline-flex items-center gap-1.5 group/lote">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 font-semibold text-xs border border-indigo-200 dark:border-indigo-800">
+                              {c.lote}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => handleCopyText(c.lote!, `lote-${c.id}`, e)}
+                              title="Copiar Lote"
+                              className="p-1 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors cursor-pointer inline-flex items-center justify-center shrink-0"
+                            >
+                              {copiedKey === `lote-${c.id}` ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-500" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5 text-slate-400 hover:text-indigo-600" />
                               )}
                             </button>
                           </div>
@@ -3568,6 +3659,18 @@ export const GeralPage: React.FC = () => {
         geralList={cnhs}
         currentUser={user}
         onSuccess={handleExcelRecebidasSuccess}
+      />
+
+      {/* Modal de Análise e Importação de Planilha para Vincular Lote */}
+      <ImportarLoteModal
+        isOpen={isImportLoteModalOpen}
+        onClose={() => setIsImportLoteModalOpen(false)}
+        geralList={cnhs}
+        currentUser={user}
+        onSuccess={(count, msg) => {
+          setMessage({ type: "success", text: msg });
+          fetchDados();
+        }}
       />
 
       {/* Modal de Varredura de Duplicatas & Auditoria de Exclusão em Lote */}

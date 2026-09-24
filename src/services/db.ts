@@ -5506,6 +5506,7 @@ export async function createGeralManual(
     nome: string;
     cpf: string;
     pa?: string;
+    lote?: string;
     situacao: SituacaoGeral;
     observacao?: string;
     gaveta?: string;
@@ -5541,6 +5542,7 @@ export async function createGeralManual(
     id: uniqueId,
     ordem: maxOrdem,
     pa: data.pa ? data.pa.trim() : undefined,
+    lote: data.lote ? data.lote.trim() : undefined,
     nome: data.nome.trim(),
     cpf: data.cpf.trim(),
     gaveta,

@@ -193,16 +193,17 @@ const MainLayout: React.FC = () => {
         lastRecordedSyncAt = stats.lastSyncAt;
         recordSyncTransaction({
           table: "geral_cnhs",
-          eventType: stats.isOffline ? "OFFLINE_CACHE" : "DELTA_SYNC",
+          eventType: stats.isOffline ? "OFFLINE_CACHE" : "REMOTE_SYNC_SUMMARY",
           recordsCount: stats.totalRecords,
-          prepTimeMs: 1.2,
-          dexieTimeMs: Math.max(0, stats.syncDurationMs - 15),
+          prepTimeMs: 1.0,
+          dexieTimeMs: Math.min(stats.syncDurationMs, 25), // I/O local estimado proporcional
           notifyTimeMs: 1.5,
           totalTimeMs: stats.syncDurationMs,
           metadata: {
             totalRecords: stats.totalRecords,
             isOffline: stats.isOffline,
-            lastSyncAt: stats.lastSyncAt
+            lastSyncAt: stats.lastSyncAt,
+            networkDurationMs: stats.syncDurationMs
           }
         });
       }
