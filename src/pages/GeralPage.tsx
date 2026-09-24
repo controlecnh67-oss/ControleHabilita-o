@@ -43,7 +43,9 @@ import {
   Layers,
   RotateCcw,
   Zap,
-  Database
+  Database,
+  Archive,
+  CheckSquare
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -78,6 +80,7 @@ import { ReceberCNHModal } from "../components/ReceberCNHModal";
 import { EditarCNHModal } from "../components/EditarCNHModal";
 import { LotesSubTab } from "../components/geral/LotesSubTab";
 import { ImportarLoteModal } from "../components/ImportarLoteModal";
+import { AlterarGavetaReparticaoModal } from "../components/AlterarGavetaReparticaoModal";
 import { downloadCNHFichaPDF, buildCNHShareableText } from "../services/cnhFichaPdfService";
 import { cn, formatCPF, formatPhone, formatDateTime, normalizeSearch, matchDigitsSafe } from "../lib/utils";
 import { DEFAULT_GAVETAS, DEFAULT_REPARTICOES } from "../lib/constants";
@@ -553,6 +556,7 @@ export const GeralPage: React.FC = () => {
   // Modais de Exclusão Individual e em Massa
   const [cnhToDelete, setCnhToDelete] = useState<GeralCNH | null>(null);
   const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState<boolean>(false);
+  const [isBatchLocationModalOpen, setIsBatchLocationModalOpen] = useState<boolean>(false);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   const handleOpenDetailsModal = (cnh: GeralCNH) => {
@@ -826,6 +830,24 @@ export const GeralPage: React.FC = () => {
     } else {
       const newSelected = new Set([...selectedIds, ...currentPageIds]);
       setSelectedIds(Array.from(newSelected));
+    }
+  };
+
+  const handleSelectAllFiltered = () => {
+    const allFilteredIds = filteredData.map((c) => c.id);
+    setSelectedIds(allFilteredIds);
+  };
+
+  const handleToggleSelectFilteredLote = () => {
+    const filteredIdSet = new Set(filteredData.map((c) => c.id));
+    const allFilteredAreSelected =
+      filteredData.length > 0 && filteredData.every((c) => selectedIds.includes(c.id));
+
+    if (allFilteredAreSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !filteredIdSet.has(id)));
+    } else {
+      const merged = new Set([...selectedIds, ...filteredData.map((c) => c.id)]);
+      setSelectedIds(Array.from(merged));
     }
   };
 
@@ -1558,6 +1580,47 @@ export const GeralPage: React.FC = () => {
             )}
           </div>
         </div>
+
+        {/* Painel Contextual de Lote Ativo com Atalho para Seleção e Alteração em Lote */}
+        {filtroLote && filtroLote.trim() !== "" && (
+          <div className="mt-2.5 pt-2.5 border-t border-indigo-100 dark:border-indigo-900/60 flex flex-wrap items-center justify-between gap-2.5 bg-indigo-50/60 dark:bg-indigo-950/40 p-2.5 rounded-xl border border-indigo-200/60 dark:border-indigo-800/60">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-600 text-white font-bold text-[11px] shadow-2xs">
+                <Layers className="w-3.5 h-3.5" />
+                Lote Filtrado: "{filtroLote}"
+              </span>
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                <strong className="font-mono text-indigo-700 dark:text-indigo-400">{filteredData.length}</strong> CNHs encontradas
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleToggleSelectFilteredLote}
+                className="px-3 py-1 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600 text-indigo-900 dark:text-indigo-200 font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs"
+              >
+                <CheckSquare className="w-3.5 h-3.5 text-indigo-600" />
+                <span>
+                  {filteredData.length > 0 && filteredData.every((c) => selectedIds.includes(c.id))
+                    ? "Desmarcar este lote"
+                    : `Marcar CNHs deste lote (${filteredData.length})`}
+                </span>
+              </button>
+
+              {canEdit && selectedIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIsBatchLocationModalOpen(true)}
+                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                >
+                  <Archive className="w-3.5 h-3.5" />
+                  <span>Alterar Gaveta e Repartição ({selectedIds.length})</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Tabela Principal TanStack style com Ordenação e Botões 📥 Receber / 📤 Entregar - High Density */}
@@ -1731,25 +1794,53 @@ export const GeralPage: React.FC = () => {
 
         {/* Barra de Ações em Lote para Linhas Selecionadas */}
         {selectedIds.length > 0 && (
-          <div className="mb-3 p-3 bg-red-50/90 dark:bg-red-950/60 border border-red-200 dark:border-red-800/80 rounded-xl flex items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-center gap-2 text-red-800 dark:text-red-200 font-bold text-xs">
-              <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
-              <span>{selectedIds.length} {selectedIds.length === 1 ? "linha selecionada" : "linhas selecionadas"}</span>
+          <div className="mb-3 p-3 bg-gradient-to-r from-indigo-50/95 via-blue-50/90 to-slate-50/90 dark:from-indigo-950/70 dark:via-blue-950/60 dark:to-slate-900/80 border border-indigo-200 dark:border-indigo-800/80 rounded-xl flex flex-wrap items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 text-indigo-950 dark:text-indigo-100 font-bold text-xs">
+                <CheckSquare className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                <span>{selectedIds.length} {selectedIds.length === 1 ? "linha selecionada" : "linhas selecionadas"}</span>
+              </div>
+
+              {filteredData.length > selectedIds.length && (
+                <button
+                  type="button"
+                  onClick={handleSelectAllFiltered}
+                  className="text-xs text-indigo-700 dark:text-indigo-300 hover:underline font-semibold cursor-pointer"
+                >
+                  Selecionar todas as {filteredData.length} CNHs filtradas
+                </button>
+              )}
             </div>
+
             <div className="flex items-center gap-2">
               <button
+                type="button"
                 onClick={() => setSelectedIds([])}
-                className="px-2.5 py-1 text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800 rounded-lg text-xs font-semibold cursor-pointer"
+                className="px-2.5 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
               >
                 Limpar Seleção
               </button>
+
               {canEdit && (
                 <button
+                  type="button"
+                  onClick={() => setIsBatchLocationModalOpen(true)}
+                  className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                  title="Alterar Gaveta e Repartição para as CNHs selecionadas"
+                >
+                  <Archive className="w-4 h-4" />
+                  <span>Alterar Gaveta e Repartição ({selectedIds.length})</span>
+                </button>
+              )}
+
+              {canEdit && (
+                <button
+                  type="button"
                   onClick={() => setIsBatchDeleteModalOpen(true)}
-                  className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition-all"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                  <span>Excluir {selectedIds.length} Selecionado(s)</span>
+                  <span>Excluir ({selectedIds.length})</span>
                 </button>
               )}
             </div>
@@ -3669,6 +3760,21 @@ export const GeralPage: React.FC = () => {
         currentUser={user}
         onSuccess={(count, msg) => {
           setMessage({ type: "success", text: msg });
+          fetchDados();
+        }}
+      />
+
+      {/* Modal de Alteração em Lote de Gaveta e Repartição */}
+      <AlterarGavetaReparticaoModal
+        isOpen={isBatchLocationModalOpen}
+        onClose={() => setIsBatchLocationModalOpen(false)}
+        selectedIds={selectedIds}
+        cnhs={cnhs}
+        currentUser={user}
+        filtroLoteAtual={filtroLote}
+        onSuccess={(count, msg) => {
+          setMessage({ type: "success", text: msg });
+          setSelectedIds([]);
           fetchDados();
         }}
       />
