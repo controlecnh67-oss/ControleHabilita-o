@@ -18,7 +18,8 @@ import {
   Sparkles,
   BarChart2,
   TrendingDown,
-  Info
+  Info,
+  Sliders
 } from "lucide-react";
 import { 
   getEgressSummary, 
@@ -33,15 +34,28 @@ import { syncGeralWithSupabase, getSyncStats, SyncStats } from "../services/dexi
 import { invalidateSupabaseCache } from "../services/db";
 import { isSupabaseConfigured } from "../services/supabase";
 import { SystemAuditSection } from "../components/monitoring/SystemAuditSection";
+import { SyncErrorsSection } from "../components/monitoring/SyncErrorsSection";
+import { DiscrepancyReconcileModal } from "../components/monitoring/DiscrepancyReconcileModal";
+import { subscribeToSyncErrors, getSyncErrorsSummary } from "../services/syncErrorService";
 
 export const DatabaseMonitoringPage: React.FC = () => {
-  const [monitorTab, setMonitorTab] = useState<"audit" | "egress">("audit");
+  const [monitorTab, setMonitorTab] = useState<"audit" | "egress" | "errors">(() => {
+    if (typeof window !== "undefined") {
+      const saved = sessionStorage.getItem("monitoring_active_tab");
+      if (saved === "audit" || saved === "egress" || saved === "errors") {
+        return saved;
+      }
+    }
+    return "audit";
+  });
   const [summary, setSummary] = useState<EgressSummary>(getEgressSummary);
   const [syncStats, setSyncStats] = useState<SyncStats | null>(null);
+  const [errorsCount, setErrorsCount] = useState<number>(() => getSyncErrorsSummary().total);
   const [isSyncing, setIsSyncing] = useState(false);
   const [filterType, setFilterType] = useState<"all" | "network" | "cache">("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [isDiscrepancyModalOpen, setIsDiscrepancyModalOpen] = useState(false);
 
   useEffect(() => {
     // Carrega estatísticas iniciais
@@ -53,10 +67,33 @@ export const DatabaseMonitoringPage: React.FC = () => {
       setSummary({ ...updatedSummary });
     });
 
+    // Inscreve no monitor de erros de sincronização
+    const unsubErrors = subscribeToSyncErrors((errs) => {
+      setErrorsCount(errs.length);
+    });
+
+    // Listener para troca de aba disparada externamente (ex: Navbar)
+    const handleSwitchTab = (e: any) => {
+      const target = e.detail || sessionStorage.getItem("monitoring_active_tab");
+      if (target === "audit" || target === "egress" || target === "errors") {
+        setMonitorTab(target);
+      }
+    };
+    window.addEventListener("switch-monitoring-tab", handleSwitchTab);
+
     return () => {
       unsubscribe();
+      unsubErrors();
+      window.removeEventListener("switch-monitoring-tab", handleSwitchTab);
     };
   }, []);
+
+  const changeTab = (tab: "audit" | "egress" | "errors") => {
+    setMonitorTab(tab);
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("monitoring_active_tab", tab);
+    }
+  };
 
   const handleManualDeltaSync = async () => {
     setIsSyncing(true);
@@ -151,6 +188,15 @@ export const DatabaseMonitoringPage: React.FC = () => {
 
         <div className="flex flex-wrap items-center gap-2">
           <button
+            onClick={() => setIsDiscrepancyModalOpen(true)}
+            className="px-3.5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+            title="Detecta e re-sincroniza unidirecionalmente registros discrepantes entre o Dexie e o Supabase com base na coluna 'updated_at'"
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            Re-sincronizar Discrepâncias ('updated_at')
+          </button>
+
+          <button
             onClick={handleClearCache}
             className="px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
             title="Limpa cache de memória local"
@@ -180,7 +226,7 @@ export const DatabaseMonitoringPage: React.FC = () => {
       {/* Abas Superiores de Navegação do Monitoramento */}
       <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
         <button
-          onClick={() => setMonitorTab("audit")}
+          onClick={() => changeTab("audit")}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
             monitorTab === "audit"
               ? "bg-blue-600 text-white shadow-xs"
@@ -197,7 +243,7 @@ export const DatabaseMonitoringPage: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setMonitorTab("egress")}
+          onClick={() => changeTab("egress")}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
             monitorTab === "egress"
               ? "bg-blue-600 text-white shadow-xs"
@@ -207,12 +253,35 @@ export const DatabaseMonitoringPage: React.FC = () => {
           <Activity className="w-4 h-4" />
           Tráfego de Rede & Egress (5 GB)
         </button>
+
+        <button
+          onClick={() => changeTab("errors")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+            monitorTab === "errors"
+              ? "bg-rose-600 text-white shadow-xs"
+              : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+          }`}
+        >
+          <AlertTriangle className="w-4 h-4 text-amber-400" />
+          Erros de Sincronização (Dexie ⇄ Supabase)
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+            monitorTab === "errors"
+              ? "bg-rose-700 text-white"
+              : errorsCount > 0
+              ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-800"
+              : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+          }`}>
+            {errorsCount > 0 ? `${errorsCount} ocorrências` : "0 erros"}
+          </span>
+        </button>
       </div>
 
       {/* Conteúdo da Aba Selecionada */}
-      {monitorTab === "audit" ? (
-        <SystemAuditSection />
-      ) : (
+      {monitorTab === "audit" && <SystemAuditSection />}
+      {monitorTab === "errors" && (
+        <SyncErrorsSection onOpenDiscrepancyReconcile={() => setIsDiscrepancyModalOpen(true)} />
+      )}
+      {monitorTab === "egress" && (
         <>
           {/* Cartões Principais de Telemetria */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -576,6 +645,17 @@ export const DatabaseMonitoringPage: React.FC = () => {
       </div>
         </>
       )}
+
+      {/* Modal de Re-sincronização Unidirecional de Discrepâncias por 'updated_at' */}
+      <DiscrepancyReconcileModal
+        isOpen={isDiscrepancyModalOpen}
+        onClose={() => setIsDiscrepancyModalOpen(false)}
+        onSyncCompleted={async () => {
+          getSyncStats().then(setSyncStats).catch(() => {});
+          setActionSuccess("Re-sincronização unidirecional concluída com sucesso!");
+          setTimeout(() => setActionSuccess(null), 5000);
+        }}
+      />
     </div>
   );
 };

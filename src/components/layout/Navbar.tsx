@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   ShieldCheck, 
   Sun, 
@@ -11,6 +11,8 @@ import {
   Menu,
   CheckCircle2,
   AlertTriangle,
+  AlertOctagon,
+  ShieldAlert,
   FileCode,
   Key,
   Eye,
@@ -19,7 +21,12 @@ import {
   Mail,
   Phone,
   UserCheck,
-  RefreshCw
+  RefreshCw,
+  X,
+  ExternalLink,
+  ChevronRight,
+  Radio,
+  Bell
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { Badge } from "../ui/Badge";
@@ -27,14 +34,22 @@ import { Modal } from "../ui/Modal";
 import { isSupabaseConnected, resetDemoData, updateUsuario } from "../../services/db";
 import { getOrgaoConfig } from "../../services/orgaoService";
 import { useAutoSync, reconcilePendingDifferences } from "../../services/autoSyncService";
+import { 
+  subscribeToSyncErrors, 
+  resolveAllSyncErrors, 
+  SyncErrorLog,
+  getSyncErrors 
+} from "../../services/syncErrorService";
+import { NavTab } from "../../types";
 import { cn } from "../../lib/utils";
 
 interface NavbarProps {
   onToggleSidebar: () => void;
   isSidebarOpen?: boolean;
+  onNavigateToTab?: (tab: NavTab) => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }) => {
+export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen, onNavigateToTab }) => {
   const { user, logout, loginAsProfile, updateCurrentUser } = useAuth();
   const autoSyncState = useAutoSync();
   const [theme, setTheme] = useState<"light" | "dark">("light");
@@ -42,6 +57,57 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string>("");
   const [imgError, setImgError] = useState(false);
+
+  // Estados para alerta visual de erros críticos de sincronização
+  const [syncErrors, setSyncErrors] = useState<SyncErrorLog[]>([]);
+  const [showSyncErrorsDropdown, setShowSyncErrorsDropdown] = useState(false);
+  const syncErrorsDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return subscribeToSyncErrors((list) => {
+      setSyncErrors(list);
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        syncErrorsDropdownRef.current &&
+        !syncErrorsDropdownRef.current.contains(e.target as Node)
+      ) {
+        setShowSyncErrorsDropdown(false);
+      }
+    };
+    if (showSyncErrorsDropdown) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showSyncErrorsDropdown]);
+
+  const unresolvedErrors = syncErrors.filter((e) => !e.resolved);
+  const criticalErrors = unresolvedErrors.filter(
+    (e) => e.severity === "critical" || e.severity === "error"
+  );
+  const hasCritical = criticalErrors.length > 0;
+  const hasUnresolved = unresolvedErrors.length > 0;
+
+  const handleGoToErrorMonitoring = () => {
+    setShowSyncErrorsDropdown(false);
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("monitoring_active_tab", "errors");
+      window.dispatchEvent(new CustomEvent("switch-monitoring-tab", { detail: "errors" }));
+    }
+    if (onNavigateToTab) {
+      onNavigateToTab("monitoramento");
+    }
+  };
+
+  const handleResolveAllErrors = () => {
+    resolveAllSyncErrors();
+    setShowSyncErrorsDropdown(false);
+  };
 
   useEffect(() => {
     const updateLogo = () => {
@@ -176,8 +242,152 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
         </div>
       </div>
 
-      {/* Direita: Conexão DB, Tema, Perfil Logado */}
+      {/* Direita: Alerta de Erros de Sincronização, Conexão DB, Tema, Perfil Logado */}
       <div className="flex items-center gap-2 md:gap-3">
+        {/* Alerta Visual de Erros Críticos de Sincronização Acumulados */}
+        {hasUnresolved && (
+          <div className="relative" ref={syncErrorsDropdownRef}>
+            <button
+              onClick={() => setShowSyncErrorsDropdown(!showSyncErrorsDropdown)}
+              title={`${unresolvedErrors.length} erro(s) de sincronização pendente(s) de verificação. Clique para ver detalhes e orientações.`}
+              className={cn(
+                "relative flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold border transition-all cursor-pointer shadow-2xs select-none",
+                hasCritical
+                  ? "bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-300 dark:bg-rose-950/70 dark:hover:bg-rose-900/90 dark:text-rose-200 dark:border-rose-800 animate-pulse"
+                  : "bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950/70 dark:hover:bg-amber-900/90 dark:text-amber-200 dark:border-amber-800"
+              )}
+            >
+              <span className="relative flex h-2 w-2">
+                <span className={cn(
+                  "animate-ping absolute inline-flex h-full w-full rounded-full opacity-75",
+                  hasCritical ? "bg-rose-400" : "bg-amber-400"
+                )}></span>
+                <span className={cn(
+                  "relative inline-flex rounded-full h-2 w-2",
+                  hasCritical ? "bg-rose-600" : "bg-amber-600"
+                )}></span>
+              </span>
+
+              <AlertTriangle className={cn(
+                "w-3.5 h-3.5 shrink-0",
+                hasCritical ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"
+              )} />
+
+              <span className="hidden sm:inline">
+                {criticalErrors.length > 0 ? (
+                  <>
+                    {criticalErrors.length} {criticalErrors.length === 1 ? "Erro Crítico" : "Erros Críticos"}
+                  </>
+                ) : (
+                  <>
+                    {unresolvedErrors.length} {unresolvedErrors.length === 1 ? "Alerta Sync" : "Alertas Sync"}
+                  </>
+                )}
+              </span>
+
+              <span className="sm:hidden font-mono text-[11px]">
+                {unresolvedErrors.length}
+              </span>
+            </button>
+
+            {/* Dropdown / Popover de Alertas Críticos */}
+            {showSyncErrorsDropdown && (
+              <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 p-4 z-50 animate-fadeIn space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <ShieldAlert className={cn("w-4 h-4", hasCritical ? "text-rose-600" : "text-amber-500")} />
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                      Alertas de Sincronização Dexie ⇄ Supabase
+                    </h4>
+                  </div>
+                  <button
+                    onClick={() => setShowSyncErrorsDropdown(false)}
+                    className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className={cn(
+                  "p-2.5 rounded-lg text-[11px] leading-relaxed border",
+                  hasCritical
+                    ? "bg-rose-50/80 text-rose-900 dark:bg-rose-950/40 dark:text-rose-200 border-rose-200 dark:border-rose-900/60"
+                    : "bg-amber-50/80 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200 border-amber-200 dark:border-amber-900/60"
+                )}>
+                  {hasCritical ? (
+                    <p>
+                      <strong>Atenção:</strong> Existem <strong>{criticalErrors.length} falhas críticas</strong> acumuladas que impedem o envio ou recebimento completo de registros na nuvem.
+                    </p>
+                  ) : (
+                    <p>
+                      Existem <strong>{unresolvedErrors.length} alertas</strong> de comunicação pendentes de verificação.
+                    </p>
+                  )}
+                </div>
+
+                {/* Lista dos erros mais recentes */}
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {unresolvedErrors.slice(0, 3).map((err) => (
+                    <div
+                      key={err.id}
+                      className="p-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-700/60 rounded-lg text-xs space-y-1"
+                    >
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                          {err.table}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {new Date(err.timestamp).toLocaleTimeString("pt-BR")}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 dark:text-slate-300 font-medium line-clamp-1" title={err.message}>
+                        {err.message}
+                      </p>
+                    </div>
+                  ))}
+                  {unresolvedErrors.length > 3 && (
+                    <p className="text-[10px] text-center text-slate-400 pt-1">
+                      + {unresolvedErrors.length - 3} outros erros acumulados no histórico
+                    </p>
+                  )}
+                </div>
+
+                {/* Ações Rápidas */}
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                  <button
+                    onClick={handleGoToErrorMonitoring}
+                    className="w-full py-2 px-3 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Abrir Histórico no Monitoramento</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={handleResolveAllErrors}
+                      className="py-1.5 px-2.5 text-[11px] font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                      Marcar Verificados
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        reconcilePendingDifferences(true);
+                        setShowSyncErrorsDropdown(false);
+                      }}
+                      className="py-1.5 px-2.5 text-[11px] font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3 h-3 text-blue-600" />
+                      Re-sincronizar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Botão e Indicador de Sincronização Automática Multi-Máquina */}
         {isSupabaseConnected() && (
           <button

@@ -24,6 +24,7 @@ import { useAuth } from "../../context/AuthContext";
 import { cn } from "../../lib/utils";
 import { NavTab, isTabAllowedForProfile } from "../../types";
 import { getOrgaoConfig } from "../../services/orgaoService";
+import { subscribeToSyncErrors, SyncErrorLog } from "../../services/syncErrorService";
 
 export type { NavTab };
 
@@ -43,7 +44,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { user, logout } = useAuth();
   const [logoUrl, setLogoUrl] = useState<string>("");
   const [imgError, setImgError] = useState(false);
+  const [syncErrors, setSyncErrors] = useState<SyncErrorLog[]>([]);
   const navRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    return subscribeToSyncErrors((errs) => {
+      setSyncErrors(errs);
+    });
+  }, []);
+
+  const unresolvedErrors = syncErrors.filter((e) => !e.resolved);
+  const criticalErrors = unresolvedErrors.filter(
+    (e) => e.severity === "critical" || e.severity === "error"
+  );
 
   useEffect(() => {
     const updateLogo = () => {
@@ -190,6 +203,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     )}
                   />
                   <span className="truncate">{item.label}</span>
+
+                  {item.id === "monitoramento" && unresolvedErrors.length > 0 && (
+                    <span
+                      title={`${unresolvedErrors.length} erro(s) de sincronização pendente(s)`}
+                      className={cn(
+                        "ml-auto px-1.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-tight shrink-0",
+                        criticalErrors.length > 0
+                          ? "bg-rose-600 text-white animate-pulse shadow-xs"
+                          : "bg-amber-500 text-slate-900"
+                      )}
+                    >
+                      {criticalErrors.length > 0 ? `! ${criticalErrors.length}` : unresolvedErrors.length}
+                    </span>
+                  )}
                 </button>
               );
             })}

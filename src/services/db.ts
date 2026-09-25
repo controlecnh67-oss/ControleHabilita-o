@@ -6034,6 +6034,7 @@ export async function updateGeralCNH(
         if (data.nome !== undefined) candUpdated.nome = data.nome;
         if (data.cpf !== undefined) candUpdated.cpf = data.cpf;
         if (data.telefone !== undefined) candUpdated.telefone = data.telefone;
+        if (data.pa !== undefined) candUpdated.pa = data.pa;
         cands[candIndex] = candUpdated;
         saveStoredList("candidatos", cands);
       }

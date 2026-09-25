@@ -19,6 +19,7 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
 }) => {
   const [nome, setNome] = useState("");
   const [cpf, setCpf] = useState("");
+  const [pa, setPa] = useState("");
   const [lote, setLote] = useState("");
   const [situacao, setSituacao] = useState<SituacaoGeral>("Remetida");
   const [gaveta, setGaveta] = useState("");
@@ -49,6 +50,7 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
     if (isOpen && cnh) {
       setNome((cnh.nome || "").toUpperCase());
       setCpf(cnh.cpf ? formatCPF(cnh.cpf) : "");
+      setPa(cnh.pa || "");
       setLote(cnh.lote || "");
       setSituacao(cnh.situacao);
       setGaveta(cnh.gaveta || "");
@@ -80,12 +82,14 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
     }
 
     const formattedCpf = cleanCpfDigits ? formatCPF(cleanCpfDigits) : "";
+    const cleanPa = pa.replace(/\D/g, "").slice(0, 11);
 
     setSubmitting(true);
     try {
       await onSave(cnh.id, {
         nome: nomeTrimmed,
         cpf: formattedCpf,
+        pa: cleanPa || "",
         lote: lote.trim() || undefined,
         situacao,
         gaveta,
@@ -105,7 +109,7 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
       isOpen={isOpen}
       onClose={onClose}
       title="Editar CNH / Alterar Situação"
-      maxWidth="sm"
+      maxWidth="md"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Informações da Ordem e Origem */}
@@ -153,7 +157,7 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
           {errors.nome && <p className="text-[11px] text-rose-500 mt-1">{errors.nome}</p>}
         </div>
 
-        {/* Campo: CPF e Lote */}
+        {/* Campo: CPF e PA */}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -175,6 +179,29 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
           </div>
 
           <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Processo Adm. (PA)
+              </label>
+              <span className="text-[10px] text-slate-400 font-normal">Opcional</span>
+            </div>
+            <input
+              type="text"
+              value={pa}
+              onChange={(e) => {
+                setPa(e.target.value.replace(/\D/g, "").slice(0, 11));
+              }}
+              placeholder="ex: 123456789"
+              maxLength={11}
+              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-mono font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
+              autoComplete="off"
+            />
+          </div>
+        </div>
+
+        {/* Campo: Lote e Situação */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
               Lote
             </label>
@@ -187,22 +214,22 @@ export const EditarCNHModal: React.FC<EditarCNHModalProps> = React.memo(({
               autoComplete="off"
             />
           </div>
-        </div>
 
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-            Situação
-          </label>
-          <select
-            value={situacao}
-            onChange={(e) => setSituacao(e.target.value as SituacaoGeral)}
-            className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden"
-          >
-            <option value="Remetida">🟡 Remetida (Em trânsito)</option>
-            <option value="Recebida">🔵 Recebida na Agência</option>
-            <option value="Pendente">🔴 Pendente (Com exigência / Bloqueada)</option>
-            <option value="Entregue">🟢 Entregue</option>
-          </select>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Situação
+            </label>
+            <select
+              value={situacao}
+              onChange={(e) => setSituacao(e.target.value as SituacaoGeral)}
+              className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-hidden cursor-pointer"
+            >
+              <option value="Remetida">🟡 Remetida (Em trânsito)</option>
+              <option value="Recebida">🔵 Recebida na Agência</option>
+              <option value="Pendente">🔴 Pendente (Com exigência / Bloqueada)</option>
+              <option value="Entregue">🟢 Entregue</option>
+            </select>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3">

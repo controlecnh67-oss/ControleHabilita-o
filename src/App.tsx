@@ -322,6 +322,7 @@ const MainLayout: React.FC = () => {
         <Navbar 
           onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} 
           isSidebarOpen={isSidebarOpen}
+          onNavigateToTab={(tab) => setActiveTab(tab)}
         />
 
         <main className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-100 dark:bg-slate-950 flex flex-col gap-6">

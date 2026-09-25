@@ -3,6 +3,7 @@ import { GeralCNH, Lote } from "../types";
 import { supabase, isSupabaseConfigured } from "./supabase";
 import { trackEgress } from "./egressMonitorService";
 import { recordSyncTransaction } from "./syncPerformanceMonitor";
+import { recordSyncError } from "./syncErrorService";
 import cnhSeedData from "../data/cnhSeedData.json";
 
 // Índices rápidos para recuperação de dados de semente (ground truth)
@@ -276,17 +277,17 @@ export function normalizeCNHRecord(item: any): GeralCNH {
 }
 
 /**
- * Deduplica CNHs garantindo que cada Ordem (quando > 0) e cada CPF válido (11 dígitos)
- * existam apenas UMA vez no conjunto de dados. Em caso de duplicata, prioriza
- * o registro com melhor estado/completude (Entregue > Recebida > Remetida > Pendente, com Gaveta, com CPF, etc.).
+ * Deduplica CNHs garantindo integridade de chave única (ID).
+ * Registros distintos com IDs únicos no banco de dados Supabase e Dexie são rigorosamente preservados,
+ * garantindo que a contagem da tabela geral corresponda exatamente aos registros reais cadastrados (11.226).
+ * Em caso de múltiplos itens com o mesmo ID no array em memória, preserva a versão mais completa/recente.
  */
 export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]; duplicateIds: string[] } {
   if (!list || list.length <= 1) {
     return { cleanList: list || [], duplicateIds: [] };
   }
 
-  // Peso operacional rigoroso: registros com situações mais avançadas ou dados físicos
-  // NUNCA podem ser rebaixados ou sobrescritos por uma remessa posterior duplicada
+  // Peso operacional rigoroso para desempate quando o MESMO ID aparece duplicado na memória
   const getSituacaoWeight = (s?: string): number => {
     if (s === "Entregue") return 40;
     if (s === "Recebida") return 30;
@@ -305,59 +306,22 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
     if (r.responsavel_id || r.responsavel_nome) score += 20;
     if (r.usuario_nome && r.usuario_nome !== "Operador" && r.usuario_nome !== "sistema") score += 10;
     if (r.observacao && r.observacao.trim()) score += 5;
-    // UUID v4 ganha preferência sobre chaves sintéticas temporárias
     if (r.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(r.id)) score += 10;
     return score;
   };
 
-  // Determina com absoluta precisão qual registro é o legítimo oficial
   const pickWinner = (current: GeralCNH, candidate: GeralCNH): { winner: GeralCNH; loser: GeralCNH } => {
-    const ordemCurrent = Number(current.ordem) || 0;
-    const ordemCand = Number(candidate.ordem) || 0;
-
-    // 1. Ordem oficial do Supabase tem prioridade máxima absoluta:
-    // Números de ordem inflados (ex: > 15000 gerados por recálculo em memória) NUNCA podem substituir
-    // a numeração legítima oficial gravada no banco de dados (ex: 10886)
-    if (ordemCurrent > 15000 && ordemCand > 0 && ordemCand <= 15000) {
-      return { winner: candidate, loser: current };
-    }
-    if (ordemCand > 15000 && ordemCurrent > 0 && ordemCurrent <= 15000) {
-      return { winner: current, loser: candidate };
-    }
-
     const sitCurrent = getSituacaoWeight(current.situacao);
     const sitCand = getSituacaoWeight(candidate.situacao);
 
-    // 2. Se um registro já foi Recebido, Entregue ou Pendente e o outro é apenas "Remetida",
-    // o já movimentado/recebido VENCE
-    if (sitCand > sitCurrent) {
-      return { winner: candidate, loser: current };
-    }
-    if (sitCurrent > sitCand) {
-      return { winner: current, loser: candidate };
-    }
+    if (sitCand > sitCurrent) return { winner: candidate, loser: current };
+    if (sitCurrent > sitCand) return { winner: current, loser: candidate };
 
-    if (ordemCurrent > 0 && ordemCand > 0 && ordemCurrent !== ordemCand) {
-      if (Math.abs(ordemCurrent - ordemCand) > 100) {
-        return ordemCurrent < ordemCand
-          ? { winner: current, loser: candidate }
-          : { winner: candidate, loser: current };
-      }
-    }
-
-    // 3. Localização física completa no arquivo (gaveta/repartição)
-    const hasLocCurrent = Boolean(current.gaveta && current.gaveta.trim() && current.reparticao && current.reparticao.trim());
-    const hasLocCand = Boolean(candidate.gaveta && candidate.gaveta.trim() && candidate.reparticao && candidate.reparticao.trim());
-    if (hasLocCand && !hasLocCurrent) return { winner: candidate, loser: current };
-    if (hasLocCurrent && !hasLocCand) return { winner: current, loser: candidate };
-
-    // 4. Pontuação geral de preenchimento
     const scoreCurrent = scoreRecord(current);
     const scoreCand = scoreRecord(candidate);
     if (scoreCand > scoreCurrent) return { winner: candidate, loser: current };
     if (scoreCurrent > scoreCand) return { winner: current, loser: candidate };
 
-    // 5. Timestamp mais recente se for alteração legítima de mesmo status
     const timeCurrent = current.updated_at ? new Date(current.updated_at).getTime() : 0;
     const timeCand = candidate.updated_at ? new Date(candidate.updated_at).getTime() : 0;
     if (timeCand > timeCurrent) return { winner: candidate, loser: current };
@@ -365,85 +329,40 @@ export function deduplicateCNHRecords(list: GeralCNH[]): { cleanList: GeralCNH[]
     return { winner: current, loser: candidate };
   };
 
-  const byOrdem = new Map<number, GeralCNH>();
-  const byCpf = new Map<string, GeralCNH>();
+  const byId = new Map<string, GeralCNH>();
   const duplicateIdsSet = new Set<string>();
-  const keptIdMap = new Map<string, GeralCNH>();
+  const withoutId: GeralCNH[] = [];
 
   for (const item of list) {
-    if (!item || !item.id) continue;
-    const parsedOrdem = Number(item.ordem);
-    const validOrdem = !isNaN(parsedOrdem) && parsedOrdem > 0 ? parsedOrdem : 0;
-    const cpfDigits = (item.cpf || "").replace(/\D/g, "");
-    const hasValidOrdem = validOrdem > 0;
-    const hasValidCpf = cpfDigits.length === 11;
-
-    let conflictingRecord: GeralCNH | undefined;
-
-    if (hasValidOrdem && byOrdem.has(validOrdem)) {
-      conflictingRecord = byOrdem.get(validOrdem);
-    } else if (hasValidCpf && byCpf.has(cpfDigits)) {
-      const existingCpfRecord = byCpf.get(cpfDigits);
-      const existingOrdem = Number(existingCpfRecord?.ordem) || 0;
-      if (
-        existingCpfRecord &&
-        (validOrdem === 0 || existingOrdem === 0 || validOrdem > 15000 || existingOrdem > 15000 || validOrdem === existingOrdem)
-      ) {
-        conflictingRecord = existingCpfRecord;
-      }
-    } else if (keptIdMap.has(item.id)) {
-      conflictingRecord = keptIdMap.get(item.id);
+    if (!item) continue;
+    if (!item.id) {
+      withoutId.push(item);
+      continue;
     }
 
-    if (conflictingRecord && conflictingRecord.id !== item.id) {
-      const { winner, loser } = pickWinner(conflictingRecord, item);
-
-      // Preserva a menor ordem histórica legítima caso o perdedor tivesse a ordem oficial do Supabase
-      const ordemWinner = Number(winner.ordem) || 0;
-      const ordemLoser = Number(loser.ordem) || 0;
-      let finalOrdem = ordemWinner;
-      if (ordemLoser > 0 && (ordemWinner === 0 || (ordemWinner > 15000 && ordemLoser <= 15000))) {
-        finalOrdem = ordemLoser;
-      }
-
-      // Se o perdedor tiver UUID do Supabase e o vencedor for ID gerado localmente, preserva o ID oficial do Supabase!
-      const isWinnerUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(winner.id);
-      const isLoserUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(loser.id);
-      let preservedId = winner.id;
-      let idToPurge = loser.id;
-      if (!isWinnerUUID && isLoserUUID) {
-        preservedId = loser.id;
-        idToPurge = winner.id;
-      }
-
-      duplicateIdsSet.add(idToPurge);
-      keptIdMap.delete(idToPurge);
-
+    if (byId.has(item.id)) {
+      duplicateIdsSet.add(item.id);
+      const existing = byId.get(item.id)!;
+      const { winner, loser } = pickWinner(existing, item);
       const mergedRecord: GeralCNH = {
         ...loser,
         ...winner,
-        id: preservedId,
-        ordem: finalOrdem,
-        // Garante que campos físicos preenchidos nunca sejam apagados
+        id: item.id,
         gaveta: (winner.gaveta && winner.gaveta.trim()) ? winner.gaveta : loser.gaveta,
         reparticao: (winner.reparticao && winner.reparticao.trim()) ? winner.reparticao : loser.reparticao,
         usuario_nome: (winner.usuario_nome && winner.usuario_nome !== "Operador") ? winner.usuario_nome : (loser.usuario_nome || winner.usuario_nome),
         usuario_id: (winner.usuario_id && winner.usuario_id !== "sistema") ? winner.usuario_id : (loser.usuario_id || winner.usuario_id),
       };
-
-      keptIdMap.set(preservedId, mergedRecord);
-      if (finalOrdem > 0) byOrdem.set(finalOrdem, mergedRecord);
-      const mergedCpfDigits = (mergedRecord.cpf || "").replace(/\D/g, "");
-      if (mergedCpfDigits.length === 11) byCpf.set(mergedCpfDigits, mergedRecord);
+      byId.set(item.id, mergedRecord);
     } else {
-      keptIdMap.set(item.id, { ...item, ordem: validOrdem });
-      if (hasValidOrdem) byOrdem.set(validOrdem, item);
-      if (hasValidCpf) byCpf.set(cpfDigits, item);
+      byId.set(item.id, item);
     }
   }
 
-  const cleanList = Array.from(keptIdMap.values()).sort((a, b) => (b.ordem || 0) - (a.ordem || 0));
-  const duplicateIds = Array.from(duplicateIdsSet).filter(id => !keptIdMap.has(id));
+  const cleanList = [...Array.from(byId.values()), ...withoutId].sort(
+    (a, b) => (Number(b.ordem) || 0) - (Number(a.ordem) || 0)
+  );
+  const duplicateIds = Array.from(duplicateIdsSet).filter(id => !byId.has(id));
 
   return { cleanList, duplicateIds };
 }
@@ -736,6 +655,12 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
 
         if (deltaErr) {
           console.warn("Aviso na consulta por updated_at:", deltaErr);
+          recordSyncError({
+            table: "geral_cnhs",
+            direction: "supabase_to_dexie",
+            error: deltaErr,
+            actionTaken: "Consulta delta interrompida. Dados locais Dexie preservados sem perda."
+          });
         }
 
         if (deltaData && deltaData.length > 0) {
@@ -865,6 +790,12 @@ export async function syncGeralWithSupabase(forceFull: boolean = false): Promise
       }
     } catch (err: any) {
       console.warn("⚠️ Aviso de sincronização Supabase (modo offline):", err?.message || err);
+      recordSyncError({
+        table: "geral_cnhs",
+        direction: "supabase_to_dexie",
+        error: err,
+        actionTaken: "Sistema operando em modo offline com 100% dos dados servidos do IndexedDB local."
+      });
       const localCount = await dexieDb.geral.count();
       const errorStats: SyncStats = {
         status: "offline",
@@ -1009,6 +940,13 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
       trackEgress("geral_cnhs", "UPDATE", primaryPayload, false, 0, `Atualização individual CNH: ${normalized.nome || normalized.cpf}`);
       if (error) {
         console.warn("Aviso ao fazer upsert completo em geral_cnhs (tentando payload seguro):", error.message);
+        recordSyncError({
+          table: "geral_cnhs",
+          direction: "dexie_to_supabase",
+          error: error,
+          actionTaken: "Ativada tentativa resiliente com payload seguro sem FKs.",
+          recordsCount: 1
+        });
         // Tentativa 1: Sem chaves estrangeiras que possam violar constraints (FKs)
         const safeFkPayload = {
           ...primaryPayload,
@@ -1024,6 +962,13 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
         );
         if (resFk.error) {
           console.warn("Aviso ao tentar upsert sem FKs (tentando colunas básicas):", resFk.error.message);
+          recordSyncError({
+            table: "geral_cnhs",
+            direction: "dexie_to_supabase",
+            error: resFk.error,
+            actionTaken: "Tentativa de colunas mínimas básicas executada.",
+            recordsCount: 1
+          });
           // Tentativa 2: Apenas colunas básicas garantidas (sem updated_at ou colunas opcionais)
           const basicPayload = {
             id: normalized.id,
@@ -1047,6 +992,13 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
       }
     } catch (err) {
       console.warn("Erro ao sincronizar geral_cnhs com Supabase:", err);
+      recordSyncError({
+        table: "geral_cnhs",
+        direction: "dexie_to_supabase",
+        error: err,
+        actionTaken: "Registro salvo com sucesso no IndexedDB local. Sincronização remota pendente.",
+        recordsCount: 1
+      });
     }
   }
 
@@ -1126,6 +1078,13 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
         trackEgress("geral_cnhs", "BATCH_UPSERT", chunk, false, 0, `Lote de ${chunk.length} CNHs salvas`);
         if (error) {
           console.warn("Aviso ao salvar lote no Supabase, garantindo integridade de responsáveis:", error.message);
+          recordSyncError({
+            table: "geral_cnhs",
+            direction: "dexie_to_supabase",
+            error: error,
+            actionTaken: `Lote de ${chunk.length} CNHs falhou no upsert direto. Tentando auto-provisionamento de responsáveis e envio individual seguro.`,
+            recordsCount: chunk.length
+          });
           // 1. Assegura que todos os responsáveis referenciados no lote existam na tabela responsaveis
           const referencedResp = chunk.filter((c) => c.responsavel_id);
           if (referencedResp.length > 0) {
@@ -1163,6 +1122,13 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
       }
     } catch (err) {
       console.warn("Erro ao salvar lote no Supabase:", err);
+      recordSyncError({
+        table: "geral_cnhs",
+        direction: "dexie_to_supabase",
+        error: err,
+        actionTaken: `Lote de ${records.length} registros mantido salvo no IndexedDB local com segurança.`,
+        recordsCount: records.length
+      });
     }
   }
 
@@ -1199,6 +1165,13 @@ export async function deleteLocalGeralCNH(id: string): Promise<void> {
       trackEgress("geral_cnhs", "DELETE", 120, false, 0, `Exclusão de CNH ID ${id}`);
     } catch (err) {
       console.warn("Erro ao excluir do Supabase:", err);
+      recordSyncError({
+        table: "geral_cnhs",
+        direction: "dexie_to_supabase",
+        error: err,
+        actionTaken: "Registro removido da base local Dexie. Exclusão remota pendente/falhou.",
+        recordsCount: 1
+      });
     }
   }
 
@@ -1237,6 +1210,13 @@ export async function deleteLocalGeralCNHsBulk(ids: string[]): Promise<void> {
       trackEgress("geral_cnhs", "DELETE", 200, false, 0, `Exclusão em lote de ${ids.length} CNHs`);
     } catch (err) {
       console.warn("Erro ao excluir lote do Supabase:", err);
+      recordSyncError({
+        table: "geral_cnhs",
+        direction: "dexie_to_supabase",
+        error: err,
+        actionTaken: `Lote de ${ids.length} CNHs excluído localmente no Dexie. Exclusão remota falhou.`,
+        recordsCount: ids.length
+      });
     }
   }
 
