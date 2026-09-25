@@ -68,7 +68,7 @@ import {
   getLotes
 } from "../services/db";
 import { syncGeralWithSupabase, dexieDb, normalizeCNHRecord, deduplicateCNHRecords, cleanAndDeduplicateGeralTable } from "../services/dexieDb";
-import { getPublicShareUrl, subscribeToSupabaseRealtime } from "../services/supabase";
+import { getPublicShareUrl, subscribeToSupabaseRealtime, supabase, isSupabaseConfigured } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
 import { Badge } from "../components/ui/Badge";
@@ -149,6 +149,7 @@ function getInitialVisibleColumns(userKey?: string): GeralVisibleColumns {
 export const GeralPage: React.FC = () => {
   const { user, canEdit } = useAuth();
   const [cnhs, setCnhs] = useState<GeralCNH[]>([]);
+  const [cloudCnhCount, setCloudCnhCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [responsaveis, setResponsaveis] = useState<Responsavel[]>([]);
 
@@ -621,6 +622,20 @@ export const GeralPage: React.FC = () => {
       setResponsaveis(dataResp);
       if (duplicateIds.length > 0) {
         cleanAndDeduplicateGeralTable().catch(() => {});
+      }
+
+      // Consulta a quantidade exata de registros no banco de dados da nuvem (Supabase)
+      if (isSupabaseConfigured()) {
+        try {
+          const { count, error } = await supabase
+            .from("geral_cnhs")
+            .select("*", { count: "exact", head: true });
+          if (!error && typeof count === "number" && count > 0) {
+            setCloudCnhCount(count);
+          }
+        } catch (e) {
+          console.warn("Aviso ao buscar contagem exata no Supabase:", e);
+        }
       }
     } catch (err) {
       console.error("Erro ao buscar CNHs no protocolo:", err);
@@ -1405,7 +1420,7 @@ export const GeralPage: React.FC = () => {
                 ? "bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300"
                 : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
             }`}>
-              {cnhs.length}
+              {(cloudCnhCount || cnhs.length).toLocaleString("pt-BR")}
             </span>
           </button>
 
@@ -1766,7 +1781,9 @@ export const GeralPage: React.FC = () => {
             )}
 
             <span className="text-[11px] text-slate-500 font-mono">
-              Total listado: {filteredData.length} registros
+              {filteredData.length !== cnhs.length
+                ? `Total filtrado: ${filteredData.length.toLocaleString("pt-BR")} de ${(cloudCnhCount || cnhs.length).toLocaleString("pt-BR")} registros`
+                : `Total no banco: ${(cloudCnhCount || cnhs.length).toLocaleString("pt-BR")} registros`}
             </span>
           </div>
         </div>
@@ -2466,7 +2483,7 @@ export const GeralPage: React.FC = () => {
                 <span className="mx-2 text-slate-300 dark:text-slate-700">|</span>
                 Mostrando <strong>{filteredData.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}</strong> até{" "}
                 <strong>{Math.min(currentPage * itemsPerPage, filteredData.length)}</strong> de{" "}
-                <strong>{filteredData.length}</strong> registros
+                <strong>{filteredData.length !== cnhs.length ? filteredData.length.toLocaleString("pt-BR") : (cloudCnhCount || cnhs.length).toLocaleString("pt-BR")}</strong> registros
               </span>
             </div>
             

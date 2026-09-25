@@ -4604,7 +4604,20 @@ export function getPublicSearchCount(): number {
 export async function fetchPublicSearchCount(): Promise<number> {
   if (isSupabaseConfigured()) {
     try {
-      // 1. Busca o maior número sequencial registrado na tabela acessos_cidadao do Supabase
+      // 1. Prioriza a contagem EXATA total de registros no banco Supabase
+      const { count, error } = await supabase
+        .from("acessos_cidadao")
+        .select("*", { count: "exact", head: true });
+
+      if (!error && typeof count === "number") {
+        if (typeof window !== "undefined") {
+          localStorage.setItem("detran_public_search_count", count.toString());
+          localStorage.setItem("detran_acessos_cidadao_max_numero", count.toString());
+        }
+        return count;
+      }
+
+      // Fallback para maior número sequencial registrado na tabela acessos_cidadao do Supabase
       const { data: maxRow, error: maxErr } = await supabase
         .from("acessos_cidadao")
         .select("numero")
@@ -4615,21 +4628,6 @@ export async function fetchPublicSearchCount(): Promise<number> {
         const supMax = maxRow[0].numero;
         const currentLocalMax = getMaxAcessoCidadaoNumero();
         const absoluteMax = Math.max(supMax, currentLocalMax);
-        if (typeof window !== "undefined") {
-          localStorage.setItem("detran_acessos_cidadao_max_numero", absoluteMax.toString());
-          localStorage.setItem("detran_public_search_count", absoluteMax.toString());
-        }
-        return absoluteMax;
-      }
-
-      // Fallback para contagem total de linhas
-      const { count, error } = await supabase
-        .from("acessos_cidadao")
-        .select("*", { count: "exact", head: true });
-
-      if (!error && typeof count === "number") {
-        const currentLocalMax = getMaxAcessoCidadaoNumero();
-        const absoluteMax = Math.max(count, currentLocalMax);
         if (typeof window !== "undefined") {
           localStorage.setItem("detran_acessos_cidadao_max_numero", absoluteMax.toString());
           localStorage.setItem("detran_public_search_count", absoluteMax.toString());
@@ -4735,7 +4733,8 @@ export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
     return local;
   }
   try {
-    const data = await fetchAllRowsFromSupabase<AcessoCidadaoLog>("acessos_cidadao", 1000, "data_hora", false);
+    // maxRows: 0 garante que TODAS as linhas registradas na nuvem sejam baixadas sem o limite de 250
+    const data = await fetchAllRowsFromSupabase<AcessoCidadaoLog>("acessos_cidadao", 1000, "data_hora", false, true, 0);
 
     if (data && data.length > 0) {
       const map = new Map<string, AcessoCidadaoLog>();
@@ -4749,56 +4748,25 @@ export async function fetchAcessosCidadaoLogs(): Promise<AcessoCidadaoLog[]> {
         (a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime()
       );
 
-      // Deduplicação semântica automática para que o usuário NUNCA veja múltiplos registros do mesmo dispositivo/CPF no mesmo horário
-      const deduplicated: AcessoCidadaoLog[] = [];
-      const seenTimeMap = new Map<string, number>();
-      const DEDUP_WINDOW = 3 * 60 * 1000;
-
-      for (const item of merged) {
-        const cleanCpf = (item.cpf || "").replace(/\D/g, "");
-        const t = new Date(item.data_hora).getTime();
-        const deviceKey = (item.dispositivo || "").toLowerCase().trim();
-        
-        // Chave por CPF se houver CPF, ou por dispositivo
-        const primaryKey = cleanCpf.length >= 9 ? `cpf_${cleanCpf}` : `dev_${deviceKey}`;
-        const lastT = seenTimeMap.get(primaryKey);
-
-        if (lastT !== undefined && Math.abs(t - lastT) < DEDUP_WINDOW) {
-          // Ignora registro repetido no mesmo horário
-          continue;
-        }
-
-        // Também valida se o mesmo dispositivo acessou no mesmo segundo
-        if (deviceKey && deviceKey !== "navegador web / mobile") {
-          const devLastT = seenTimeMap.get(`dev_${deviceKey}`);
-          if (devLastT !== undefined && Math.abs(t - devLastT) < 30 * 1000) {
-            continue;
-          }
-          seenTimeMap.set(`dev_${deviceKey}`, t);
-        }
-
-        seenTimeMap.set(primaryKey, t);
-        deduplicated.push(item);
-      }
-
-      // Encontra o maior número presente na base
+      // Preserva a totalidade exata dos registros cadastrados sem ocultação automática
       let highestNum = 0;
-      deduplicated.forEach((item) => {
+      merged.forEach((item) => {
         if (typeof item.numero === "number" && !isNaN(item.numero) && item.numero > highestNum) {
           highestNum = item.numero;
         }
       });
 
       if (typeof window !== "undefined") {
-        if (highestNum > 0) {
-          const currentStored = parseInt(localStorage.getItem("detran_acessos_cidadao_max_numero") || "0", 10);
-          const absoluteMax = Math.max(highestNum, currentStored);
-          localStorage.setItem("detran_acessos_cidadao_max_numero", absoluteMax.toString());
-          localStorage.setItem("detran_public_search_count", absoluteMax.toString());
-        }
-        localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(deduplicated.slice(0, 1000)));
+        const totalCount = merged.length;
+        const currentStored = parseInt(localStorage.getItem("detran_public_search_count") || "0", 10);
+        const absoluteMax = Math.max(highestNum, totalCount, currentStored);
+        localStorage.setItem("detran_acessos_cidadao_max_numero", absoluteMax.toString());
+        localStorage.setItem("detran_public_search_count", absoluteMax.toString());
+        try {
+          localStorage.setItem("detran_acessos_cidadao_logs", JSON.stringify(merged.slice(0, 5000)));
+        } catch {}
       }
-      return deduplicated;
+      return merged;
     }
   } catch (e) {
     console.warn("Aviso ao sincronizar acessos do cidadão do Supabase:", e);
@@ -6260,11 +6228,40 @@ export async function getDashboardStats() {
   const memorandos = await getMemorandos();
   const usuarios = await getUsuarios();
 
-  const totalGeral = geral.length;
-  const remetidas = geral.filter((g) => g.situacao === "Remetida").length;
-  const recebidas = geral.filter((g) => g.situacao === "Recebida").length;
-  const pendentes = geral.filter((g) => g.situacao === "Pendente").length;
-  const entregues = geral.filter((g) => g.situacao === "Entregue").length;
+  let totalGeral = geral.length;
+  let remetidas = geral.filter((g) => g.situacao === "Remetida").length;
+  let recebidas = geral.filter((g) => g.situacao === "Recebida").length;
+  let pendentes = geral.filter((g) => g.situacao === "Pendente").length;
+  let entregues = geral.filter((g) => g.situacao === "Entregue").length;
+
+  // Busca a quantidade exata de registros no banco de dados da nuvem (Supabase)
+  if (isSupabaseConfigured()) {
+    try {
+      const { count: exactTotal, error: errTotal } = await supabase
+        .from("geral_cnhs")
+        .select("*", { count: "exact", head: true });
+
+      if (!errTotal && typeof exactTotal === "number" && exactTotal > 0) {
+        totalGeral = exactTotal;
+
+        // Se a contagem local diferir da nuvem, consulta as contagens por situação na nuvem
+        if (geral.length !== exactTotal) {
+          const [resRem, resRec, resPen, resEnt] = await Promise.all([
+            supabase.from("geral_cnhs").select("*", { count: "exact", head: true }).eq("situacao", "Remetida"),
+            supabase.from("geral_cnhs").select("*", { count: "exact", head: true }).eq("situacao", "Recebida"),
+            supabase.from("geral_cnhs").select("*", { count: "exact", head: true }).eq("situacao", "Pendente"),
+            supabase.from("geral_cnhs").select("*", { count: "exact", head: true }).eq("situacao", "Entregue"),
+          ]);
+          if (typeof resRem.count === "number") remetidas = resRem.count;
+          if (typeof resRec.count === "number") recebidas = resRec.count;
+          if (typeof resPen.count === "number") pendentes = resPen.count;
+          if (typeof resEnt.count === "number") entregues = resEnt.count;
+        }
+      }
+    } catch (err) {
+      console.warn("Aviso ao buscar contagem exata no Supabase para o dashboard:", err);
+    }
+  }
 
   // Gráfico por Situação
   const chartSituacao = [
@@ -6432,7 +6429,7 @@ export async function getDashboardStats() {
       entregues,
       memorandos: memorandos.length,
       usuarios: usuarios.length,
-      consultasPublicas: getPublicSearchCount()
+      consultasPublicas: await fetchPublicSearchCount()
     },
     chartSituacao,
     chartGaveta,

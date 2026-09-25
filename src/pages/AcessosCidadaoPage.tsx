@@ -33,7 +33,7 @@ import {
   getPublicSearchCount,
   consolidarAcessosCidadaoDuplicados 
 } from "../services/db";
-import { subscribeToSupabaseRealtime } from "../services/supabase";
+import { subscribeToSupabaseRealtime, supabase, isSupabaseConfigured } from "../services/supabase";
 import { AcessoCidadaoLog } from "../types";
 import { formatCPF, formatDateTime } from "../lib/utils";
 import * as XLSX from "xlsx";
@@ -45,10 +45,11 @@ type PeriodoPreset = "hoje" | "ontem" | "7dias" | "30dias" | "mes_atual" | "mes_
 
 export const AcessosCidadaoPage: React.FC = () => {
   const [logs, setLogs] = useState<AcessoCidadaoLog[]>([]);
+  const [cloudTotalCount, setCloudTotalCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Filtros de Período
-  const [presetPeriodo, setPresetPeriodo] = useState<PeriodoPreset>("30dias");
+  // Filtros de Período (Padrão: "todos" para exibir o histórico completo de registros)
+  const [presetPeriodo, setPresetPeriodo] = useState<PeriodoPreset>("todos");
   const [dataInicio, setDataInicio] = useState<string>("");
   const [dataFim, setDataFim] = useState<string>("");
   const [showPeriodDropdown, setShowPeriodDropdown] = useState(false);
@@ -122,6 +123,19 @@ export const AcessosCidadaoPage: React.FC = () => {
   const loadLogs = async () => {
     setLoading(true);
     try {
+      if (isSupabaseConfigured()) {
+        try {
+          const { count, error } = await supabase
+            .from("acessos_cidadao")
+            .select("*", { count: "exact", head: true });
+          if (!error && typeof count === "number") {
+            setCloudTotalCount(count);
+          }
+        } catch (e) {
+          console.warn("Aviso ao buscar contagem de acessos no Supabase:", e);
+        }
+      }
+
       const data = await fetchAcessosCidadaoLogs();
 
       // Preserva o número sequencial individual de cada log a partir do maior número
@@ -705,6 +719,14 @@ export const AcessosCidadaoPage: React.FC = () => {
             <p className="text-slate-300 text-xs md:text-sm max-w-2xl leading-relaxed">
               Acompanhe em tempo real o volume de buscas realizadas pelos cidadãos no aplicativo PWA mobile e portal web. Monitore o número de CNHs consultadas nas situações <strong>Recebida</strong>, <strong>Remetida</strong>, <strong>Entregue</strong> e <strong>Pendente</strong>.
             </p>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <span className="px-3 py-1 bg-cyan-950/80 border border-cyan-400/40 text-cyan-200 rounded-lg text-xs font-bold font-mono">
+                Total Geral no Banco: {(cloudTotalCount !== null ? cloudTotalCount : logs.length).toLocaleString("pt-BR")} registros
+              </span>
+              <span className="px-2.5 py-1 bg-emerald-950/80 border border-emerald-400/40 text-emerald-300 rounded-lg text-xs font-semibold">
+                Mostrador de Acessos: {(cloudTotalCount !== null ? cloudTotalCount : logs.length).toLocaleString("pt-BR")} consultas
+              </span>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
