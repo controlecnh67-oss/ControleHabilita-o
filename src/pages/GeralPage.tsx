@@ -161,8 +161,54 @@ export const GeralPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [filtroSituacao, setFiltroSituacao] = useState<string>("todas");
   const [filtroLote, setFiltroLote] = useState<string>("");
+  const [filtroGaveta, setFiltroGaveta] = useState<string>("todas");
+  const [filtroReparticao, setFiltroReparticao] = useState<string>("todas");
   const [filtroOrdemInicial, setFiltroOrdemInicial] = useState<string>("");
   const [filtroOrdemFinal, setFiltroOrdemFinal] = useState<string>("");
+
+  // Listas de gavetas e repartições únicas disponíveis para os filtros
+  const availableGavetas = useMemo(() => {
+    const set = new Set<string>(DEFAULT_GAVETAS);
+    cnhs.forEach((c) => {
+      if (c.gaveta && c.gaveta.trim()) set.add(c.gaveta.trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true }));
+  }, [cnhs]);
+
+  const availableReparticoes = useMemo(() => {
+    const set = new Set<string>(DEFAULT_REPARTICOES);
+    cnhs.forEach((c) => {
+      if (c.reparticao && c.reparticao.trim()) set.add(c.reparticao.trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true }));
+  }, [cnhs]);
+
+  // Contadores por Gaveta e por Repartição para os selects de filtro
+  const gavetaCounts = useMemo(() => {
+    const counts: Record<string, number> = { todas: cnhs.length, SEM_GAVETA: 0 };
+    cnhs.forEach((c) => {
+      const g = (c.gaveta || "").trim();
+      if (!g || g === "-" || g.toLowerCase() === "em trânsito" || g.toLowerCase() === "vazio") {
+        counts.SEM_GAVETA = (counts.SEM_GAVETA || 0) + 1;
+      } else {
+        counts[g] = (counts[g] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [cnhs]);
+
+  const reparticaoCounts = useMemo(() => {
+    const counts: Record<string, number> = { todas: cnhs.length, SEM_REPARTICAO: 0 };
+    cnhs.forEach((c) => {
+      const r = (c.reparticao || "").trim();
+      if (!r || r === "-" || r.toLowerCase() === "vazio") {
+        counts.SEM_REPARTICAO = (counts.SEM_REPARTICAO || 0) + 1;
+      } else {
+        counts[r] = (counts[r] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [cnhs]);
   
   // Controle de visibilidade das colunas com persistência no localStorage
   const [showColumnFilter, setShowColumnFilter] = useState(false);
@@ -788,7 +834,25 @@ export const GeralPage: React.FC = () => {
       const matchOrdemInicial = !filtroOrdemInicial || Number(c.ordem) >= Number(filtroOrdemInicial);
       const matchOrdemFinal = !filtroOrdemFinal || Number(c.ordem) <= Number(filtroOrdemFinal);
 
-      return matchSearch && matchSituacao && matchLote && matchOrdemInicial && matchOrdemFinal;
+      let matchGaveta = true;
+      if (filtroGaveta !== "todas") {
+        if (filtroGaveta === "SEM_GAVETA") {
+          matchGaveta = !c.gaveta || !c.gaveta.trim() || c.gaveta === "-" || c.gaveta.toLowerCase() === "em trânsito" || c.gaveta.toLowerCase() === "vazio";
+        } else {
+          matchGaveta = (c.gaveta || "").trim().toLowerCase() === filtroGaveta.trim().toLowerCase();
+        }
+      }
+
+      let matchReparticao = true;
+      if (filtroReparticao !== "todas") {
+        if (filtroReparticao === "SEM_REPARTICAO") {
+          matchReparticao = !c.reparticao || !c.reparticao.trim() || c.reparticao === "-" || c.reparticao.toLowerCase() === "vazio";
+        } else {
+          matchReparticao = (c.reparticao || "").trim().toLowerCase() === filtroReparticao.trim().toLowerCase();
+        }
+      }
+
+      return matchSearch && matchSituacao && matchLote && matchOrdemInicial && matchOrdemFinal && matchGaveta && matchReparticao;
     }).sort((a, b) => {
       const valA = a[sortColumn];
       const valB = b[sortColumn];
@@ -806,7 +870,7 @@ export const GeralPage: React.FC = () => {
         ? String(valA || "").localeCompare(String(valB || ""))
         : String(valB || "").localeCompare(String(valA || ""));
     });
-  }, [cnhs, searchTerm, filtroSituacao, filtroLote, filtroOrdemInicial, filtroOrdemFinal, sortColumn, sortDirection]);
+  }, [cnhs, searchTerm, filtroSituacao, filtroLote, filtroGaveta, filtroReparticao, filtroOrdemInicial, filtroOrdemFinal, sortColumn, sortDirection]);
 
   // Paginação
   const totalPages = Math.ceil(filteredData.length / itemsPerPage);
@@ -853,7 +917,7 @@ export const GeralPage: React.FC = () => {
     setSelectedIds(allFilteredIds);
   };
 
-  const handleToggleSelectFilteredLote = () => {
+  const handleToggleSelectFiltered = () => {
     const filteredIdSet = new Set(filteredData.map((c) => c.id));
     const allFilteredAreSelected =
       filteredData.length > 0 && filteredData.every((c) => selectedIds.includes(c.id));
@@ -864,6 +928,18 @@ export const GeralPage: React.FC = () => {
       const merged = new Set([...selectedIds, ...filteredData.map((c) => c.id)]);
       setSelectedIds(Array.from(merged));
     }
+  };
+
+  const handleToggleSelectFilteredLote = handleToggleSelectFiltered;
+
+  const handleOpenBatchLocationModal = () => {
+    if (!canEdit) return;
+    // Se não houver linhas marcadas e houver itens filtrados, marca todos os filtrados
+    if (selectedIds.length === 0 && filteredData.length > 0) {
+      const allFilteredIds = filteredData.map((c) => c.id);
+      setSelectedIds(allFilteredIds);
+    }
+    setIsBatchLocationModalOpen(true);
   };
 
   // Handlers para Exclusão
@@ -1317,10 +1393,15 @@ export const GeralPage: React.FC = () => {
         {/* Cabeçalho da Tela Geral */}
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <FolderArchive className="w-6 h-6 text-blue-600" />
-              Protocolo Geral de CNHs
-            </h2>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <FolderArchive className="w-6 h-6 text-blue-600" />
+                Protocolo Geral de CNHs
+              </h2>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-blue-100 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                {(cloudCnhCount || cnhs.length).toLocaleString("pt-BR")} CNHs no Banco (Nuvem)
+              </span>
+            </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               {activeSubTab === "cnhs" 
                 ? "Gestão de protocolo: remessas recebidas, arquivamento nas gavetas físicas e entrega ao titular ou despachante."
@@ -1387,6 +1468,17 @@ export const GeralPage: React.FC = () => {
                 >
                   <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                   <span>📦 Vincular Lote (Planilha)</span>
+                </button>
+              )}
+
+              {canEdit && (
+                <button
+                  onClick={handleOpenBatchLocationModal}
+                  title="Abrir modal de realocação de gaveta e repartição em lote (para CNHs marcadas ou filtradas)"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-800 dark:text-blue-200 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-blue-300 dark:border-blue-800"
+                >
+                  <Archive className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  <span>Realocar Gaveta / Repartição {selectedIds.length > 0 ? `(${selectedIds.length})` : "em Lote"}</span>
                 </button>
               )}
 
@@ -1471,56 +1563,91 @@ export const GeralPage: React.FC = () => {
 
       {/* Barra de Filtros e Pesquisa Instantânea */}
       <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-          <div className="md:col-span-6 relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Pesquisa instantânea por Ordem, Nome, CPF, PA, Lote, Gaveta, Repartição..."
-              value={searchTerm}
-              onChange={(e) => {
-                setSearchTerm(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500 transition-all"
-            />
-            {searchTerm && (
-              <button
-                onClick={() => setSearchTerm("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-
-          <div className="md:col-span-3 relative">
-            <Layers className="w-3.5 h-3.5 text-indigo-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Filtrar por Lote..."
-              value={filtroLote}
-              onChange={(e) => {
-                setFiltroLote(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full pl-9 pr-7 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 transition-all"
-            />
-            {filtroLote && (
-              <button
-                onClick={() => {
-                  setFiltroLote("");
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-12 gap-3 items-end">
+          {/* Pesquisa Geral */}
+          <div className="sm:col-span-2 md:col-span-12 lg:col-span-4">
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
+              Pesquisa Rápida
+            </label>
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Ordem, Nome, CPF, PA, Lote, Gaveta..."
+                value={searchTerm}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                title="Limpar filtro de lote"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+                className="w-full pl-10 pr-8 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500 transition-all font-medium"
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                  title="Limpar pesquisa"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="md:col-span-3">
+          {/* Filtro por Lote */}
+          <div className="sm:col-span-1 md:col-span-3 lg:col-span-2">
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <Layers className="w-3.5 h-3.5 text-indigo-500" />
+                Lote
+              </span>
+              {filtroLote && (
+                <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">Ativo</span>
+              )}
+            </label>
+            <div className="relative">
+              <Layers className="w-3.5 h-3.5 text-indigo-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Filtrar Lote..."
+                value={filtroLote}
+                onChange={(e) => {
+                  setFiltroLote(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className={`w-full pl-9 pr-7 py-2 bg-slate-50 dark:bg-slate-800 border rounded-xl text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 transition-all ${
+                  filtroLote.trim() !== ""
+                    ? "border-indigo-400 bg-indigo-50/20 dark:bg-indigo-950/20 ring-1 ring-indigo-400/40"
+                    : "border-slate-200 dark:border-slate-700"
+                }`}
+              />
+              {filtroLote && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFiltroLote("");
+                    setCurrentPage(1);
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                  title="Limpar filtro de lote"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Filtro por Situação */}
+          <div className="sm:col-span-1 md:col-span-3 lg:col-span-2">
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <Filter className="w-3.5 h-3.5 text-slate-400" />
+                Situação
+              </span>
+              {filtroSituacao !== "todas" && (
+                <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold">Ativo</span>
+              )}
+            </label>
             <div className="relative">
               <Filter className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <select
@@ -1529,14 +1656,133 @@ export const GeralPage: React.FC = () => {
                   setFiltroSituacao(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="w-full pl-9 pr-8 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-hidden appearance-none cursor-pointer"
+                className={`w-full pl-9 pr-8 py-2 bg-slate-50 dark:bg-slate-800 border rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-hidden appearance-none cursor-pointer truncate ${
+                  filtroSituacao !== "todas"
+                    ? "border-blue-400 bg-blue-50/20 dark:bg-blue-950/20 ring-1 ring-blue-400/40"
+                    : "border-slate-200 dark:border-slate-700"
+                }`}
               >
                 <option value="todas">Todas as Situações</option>
-                <option value="Remetida">🟡 Remetida (Em Trânsito)</option>
+                <option value="Remetida">🟡 Remetida (Trânsito)</option>
                 <option value="Recebida">🔵 Recebida na Agência</option>
                 <option value="Pendente">🔴 Pendente Alocação</option>
                 <option value="Entregue">🟢 Entregue ao Titular</option>
               </select>
+              {filtroSituacao !== "todas" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFiltroSituacao("todas");
+                    setCurrentPage(1);
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                  title="Limpar filtro de situação"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Filtro por Gaveta */}
+          <div className="sm:col-span-1 md:col-span-3 lg:col-span-2">
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 flex items-center justify-between">
+              <span className="flex items-center gap-1 text-blue-700 dark:text-blue-300">
+                <Archive className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                Filtro Gaveta
+              </span>
+              {filtroGaveta !== "todas" && (
+                <span className="text-[10px] font-mono font-bold text-blue-600 bg-blue-100 dark:bg-blue-950 px-1.5 py-0.2 rounded border border-blue-200 dark:border-blue-800">
+                  {filtroGaveta === "SEM_GAVETA" ? "Sem Gaveta" : cleanGavetaText(filtroGaveta)}
+                </span>
+              )}
+            </label>
+            <div className="relative">
+              <Archive className="w-3.5 h-3.5 text-blue-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <select
+                value={filtroGaveta}
+                onChange={(e) => {
+                  setFiltroGaveta(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className={`w-full pl-9 pr-8 py-2 bg-slate-50 dark:bg-slate-800 border rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-hidden appearance-none cursor-pointer truncate transition-all ${
+                  filtroGaveta !== "todas"
+                    ? "border-blue-500 bg-blue-50/50 dark:bg-blue-950/40 font-bold text-blue-900 dark:text-blue-200 ring-2 ring-blue-500/20 shadow-2xs"
+                    : "border-slate-200 dark:border-slate-700 hover:border-blue-300"
+                }`}
+              >
+                <option value="todas">Todas as Gavetas ({cnhs.length})</option>
+                <option value="SEM_GAVETA">⚠️ Sem Gaveta / Em trânsito ({gavetaCounts.SEM_GAVETA || 0})</option>
+                {availableGavetas.map((gav) => (
+                  <option key={gav} value={gav}>
+                    📦 {gav} ({gavetaCounts[gav] || 0})
+                  </option>
+                ))}
+              </select>
+              {filtroGaveta !== "todas" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFiltroGaveta("todas");
+                    setCurrentPage(1);
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                  title="Limpar filtro de gaveta"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Filtro por Repartição */}
+          <div className="sm:col-span-1 md:col-span-3 lg:col-span-2">
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 flex items-center justify-between">
+              <span className="flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                <Building2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                Filtro Repartição
+              </span>
+              {filtroReparticao !== "todas" && (
+                <span className="text-[10px] font-mono font-bold text-emerald-600 bg-emerald-100 dark:bg-emerald-950 px-1.5 py-0.2 rounded border border-emerald-200 dark:border-emerald-800">
+                  {filtroReparticao === "SEM_REPARTICAO" ? "Sem Rep." : cleanReparticaoText(filtroReparticao)}
+                </span>
+              )}
+            </label>
+            <div className="relative">
+              <Building2 className="w-3.5 h-3.5 text-emerald-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <select
+                value={filtroReparticao}
+                onChange={(e) => {
+                  setFiltroReparticao(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className={`w-full pl-9 pr-8 py-2 bg-slate-50 dark:bg-slate-800 border rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 focus:ring-2 focus:ring-emerald-500 outline-hidden appearance-none cursor-pointer truncate transition-all ${
+                  filtroReparticao !== "todas"
+                    ? "border-emerald-500 bg-emerald-50/50 dark:bg-emerald-950/40 font-bold text-emerald-900 dark:text-emerald-200 ring-2 ring-emerald-500/20 shadow-2xs"
+                    : "border-slate-200 dark:border-slate-700 hover:border-emerald-300"
+                }`}
+              >
+                <option value="todas">Todas as Repartições ({cnhs.length})</option>
+                <option value="SEM_REPARTICAO">⚠️ Sem Repartição / Vazio ({reparticaoCounts.SEM_REPARTICAO || 0})</option>
+                {availableReparticoes.map((rep) => (
+                  <option key={rep} value={rep}>
+                    🏢 {rep} ({reparticaoCounts[rep] || 0})
+                  </option>
+                ))}
+              </select>
+              {filtroReparticao !== "todas" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFiltroReparticao("todas");
+                    setCurrentPage(1);
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                  title="Limpar filtro de repartição"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1596,41 +1842,171 @@ export const GeralPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Painel Contextual de Lote Ativo com Atalho para Seleção e Alteração em Lote */}
-        {filtroLote && filtroLote.trim() !== "" && (
-          <div className="mt-2.5 pt-2.5 border-t border-indigo-100 dark:border-indigo-900/60 flex flex-wrap items-center justify-between gap-2.5 bg-indigo-50/60 dark:bg-indigo-950/40 p-2.5 rounded-xl border border-indigo-200/60 dark:border-indigo-800/60">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-600 text-white font-bold text-[11px] shadow-2xs">
-                <Layers className="w-3.5 h-3.5" />
-                Lote Filtrado: "{filtroLote}"
-              </span>
+        {/* Painel Contextual de Filtros Ativos com Opção de Marcar e Abrir Modal de Realocação por Lote */}
+        {(filtroLote.trim() !== "" || filtroGaveta !== "todas" || filtroReparticao !== "todas" || filtroSituacao !== "todas" || filtroOrdemInicial !== "" || filtroOrdemFinal !== "" || searchTerm.trim() !== "" || selectedIds.length > 0) ? (
+          <div className="mt-2.5 pt-2.5 border-t border-indigo-100 dark:border-indigo-900/60 flex flex-wrap items-center justify-between gap-2.5 bg-gradient-to-r from-indigo-50/90 via-blue-50/70 to-slate-50/70 dark:from-indigo-950/50 dark:via-blue-950/40 dark:to-slate-900/50 p-3 rounded-xl border border-indigo-200/80 dark:border-indigo-800/80 shadow-2xs">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Filtro Ativo:</span>
+              {filtroGaveta !== "todas" && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-600 text-white font-bold text-[11px] shadow-2xs">
+                  <Archive className="w-3.5 h-3.5" />
+                  Gaveta: {filtroGaveta === "SEM_GAVETA" ? "Sem Gaveta / Em Trânsito" : cleanGavetaText(filtroGaveta)}
+                  <button
+                    type="button"
+                    onClick={() => { setFiltroGaveta("todas"); setCurrentPage(1); }}
+                    className="hover:bg-blue-700 p-0.5 rounded cursor-pointer ml-0.5"
+                    title="Remover filtro de gaveta"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+              {filtroReparticao !== "todas" && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-bold text-[11px] shadow-2xs">
+                  <Building2 className="w-3.5 h-3.5" />
+                  Repartição: {filtroReparticao === "SEM_REPARTICAO" ? "Sem Repartição" : cleanReparticaoText(filtroReparticao)}
+                  <button
+                    type="button"
+                    onClick={() => { setFiltroReparticao("todas"); setCurrentPage(1); }}
+                    className="hover:bg-emerald-700 p-0.5 rounded cursor-pointer ml-0.5"
+                    title="Remover filtro de repartição"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+              {filtroLote && filtroLote.trim() !== "" && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-600 text-white font-bold text-[11px] shadow-2xs">
+                  <Layers className="w-3.5 h-3.5" />
+                  Lote: "{filtroLote}"
+                  <button
+                    type="button"
+                    onClick={() => { setFiltroLote(""); setCurrentPage(1); }}
+                    className="hover:bg-indigo-700 p-0.5 rounded cursor-pointer ml-0.5"
+                    title="Remover filtro de lote"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+              {filtroSituacao !== "todas" && (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-slate-700 text-white font-bold text-[11px] shadow-2xs">
+                  Situação: {filtroSituacao}
+                  <button
+                    type="button"
+                    onClick={() => { setFiltroSituacao("todas"); setCurrentPage(1); }}
+                    className="hover:bg-slate-600 p-0.5 rounded cursor-pointer ml-0.5"
+                    title="Remover filtro de situação"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+              {searchTerm.trim() !== "" && (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-[11px]">
+                  Busca: "{searchTerm}"
+                  <button
+                    type="button"
+                    onClick={() => { setSearchTerm(""); setCurrentPage(1); }}
+                    className="hover:bg-slate-300 dark:hover:bg-slate-600 p-0.5 rounded cursor-pointer ml-0.5"
+                    title="Limpar busca"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
               <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                 <strong className="font-mono text-indigo-700 dark:text-indigo-400">{filteredData.length}</strong> CNHs encontradas
+                {selectedIds.length > 0 && (
+                  <span className="ml-1 text-indigo-900 dark:text-indigo-200 font-mono font-bold">
+                    ({selectedIds.filter((id) => filteredData.some((c) => c.id === id)).length} marcadas)
+                  </span>
+                )}
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
-                onClick={handleToggleSelectFilteredLote}
-                className="px-3 py-1 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600 text-indigo-900 dark:text-indigo-200 font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs"
+                onClick={handleToggleSelectFiltered}
+                className="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600 text-indigo-900 dark:text-indigo-200 font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs"
+                title="Marcar ou desmarcar todas as CNHs deste filtro"
               >
                 <CheckSquare className="w-3.5 h-3.5 text-indigo-600" />
                 <span>
                   {filteredData.length > 0 && filteredData.every((c) => selectedIds.includes(c.id))
-                    ? "Desmarcar este lote"
-                    : `Marcar CNHs deste lote (${filteredData.length})`}
+                    ? "Desmarcar CNHs deste filtro"
+                    : `Marcar CNHs deste filtro (${filteredData.length})`}
                 </span>
               </button>
 
-              {canEdit && selectedIds.length > 0 && (
+              {canEdit && (
                 <button
                   type="button"
-                  onClick={() => setIsBatchLocationModalOpen(true)}
-                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                  onClick={handleOpenBatchLocationModal}
+                  className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-bold rounded-lg text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                  title="Abrir modal para realocação de gaveta e repartição em lote para as CNHs marcadas ou filtradas"
                 >
                   <Archive className="w-3.5 h-3.5" />
-                  <span>Alterar Gaveta e Repartição ({selectedIds.length})</span>
+                  <span>Realocar Gaveta / Repartição por Lote ({selectedIds.length > 0 ? selectedIds.length : filteredData.length})</span>
+                </button>
+              )}
+
+              {selectedIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedIds([])}
+                  className="px-2.5 py-1 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 text-xs font-semibold cursor-pointer transition-colors"
+                  title="Desmarcar todas as linhas selecionadas"
+                >
+                  Limpar Seleção
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFiltroGaveta("todas");
+                  setFiltroReparticao("todas");
+                  setFiltroLote("");
+                  setFiltroSituacao("todas");
+                  setFiltroOrdemInicial("");
+                  setFiltroOrdemFinal("");
+                  setSearchTerm("");
+                  setCurrentPage(1);
+                }}
+                className="px-2.5 py-1 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 text-xs font-semibold cursor-pointer transition-colors"
+                title="Limpar todos os filtros aplicados"
+              >
+                Limpar Filtros
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2.5 text-xs text-slate-500">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-slate-600 dark:text-slate-400">Opção de Marcar & Realocação:</span>
+              <span>Utilize os filtros de <strong>Gaveta</strong> ou <strong>Repartição</strong> para selecionar e transferir em lote.</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleToggleSelectFiltered}
+                className="px-3 py-1 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                title="Marcar todas as CNHs da base"
+              >
+                <CheckSquare className="w-3.5 h-3.5 text-indigo-500" />
+                <span>Marcar Todas ({cnhs.length})</span>
+              </button>
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={handleOpenBatchLocationModal}
+                  className="px-3.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs"
+                  title="Abrir modal para realocação de gaveta e repartição em lote"
+                >
+                  <Archive className="w-3.5 h-3.5" />
+                  <span>Realocação de Gaveta e Repartição por Lote</span>
                 </button>
               )}
             </div>
@@ -1940,19 +2316,47 @@ export const GeralPage: React.FC = () => {
                   )}
                   {visibleColumns.gaveta && (
                     <th onClick={() => handleSort("gaveta")} className="py-2 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <FolderArchive className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                         <span>Gaveta</span>
                         <ArrowUpDown className="w-3 h-3" />
+                        {filtroGaveta !== "todas" && (
+                          <span
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFiltroGaveta("todas");
+                              setCurrentPage(1);
+                            }}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-600 text-white text-[9px] font-bold shadow-2xs hover:bg-rose-600 transition-colors"
+                            title="Filtro de Gaveta ativo. Clique para remover filtro"
+                          >
+                            <span>{cleanGavetaText(filtroGaveta)}</span>
+                            <X className="w-2.5 h-2.5" />
+                          </span>
+                        )}
                       </div>
                     </th>
                   )}
                   {visibleColumns.reparticao && (
                     <th onClick={() => handleSort("reparticao")} className="py-2 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
                         <span>Repartição</span>
                         <ArrowUpDown className="w-3 h-3" />
+                        {filtroReparticao !== "todas" && (
+                          <span
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFiltroReparticao("todas");
+                              setCurrentPage(1);
+                            }}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-600 text-white text-[9px] font-bold shadow-2xs hover:bg-rose-600 transition-colors"
+                            title="Filtro de Repartição ativo. Clique para remover filtro"
+                          >
+                            <span>{cleanReparticaoText(filtroReparticao)}</span>
+                            <X className="w-2.5 h-2.5" />
+                          </span>
+                        )}
                       </div>
                     </th>
                   )}
@@ -2212,12 +2616,36 @@ export const GeralPage: React.FC = () => {
                             ))}
                           </select>
                         ) : c.gaveta && c.gaveta.trim() ? (
-                          <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-50 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 font-semibold text-[11px]" title={`Gaveta: ${c.gaveta}`}>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFiltroGaveta(c.gaveta === filtroGaveta ? "todas" : (c.gaveta || "SEM_GAVETA"));
+                              setCurrentPage(1);
+                            }}
+                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded font-semibold text-[11px] transition-all cursor-pointer ${
+                              filtroGaveta === c.gaveta
+                                ? "bg-blue-600 text-white shadow-2xs ring-1 ring-blue-400"
+                                : "bg-blue-50 text-blue-800 hover:bg-blue-100 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60"
+                            }`}
+                            title={`Gaveta: ${c.gaveta}. Clique para filtrar por esta gaveta.`}
+                          >
                             <FolderArchive className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                             <span>{cleanGavetaText(c.gaveta)}</span>
-                          </div>
+                          </button>
                         ) : (
-                          <span className="text-slate-400 italic text-[11px]">Em trânsito</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFiltroGaveta(filtroGaveta === "SEM_GAVETA" ? "todas" : "SEM_GAVETA");
+                              setCurrentPage(1);
+                            }}
+                            className="text-slate-400 italic text-[11px] hover:text-blue-600 hover:underline cursor-pointer"
+                            title="Clique para filtrar CNHs sem gaveta (em trânsito)"
+                          >
+                            Em trânsito
+                          </button>
                         )}
                       </td>
                     )}
@@ -2241,12 +2669,36 @@ export const GeralPage: React.FC = () => {
                             ))}
                           </select>
                         ) : c.reparticao && c.reparticao.trim() ? (
-                          <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 font-semibold text-[11px]" title={`Repartição: ${c.reparticao}`}>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFiltroReparticao(c.reparticao === filtroReparticao ? "todas" : (c.reparticao || "SEM_REPARTICAO"));
+                              setCurrentPage(1);
+                            }}
+                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded font-semibold text-[11px] transition-all cursor-pointer ${
+                              filtroReparticao === c.reparticao
+                                ? "bg-emerald-600 text-white shadow-2xs ring-1 ring-emerald-400"
+                                : "bg-indigo-50 text-indigo-800 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:text-indigo-300 dark:hover:bg-indigo-900/60"
+                            }`}
+                            title={`Repartição: ${c.reparticao}. Clique para filtrar por esta repartição.`}
+                          >
                             <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
                             <span>{cleanReparticaoText(c.reparticao)}</span>
-                          </div>
+                          </button>
                         ) : (
-                          <span className="text-slate-400 italic text-[11px]">-</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFiltroReparticao(filtroReparticao === "SEM_REPARTICAO" ? "todas" : "SEM_REPARTICAO");
+                              setCurrentPage(1);
+                            }}
+                            className="text-slate-400 italic text-[11px] hover:text-emerald-600 hover:underline cursor-pointer"
+                            title="Clique para filtrar CNHs sem repartição"
+                          >
+                            -
+                          </button>
                         )}
                       </td>
                     )}
@@ -3789,6 +4241,8 @@ export const GeralPage: React.FC = () => {
         cnhs={cnhs}
         currentUser={user}
         filtroLoteAtual={filtroLote}
+        filtroGavetaAtual={filtroGaveta}
+        filtroReparticaoAtual={filtroReparticao}
         onSuccess={(count, msg) => {
           setMessage({ type: "success", text: msg });
           setSelectedIds([]);

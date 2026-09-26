@@ -139,6 +139,14 @@ export const DashboardPage: React.FC = () => {
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Visão estatística em tempo real de remessas, recebimentos em gaveta e entregas ao titular.
           </p>
+          <div className="flex items-center gap-2 flex-wrap mt-2">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-blue-100 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+              Total CNHs no Banco (Nuvem): {stats.cards.totalGeral.toLocaleString("pt-BR")}
+            </span>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-teal-100 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+              Total Acessos no Banco (Nuvem): {(stats.cards.consultasPublicas || 0).toLocaleString("pt-BR")}
+            </span>
+          </div>
         </div>
         <button
           onClick={fetchStats}
@@ -166,7 +174,7 @@ export const DashboardPage: React.FC = () => {
               </div>
               <div className="mt-1">
                 <span className="text-2xl font-bold tracking-tight text-slate-800 dark:text-white">
-                  {card.value}
+                  {typeof card.value === "number" ? card.value.toLocaleString("pt-BR") : card.value}
                 </span>
               </div>
               <div className="mt-2 flex items-center justify-between text-[10px] text-slate-400 font-mono">

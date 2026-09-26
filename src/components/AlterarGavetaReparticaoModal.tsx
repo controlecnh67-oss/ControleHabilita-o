@@ -32,6 +32,8 @@ interface AlterarGavetaReparticaoModalProps {
   cnhs: GeralCNH[];
   currentUser: Usuario | null;
   filtroLoteAtual?: string;
+  filtroGavetaAtual?: string;
+  filtroReparticaoAtual?: string;
   onSuccess: (updatedCount: number, message: string) => void;
 }
 
@@ -42,6 +44,8 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
   cnhs,
   currentUser,
   filtroLoteAtual,
+  filtroGavetaAtual,
+  filtroReparticaoAtual,
   onSuccess,
 }) => {
   // Contexto de autenticação para garantia do usuário logado
@@ -70,6 +74,10 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   });
 
+  // Opção para alterar ou vincular Lote
+  const [alterarLote, setAlterarLote] = useState(false);
+  const [selectedLote, setSelectedLote] = useState<string>(() => filtroLoteAtual || "");
+
   // Opções complementares
   const [alterarSituacao, setAlterarSituacao] = useState(false);
   const [novaSituacao, setNovaSituacao] = useState<SituacaoGeral>("Recebida");
@@ -82,6 +90,14 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Lista de opções únicas encontradas na base
+  const availableLotes = useMemo(() => {
+    const set = new Set<string>();
+    cnhs.forEach((c) => {
+      if (c.lote && c.lote.trim()) set.add(c.lote.trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true }));
+  }, [cnhs]);
+
   const availableGavetas = useMemo(() => {
     const set = new Set<string>(DEFAULT_GAVETAS);
     cnhs.forEach((c) => {
@@ -154,8 +170,8 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
   // Executar salvamento em lote
   const handleConfirm = async () => {
     if (selectedCNHs.length === 0) return;
-    if (!alterarGaveta && !alterarReparticao && !alterarSituacao && !adicionarObservacao && !atualizarDataMovimento) {
-      setErrorMessage("Selecione pelo menos um campo para alterar (Gaveta, Repartição, Data Movimento, Situação ou Observação).");
+    if (!alterarGaveta && !alterarReparticao && !alterarSituacao && !adicionarObservacao && !atualizarDataMovimento && !alterarLote) {
+      setErrorMessage("Selecione pelo menos um campo para alterar (Gaveta, Repartição, Lote, Data Movimento, Situação ou Observação).");
       return;
     }
 
@@ -198,6 +214,7 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
       for (const item of selectedCNHs) {
         const prevGaveta = item.gaveta || "";
         const prevReparticao = item.reparticao || "";
+        const prevLote = item.lote || "";
         const prevSituacao = item.situacao;
         const prevObs = item.observacao || "";
         const prevDataMov = item.data_movimento;
@@ -212,6 +229,11 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
         let nextReparticao = item.reparticao;
         if (alterarReparticao) {
           nextReparticao = finalReparticao;
+        }
+
+        let nextLote = item.lote;
+        if (alterarLote) {
+          nextLote = selectedLote.trim() || undefined;
         }
 
         let nextSituacao = item.situacao;
@@ -230,6 +252,7 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
 
         const updated: GeralCNH = {
           ...item,
+          lote: nextLote,
           gaveta: nextGaveta,
           reparticao: nextReparticao,
           situacao: nextSituacao,
@@ -249,6 +272,7 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
           usuario_id: userId,
           usuario_nome: userNome,
           valores_anteriores: {
+            lote: prevLote,
             gaveta: prevGaveta,
             reparticao: prevReparticao,
             situacao: prevSituacao,
@@ -258,6 +282,7 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
             usuario_nome: prevUsuarioNome
           },
           valores_novos: {
+            lote: nextLote || "",
             gaveta: nextGaveta,
             reparticao: nextReparticao,
             situacao: nextSituacao,
@@ -277,6 +302,7 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
         const partesObs: string[] = [];
         if (alterarGaveta) partesObs.push(`Gaveta: "${finalGaveta || 'Vazio'}"`);
         if (alterarReparticao) partesObs.push(`Repartição: "${finalReparticao || 'Vazio'}"`);
+        if (alterarLote) partesObs.push(`Lote: "${selectedLote || 'Sem Lote'}"`);
         if (adicionarObservacao && observacaoTexto.trim()) partesObs.push(`Obs: ${observacaoTexto.trim()}`);
 
         return {
@@ -312,6 +338,7 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
       const partes: string[] = [];
       if (alterarGaveta) partes.push(`Gaveta: "${finalGaveta || 'Vazio'}"`);
       if (alterarReparticao) partes.push(`Repartição: "${finalReparticao || 'Vazio'}"`);
+      if (alterarLote) partes.push(`Lote: "${selectedLote || 'Sem Lote'}"`);
       if (alterarSituacao) partes.push(`Situação: "${novaSituacao}"`);
       if (atualizarDataMovimento) partes.push(`Data Mov: ${formatDateTime(finalDataMovimento)}`);
       partes.push(`Usuário: ${userNome}`);
@@ -350,6 +377,18 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950/80 text-indigo-800 dark:text-indigo-300 font-bold text-[11px] border border-indigo-200 dark:border-indigo-800">
                     <Layers className="w-3 h-3 text-indigo-600" />
                     Lote: {loteDetectado}
+                  </span>
+                )}
+                {filtroGavetaAtual && filtroGavetaAtual !== "todas" && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/80 text-blue-800 dark:text-blue-300 font-bold text-[11px] border border-blue-200 dark:border-blue-800">
+                    <Archive className="w-3 h-3 text-blue-600" />
+                    Gaveta: {filtroGavetaAtual === "SEM_GAVETA" ? "Sem Gaveta" : filtroGavetaAtual}
+                  </span>
+                )}
+                {filtroReparticaoAtual && filtroReparticaoAtual !== "todas" && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 font-bold text-[11px] border border-emerald-200 dark:border-emerald-800">
+                    <Building2 className="w-3 h-3 text-emerald-600" />
+                    Repartição: {filtroReparticaoAtual === "SEM_REPARTICAO" ? "Sem Repartição" : filtroReparticaoAtual}
                   </span>
                 )}
               </div>
@@ -630,14 +669,59 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
             </div>
           </div>
 
-          {/* Opções Complementares (Situação e Observação) */}
+          {/* Opções Complementares (Lote, Situação e Observação) */}
           <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
-            <div className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              <span>Opções Adicionais (Opcional)</span>
+            <div className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                <span>Opções Adicionais de Lote, Situação e Observação</span>
+              </div>
+              <span className="text-[10px] text-slate-400">Opcional para a realocação</span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Lote */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer select-none mb-2">
+                  <input
+                    type="checkbox"
+                    checked={alterarLote}
+                    onChange={(e) => setAlterarLote(e.target.checked)}
+                    className="w-4 h-4 text-indigo-600 rounded border-slate-300 dark:border-slate-700 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                    Vincular / Alterar Lote
+                  </span>
+                </label>
+                {alterarLote && (
+                  <div className="space-y-1.5">
+                    <input
+                      type="text"
+                      placeholder="Ex: Lote 01, Lote 12/2026..."
+                      value={selectedLote}
+                      onChange={(e) => setSelectedLote(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-indigo-500 outline-hidden"
+                    />
+                    {availableLotes.length > 0 && (
+                      <div className="flex items-center gap-1 flex-wrap text-[10px] text-slate-500 pt-0.5">
+                        <span className="font-semibold text-slate-400">Sugestões:</span>
+                        {availableLotes.slice(0, 4).map((l) => (
+                          <button
+                            key={l}
+                            type="button"
+                            onClick={() => setSelectedLote(l)}
+                            className="px-1.5 py-0.5 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 rounded font-mono font-semibold cursor-pointer text-[10px]"
+                          >
+                            {l}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Situação */}
               <div>
                 <label className="flex items-center gap-2 cursor-pointer select-none mb-2">
@@ -747,7 +831,17 @@ export const AlterarGavetaReparticaoModal: React.FC<AlterarGavetaReparticaoModal
                               PA: {c.pa}
                             </div>
                           )}
-                          {c.lote ? (
+                          {alterarLote ? (
+                            <div className="flex items-center gap-1 font-semibold">
+                              <span className="text-slate-400 line-through text-[10px]">
+                                {c.lote || "Sem lote"}
+                              </span>
+                              <ArrowRight className="w-2.5 h-2.5 text-indigo-600" />
+                              <span className="text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 px-1 py-0.5 rounded text-[10px] font-bold">
+                                {selectedLote || "(Sem lote)"}
+                              </span>
+                            </div>
+                          ) : c.lote ? (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-semibold text-[10px]">
                               {c.lote}
                             </span>

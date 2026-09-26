@@ -997,7 +997,10 @@ export const AcessosCidadaoPage: React.FC = () => {
           </div>
 
           <div className="flex items-center justify-end text-xs text-slate-500 dark:text-slate-400 font-semibold px-1">
-            <span>Listando <strong>{filteredLogs.length}</strong> consultas</span>
+            <span>
+              Listando <strong>{filteredLogs.length.toLocaleString("pt-BR")}</strong> de{" "}
+              <strong>{(cloudTotalCount !== null ? cloudTotalCount : logs.length).toLocaleString("pt-BR")}</strong> consultas
+            </span>
           </div>
         </div>
       </div>
@@ -1092,25 +1095,27 @@ export const AcessosCidadaoPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Card 5: Total no Período */}
+        {/* Card 5: Mostrador de Total de Acessos */}
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-cyan-200 dark:border-cyan-900/50 shadow-xs hover:shadow-md transition-all relative overflow-hidden group">
           <div className="absolute right-0 top-0 translate-x-2 -translate-y-2 w-16 h-16 bg-cyan-500/10 rounded-full blur-xl group-hover:scale-150 transition-transform" />
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-bold text-cyan-700 dark:text-cyan-400 uppercase tracking-wider">
-              Total do Período
+              Total de Acessos
             </span>
             <div className="p-2 bg-cyan-100 dark:bg-cyan-950/60 text-cyan-600 dark:text-cyan-400 rounded-xl">
               <Activity className="w-5 h-5" />
             </div>
           </div>
           <div className="text-2xl font-black text-slate-900 dark:text-white">
-            {stats.total}
+            {(cloudTotalCount !== null ? cloudTotalCount : stats.total).toLocaleString("pt-BR")}
           </div>
-          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 font-medium flex items-center gap-1">
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 font-medium flex items-center justify-between gap-1">
             <span className="text-cyan-600 dark:text-cyan-400 font-bold">
               {stats.taxaDisponivel}% Sucesso
             </span>
-            <span>Disponíveis no Balcão</span>
+            <span className="text-slate-400 font-mono">
+              {filteredLogs.length !== logs.length ? `(${filteredLogs.length.toLocaleString("pt-BR")} no filtro)` : "no banco nuvem"}
+            </span>
           </div>
         </div>
       </div>
@@ -1250,11 +1255,14 @@ export const AcessosCidadaoPage: React.FC = () => {
       {/* TABELA DE DADOS DETALHADA COM CONSULTAS DO CIDADÃO */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
         <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Users className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
             <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">
               Registros Individuais de Acesso do Cidadão
             </h3>
+            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-cyan-50 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800">
+              Total no Banco: {(cloudTotalCount !== null ? cloudTotalCount : logs.length).toLocaleString("pt-BR")} registros
+            </span>
           </div>
 
           <div className="flex items-center gap-2 text-xs">
@@ -1371,7 +1379,7 @@ export const AcessosCidadaoPage: React.FC = () => {
         {filteredLogs.length > 0 && (
           <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500 dark:text-slate-400">
             <div>
-              Exibindo <strong>{((currentPage - 1) * itemsPerPage) + 1}</strong> a <strong>{Math.min(currentPage * itemsPerPage, filteredLogs.length)}</strong> de <strong>{filteredLogs.length}</strong> consultas.
+              Exibindo <strong>{((currentPage - 1) * itemsPerPage) + 1}</strong> a <strong>{Math.min(currentPage * itemsPerPage, filteredLogs.length)}</strong> de <strong>{filteredLogs.length !== logs.length ? `${filteredLogs.length.toLocaleString("pt-BR")} filtrados (${(cloudTotalCount !== null ? cloudTotalCount : logs.length).toLocaleString("pt-BR")} no banco)` : (cloudTotalCount !== null ? cloudTotalCount : logs.length).toLocaleString("pt-BR")}</strong> registros de acesso.
             </div>
 
             <div className="flex items-center gap-1">
