@@ -18,7 +18,9 @@ import {
   Smartphone,
   QrCode,
   BarChart3,
-  Activity
+  Activity,
+  PackageCheck,
+  Search
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { cn } from "../../lib/utils";
@@ -84,6 +86,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navItems = [
     { id: "dashboard" as NavTab, label: "Dashboard", icon: LayoutDashboard },
     { id: "geral" as NavTab, label: "Protocolo Geral (CNHs)", icon: FolderArchive },
+    { id: "consulta_cnh" as NavTab, label: "Consulta CNH", icon: Search },
+    { id: "protocolo_entrega" as NavTab, label: "Protocolo Entrega", icon: PackageCheck },
     { id: "candidatos" as NavTab, label: "Candidatos", icon: UserCheck },
     { id: "memorandos" as NavTab, label: "Memorandos e Remessas", icon: FileText },
     { id: "declaracao" as NavTab, label: "Declaração", icon: FileCheck },

@@ -6,6 +6,8 @@ export type PerfilAcesso = PerfilUsuario;
 export type NavTab = 
   | "dashboard" 
   | "geral" 
+  | "consulta_cnh"
+  | "protocolo_entrega"
   | "candidatos"
   | "memorandos" 
   | "declaracao"
@@ -41,6 +43,22 @@ export function isTabAllowedForProfile(
         permissoes.includes("cnh:receber") ||
         permissoes.includes("cnh:entregar") ||
         permissoes.includes("cnh:editar")
+      );
+    }
+    if (tab === "consulta_cnh") {
+      return (
+        permissoes.includes("consulta_cnh:visualizar") ||
+        permissoes.includes("geral:visualizar") ||
+        permissoes.includes("protocolo_entrega:visualizar") ||
+        permissoes.includes("dashboard:visualizar")
+      );
+    }
+    if (tab === "protocolo_entrega") {
+      return (
+        permissoes.includes("protocolo_entrega:visualizar") ||
+        permissoes.includes("cnh:entregar") ||
+        permissoes.includes("cnh:editar") ||
+        permissoes.includes("geral:visualizar")
       );
     }
     if (tab === "candidatos") {
@@ -99,13 +117,13 @@ export function isTabAllowedForProfile(
   // Fallback padrão se não houver array de permissões customizadas
   switch (perfil) {
     case "Supervisor":
-      return ["dashboard", "geral", "candidatos", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento", "historico", "auditoria", "orgao"].includes(tab);
+      return ["dashboard", "geral", "consulta_cnh", "protocolo_entrega", "candidatos", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento", "historico", "auditoria", "orgao"].includes(tab);
 
     case "Operador":
-      return ["dashboard", "geral", "candidatos", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento"].includes(tab);
+      return ["dashboard", "geral", "consulta_cnh", "protocolo_entrega", "candidatos", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento"].includes(tab);
 
     case "Consulta":
-      return ["dashboard", "geral", "candidatos", "declaracao", "acessos_cidadao", "relatorios", "historico", "auditoria"].includes(tab);
+      return ["dashboard", "geral", "consulta_cnh", "protocolo_entrega", "candidatos", "declaracao", "acessos_cidadao", "relatorios", "historico", "auditoria"].includes(tab);
 
     default:
       return false;
@@ -154,6 +172,20 @@ export const PERMISSOES_SISTEMA: PermissaoItem[] = [
     label: "Aba Protocolo Geral (CNHs)", 
     category: "Protocolo de CNHs", 
     description: "Permite visualizar, pesquisar e filtrar as CNHs do protocolo geral",
+    isTab: true
+  },
+  { 
+    id: "consulta_cnh:visualizar", 
+    label: "Aba Consulta CNH (Ficha Rápida)", 
+    category: "Protocolo de CNHs", 
+    description: "Permite acesso à página de Consulta CNH focada em buscas ágeis e visualização de fichas completas",
+    isTab: true
+  },
+  { 
+    id: "protocolo_entrega:visualizar", 
+    label: "Aba Protocolo Entrega (Balcão)", 
+    category: "Protocolo de CNHs", 
+    description: "Permite acesso à página enxuta do Protocolo Entrega com pesquisa rápida, edição e entrega direta de CNHs",
     isTab: true
   },
   { 
@@ -295,7 +327,7 @@ export function getPermissoesPadrao(perfil: PerfilUsuario): string[] {
     case "Supervisor":
       return [
         "dashboard:visualizar",
-        "geral:visualizar", "cnh:receber", "cnh:entregar", "cnh:editar",
+        "geral:visualizar", "protocolo_entrega:visualizar", "cnh:receber", "cnh:entregar", "cnh:editar",
         "memorandos:criar", "memorandos:remeter",
         "declaracao:gerenciar",
         "acessos_cidadao:visualizar",
@@ -309,7 +341,7 @@ export function getPermissoesPadrao(perfil: PerfilUsuario): string[] {
     case "Operador":
       return [
         "dashboard:visualizar",
-        "geral:visualizar", "cnh:receber", "cnh:entregar",
+        "geral:visualizar", "protocolo_entrega:visualizar", "cnh:receber", "cnh:entregar",
         "memorandos:criar", "memorandos:remeter",
         "declaracao:gerenciar",
         "acessos_cidadao:visualizar",
@@ -320,7 +352,7 @@ export function getPermissoesPadrao(perfil: PerfilUsuario): string[] {
     case "Consulta":
       return [
         "dashboard:visualizar",
-        "geral:visualizar",
+        "geral:visualizar", "protocolo_entrega:visualizar",
         "acessos_cidadao:visualizar",
         "relatorios:visualizar",
         "historico:visualizar",

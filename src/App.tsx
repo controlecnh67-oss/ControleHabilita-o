@@ -5,6 +5,8 @@ import { Sidebar } from "./components/layout/Sidebar";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { GeralPage } from "./pages/GeralPage";
+import { ConsultaCNHPage } from "./pages/ConsultaCNHPage";
+import { ProtocoloEntregaPage } from "./pages/ProtocoloEntregaPage";
 import { MemorandosPage } from "./pages/MemorandosPage";
 import { ResponsaveisPage } from "./pages/ResponsaveisPage";
 import { HistoricoPage } from "./pages/HistoricoPage";
@@ -329,6 +331,8 @@ const MainLayout: React.FC = () => {
           <div className="w-full max-w-7xl mx-auto flex-1 flex flex-col">
             {activeTab === "dashboard" && isTabAllowedForProfile("dashboard", user?.perfil, user?.permissoes) && <DashboardPage />}
             {activeTab === "geral" && isTabAllowedForProfile("geral", user?.perfil, user?.permissoes) && <GeralPage />}
+            {activeTab === "consulta_cnh" && isTabAllowedForProfile("consulta_cnh", user?.perfil, user?.permissoes) && <ConsultaCNHPage />}
+            {activeTab === "protocolo_entrega" && isTabAllowedForProfile("protocolo_entrega", user?.perfil, user?.permissoes) && <ProtocoloEntregaPage />}
             {activeTab === "candidatos" && isTabAllowedForProfile("candidatos", user?.perfil, user?.permissoes) && <CandidatosPage />}
             {activeTab === "memorandos" && isTabAllowedForProfile("memorandos", user?.perfil, user?.permissoes) && <MemorandosPage onNavigateToGeral={() => setActiveTab("geral")} />}
             {activeTab === "declaracao" && isTabAllowedForProfile("declaracao", user?.perfil, user?.permissoes) && <DeclaracoesPage />}
