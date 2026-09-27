@@ -115,6 +115,10 @@ export function scanForDuplicates(cnhs: GeralCNH[]): DuplicateGroup[] {
   });
 
   // 1. Agrupamento O(N) por CPF Limpo (11 dígitos)
+  // REGRA DE OURO DETRAN: O número PA é único para cada processo.
+  // Um cidadão pode ter mais de um registro com o mesmo CPF e Nome se tiverem PAs diferentes (renovações, adição de categoria, etc.).
+  // Esses registros possuem ordens distintas e NÃO são duplicatas!
+  // Apenas registros com o MESMO CPF E MESMO PA (ou ambos sem PA) são duplicatas a serem saneadas.
   const cpfMap = new Map<string, typeof prepared>();
   prepared.forEach((entry) => {
     if (entry.cpfDigits.length === 11) {
@@ -126,42 +130,56 @@ export function scanForDuplicates(cnhs: GeralCNH[]): DuplicateGroup[] {
 
   cpfMap.forEach((entries, cpf) => {
     if (entries.length > 1) {
-      const unassigned = entries.filter((e) => !assignedToGroup.has(e.item.id));
-      if (unassigned.length > 1) {
-        const firstNorm = unassigned[0].normName;
-        const allSameName = firstNorm.length > 2 && unassigned.every((e) => e.normName === firstNorm);
-        const firstPa = unassigned[0].cleanPa;
-        const allSamePa = firstPa.length >= 4 && unassigned.every((e) => e.cleanPa === firstPa);
+      // Sub-agrupa por PA limpo para não misturar processos/renovações legítimas
+      const paSubMap = new Map<string, typeof prepared>();
+      entries.forEach((e) => {
+        const paKey = e.cleanPa.length >= 4 ? e.cleanPa : "SEM_PA";
+        const list = paSubMap.get(paKey) || [];
+        list.push(e);
+        paSubMap.set(paKey, list);
+      });
 
-        let matchType: DuplicateMatchType = "exact_cpf";
-        if (allSameName) matchType = "exact_both";
+      paSubMap.forEach((subEntries, paKey) => {
+        if (subEntries.length > 1) {
+          const unassigned = subEntries.filter((e) => !assignedToGroup.has(e.item.id));
+          if (unassigned.length > 1) {
+            const firstNorm = unassigned[0].normName;
+            const allSameName = firstNorm.length > 2 && unassigned.every((e) => e.normName === firstNorm);
+            const hasRealPa = paKey !== "SEM_PA";
 
-        let matchReason = `Mesmo CPF (${unassigned[0].item.cpf || cpf})`;
-        if (allSameName && allSamePa) {
-          matchReason = `Mesmo CPF (${unassigned[0].item.cpf || cpf}), Mesmo Nome e Mesmo PA (${unassigned[0].item.pa || firstPa})`;
-        } else if (allSameName) {
-          matchReason = `Mesmo CPF (${unassigned[0].item.cpf || cpf}) e Mesmo Nome`;
-        } else if (allSamePa) {
-          matchReason = `Mesmo CPF (${unassigned[0].item.cpf || cpf}) e Mesmo PA (${unassigned[0].item.pa || firstPa})`;
+            let matchType: DuplicateMatchType = "exact_cpf";
+            if (hasRealPa && allSameName) matchType = "exact_both";
+            else if (hasRealPa) matchType = "exact_pa";
+
+            let matchReason = `Mesmo CPF (${unassigned[0].item.cpf || cpf})`;
+            if (hasRealPa && allSameName) {
+              matchReason = `Mesmo CPF (${unassigned[0].item.cpf || cpf}), Mesmo Nome e Mesmo PA (${unassigned[0].item.pa || paKey}) [Processo Duplicado]`;
+            } else if (hasRealPa) {
+              matchReason = `Mesmo CPF (${unassigned[0].item.cpf || cpf}) e Mesmo PA (${unassigned[0].item.pa || paKey}) [Processo Duplicado]`;
+            } else if (allSameName) {
+              matchReason = `Mesmo CPF (${unassigned[0].item.cpf || cpf}) e Mesmo Nome (Ambos sem PA)`;
+            }
+
+            const rawItems = unassigned.map((e) => e.item);
+            const group = buildDuplicateGroup(
+              `cpf_${cpf}_pa_${paKey}`,
+              matchType,
+              matchReason,
+              rawItems,
+              true,
+              allSameName,
+              hasRealPa
+            );
+            groups.push(group);
+            unassigned.forEach((e) => assignedToGroup.add(e.item.id));
+          }
         }
-
-        const rawItems = unassigned.map((e) => e.item);
-        const group = buildDuplicateGroup(
-          `cpf_${cpf}`,
-          matchType,
-          matchReason,
-          rawItems,
-          true,
-          allSameName,
-          allSamePa
-        );
-        groups.push(group);
-        unassigned.forEach((e) => assignedToGroup.add(e.item.id));
-      }
+      });
     }
   });
 
   // 2. Agrupamento O(N) por PA Limpo (>= 4 dígitos) para registros ainda não associados
+  // O número PA é único por processo; se dois registros têm o mesmo PA, são duplicatas do mesmo processo!
   const paMap = new Map<string, typeof prepared>();
   prepared.forEach((entry) => {
     if (!assignedToGroup.has(entry.item.id) && entry.cleanPa.length >= 4) {
@@ -176,9 +194,13 @@ export function scanForDuplicates(cnhs: GeralCNH[]): DuplicateGroup[] {
     if (unassigned.length > 1) {
       const firstNorm = unassigned[0].normName;
       const allSameName = firstNorm.length > 2 && unassigned.every((e) => e.normName === firstNorm);
+      const firstCpf = unassigned[0].cpfDigits;
+      const allSameCpf = firstCpf.length === 11 && unassigned.every((e) => e.cpfDigits === firstCpf);
 
-      let matchReason = `Mesmo PA (${unassigned[0].item.pa || cleanPa})`;
-      if (allSameName) {
+      let matchReason = `Mesmo PA (${unassigned[0].item.pa || cleanPa}) [Processo Duplicado]`;
+      if (allSameName && allSameCpf) {
+        matchReason = `Mesmo PA (${unassigned[0].item.pa || cleanPa}), Mesmo CPF e Mesmo Nome`;
+      } else if (allSameName) {
         matchReason = `Mesmo PA (${unassigned[0].item.pa || cleanPa}) e Mesmo Nome`;
       }
 
@@ -188,7 +210,7 @@ export function scanForDuplicates(cnhs: GeralCNH[]): DuplicateGroup[] {
         "exact_pa",
         matchReason,
         rawItems,
-        false,
+        allSameCpf,
         allSameName,
         true
       );
@@ -198,6 +220,7 @@ export function scanForDuplicates(cnhs: GeralCNH[]): DuplicateGroup[] {
   });
 
   // 3. Agrupamento O(N) por Nome Normalizado Exato para registros ainda não associados
+  // ATENÇÃO: Só agrupa se NÃO houver CPFs válidos conflitantes E NÃO houver PAs válidos conflitantes
   const nameMap = new Map<string, typeof prepared>();
   prepared.forEach((entry) => {
     if (!assignedToGroup.has(entry.item.id) && entry.normName.length > 2) {
@@ -210,19 +233,26 @@ export function scanForDuplicates(cnhs: GeralCNH[]): DuplicateGroup[] {
   nameMap.forEach((entries, normName) => {
     const unassigned = entries.filter((e) => !assignedToGroup.has(e.item.id));
     if (unassigned.length > 1) {
-      const matchReason = `Mesmo Nome (${unassigned[0].item.nome})`;
-      const rawItems = unassigned.map((e) => e.item);
-      const group = buildDuplicateGroup(
-        `name_${normName.replace(/\s+/g, "_")}`,
-        "exact_name",
-        matchReason,
-        rawItems,
-        false,
-        true,
-        false
-      );
-      groups.push(group);
-      unassigned.forEach((e) => assignedToGroup.add(e.item.id));
+      // Filtra para garantir que não estamos agrupando pessoas com CPFs distintos ou PAs distintos
+      const cpfs = new Set(unassigned.map(e => e.cpfDigits).filter(c => c.length === 11));
+      const pas = new Set(unassigned.map(e => e.cleanPa).filter(p => p.length >= 4));
+
+      // Se há múltiplos CPFs diferentes ou múltiplos PAs diferentes, são condutores ou processos distintos!
+      if (cpfs.size <= 1 && pas.size <= 1) {
+        const matchReason = `Mesmo Nome (${unassigned[0].item.nome}) sem divergência de CPF/PA`;
+        const rawItems = unassigned.map((e) => e.item);
+        const group = buildDuplicateGroup(
+          `name_${normName.replace(/\s+/g, "_")}`,
+          "exact_name",
+          matchReason,
+          rawItems,
+          cpfs.size === 1,
+          true,
+          pas.size === 1
+        );
+        groups.push(group);
+        unassigned.forEach((e) => assignedToGroup.add(e.item.id));
+      }
     }
   });
 

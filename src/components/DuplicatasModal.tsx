@@ -369,11 +369,11 @@ export const DuplicatasModal: React.FC<DuplicatasModalProps> = ({
                   Varredura de Duplicatas & Auditoria de Exclusão
                 </h2>
                 <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 rounded-md border border-rose-300 dark:border-rose-800">
-                  Correspondência CPF, Nome Exato & PA
+                  Correspondência por PA & CPF
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Localize registros redundantes por CPF, Nome Exato ou PA cadastrados por erro ou importações duplicadas e realize a exclusão seletiva com auditoria.
+                Varredura calibrada: Cidadãos com mesmo CPF e Nome mas números de PA distintos são processos/renovações legítimos e são preservados com ordens próprias. Apenas registros com mesmo PA ou duplicatas reais são apontados para saneamento.
               </p>
             </div>
           </div>

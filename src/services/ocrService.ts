@@ -5,6 +5,7 @@ export interface ExtractedCnhItem {
   nome: string;
   cpf?: string;
   pa?: string; // Número identificador único de CNH (9 dígitos)
+  lote?: string; // Informação do lote gravada para cada registro
   remessa?: string;
   observacao?: string;
 }
@@ -355,31 +356,62 @@ export async function matchExtractedWithGeralCNHs(
       usedCnhIds.add(matchedCnh.id);
     }
 
-    // Determinar categoria do registro
+    // Determinar categoria do registro e calibração de Nova Ordem vs Atualização
+    // REGRA DE OURO DETRAN:
+    // 1. O número PA é único para cada processo. Se encontrar correspondência exata de PA, atualiza para RECEBIDA (preserva a mesma ordem).
+    // 2. Se encontrar correspondência de CPF, mas com PA diferente ou novo, cria NOVO REGISTRO com nova ordem sequencial (sem substituir o antigo).
     let category: OcrCategory = "not_found";
     let selected = false;
     let isAlreadyInStockNewOrder = false;
 
     if (matchedCnh) {
-      if (matchedCnh.situacao === "Remetida") {
-        category = "ready_to_receive";
-        selected = true; // Auto-selecionado para mudar status para RECEBIDA
-      } else if (matchedCnh.situacao === "Pendente") {
-        category = "pending";
-        selected = true; // Pendente também pode ser recebida
-      } else if (matchedCnh.situacao === "Recebida" || matchedCnh.situacao === "Entregue") {
-        // CNH JÁ EM ESTOQUE (Recebida ou Entregue com gaveta e repartição):
-        // Calibrado conforme solicitação: preparar essas CNHs para criar um novo cadastro/registro na tabela geral com número de ordem novo!
-        category = matchedCnh.situacao === "Recebida" ? "already_received" : "already_delivered";
+      const cnhPaClean = cleanPaDigits(matchedCnh.pa);
+      const isExactPaMatch = Boolean(matchType === "exact_pa" || (itemPaClean && cnhPaClean && itemPaClean === cnhPaClean));
+      const isCpfMatchWithDifferentPa = Boolean(
+        matchType === "exact_cpf" &&
+        itemPaClean &&
+        cnhPaClean &&
+        itemPaClean !== cnhPaClean
+      );
+
+      if (isCpfMatchWithDifferentPa) {
+        // Cidadão já existe com outra CNH (renovação / inclusão de categoria / processo anterior).
+        // Gera NOVA ORDEM sequencial preservando o histórico anterior intacto!
+        category = "already_received";
         isAlreadyInStockNewOrder = true;
-        selected = true; // Auto-selecionado para criação de novo cadastro com nova ordem!
-      } else {
-        category = "ready_to_receive";
         selected = true;
+      } else if (isExactPaMatch) {
+        // Correspondência exata do mesmo processo/PA:
+        if (matchedCnh.situacao === "Remetida") {
+          category = "ready_to_receive";
+          selected = true;
+        } else if (matchedCnh.situacao === "Pendente") {
+          category = "pending";
+          selected = true;
+        } else if (matchedCnh.situacao === "Recebida") {
+          category = "already_received";
+          selected = true; // Permite reconfirmar / atualizar Lote e updated_at
+        } else if (matchedCnh.situacao === "Entregue") {
+          category = "already_delivered";
+          selected = false;
+        } else {
+          category = "ready_to_receive";
+          selected = true;
+        }
+      } else {
+        // Correspondência por CPF ou Nome sem PA divergente
+        if (matchedCnh.situacao === "Recebida" || matchedCnh.situacao === "Entregue") {
+          category = matchedCnh.situacao === "Recebida" ? "already_received" : "already_delivered";
+          isAlreadyInStockNewOrder = true;
+          selected = true;
+        } else {
+          category = "ready_to_receive";
+          selected = true;
+        }
       }
     } else {
       category = "not_found";
-      selected = true; // Não localizado: auto-selecionado para criar novo cadastro com Situação Recebida
+      selected = true; // Não localizado: cria novo cadastro diretamente como Recebida
     }
 
     // Determinar gaveta e repartição sugeridas

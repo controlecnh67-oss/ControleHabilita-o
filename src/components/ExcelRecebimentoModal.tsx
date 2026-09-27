@@ -74,9 +74,11 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
   const [rawHeaders, setRawHeaders] = useState<string[]>([]);
   const [previewRows, setPreviewRows] = useState<any[]>([]);
 
-  // Mapeamento de colunas (Foco em NOME e PA)
+  // Mapeamento de colunas (NOME, PA, LOTE, CPF)
   const [colNome, setColNome] = useState<string>("");
   const [colPa, setColPa] = useState<string>("");
+  const [colLote, setColLote] = useState<string>("");
+  const [defaultLoteInput, setDefaultLoteInput] = useState<string>("");
   const [colCpf, setColCpf] = useState<string>("");
   const [colRemessa, setColRemessa] = useState<string>("");
   const [colObs, setColObs] = useState<string>("");
@@ -213,10 +215,11 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
     };
   }, [showPdfDropdown]);
 
-  // Detecção inteligente de colunas (Foco em NOME e PA)
+  // Detecção inteligente de colunas (Foco em NOME, PA, LOTE e CPF)
   const autoDetectColumns = (headers: string[], sampleRows: any[] = []) => {
     let detectedNome = "";
     let detectedPa = "";
+    let detectedLote = "";
     let detectedCpf = "";
     let detectedRemessa = "";
     let detectedObs = "";
@@ -229,10 +232,13 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
       if (!detectedPa && (clean === "PA" || clean === "Nº PA" || clean === "NUM PA" || clean === "NUM_PA" || clean === "N_PA" || clean.includes("IDENTIFICADOR") || clean.includes("PROCESSO") || clean.startsWith("PA ") || clean.endsWith(" PA") || clean === "CNH" || clean.includes("PA"))) {
         detectedPa = h;
       }
+      if (!detectedLote && (clean === "LOTE" || clean === "Nº LOTE" || clean === "NUM LOTE" || clean === "NUM_LOTE" || clean === "N_LOTE" || clean.startsWith("LOTE ") || clean.endsWith(" LOTE") || clean.includes("LOTE"))) {
+        detectedLote = h;
+      }
       if (!detectedCpf && (clean.includes("CPF") || clean.includes("DOCUMENTO") || clean.includes("DOC") || clean.includes("CIC"))) {
         detectedCpf = h;
       }
-      if (!detectedRemessa && (clean.includes("REMESSA") || clean.includes("LOTE") || clean.includes("MEMO") || clean.includes("OFICIO") || clean.includes("GUIA"))) {
+      if (!detectedRemessa && (clean.includes("REMESSA") || clean.includes("MEMO") || clean.includes("OFICIO") || clean.includes("GUIA"))) {
         detectedRemessa = h;
       }
       if (!detectedObs && (clean.includes("OBS") || clean.includes("MOTIVO") || clean.includes("CATEGORIA") || clean.includes("SERVICO") || clean.includes("TIPO"))) {
@@ -276,6 +282,7 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
 
     setColNome(detectedNome);
     setColPa(detectedPa);
+    setColLote(detectedLote);
     setColCpf(detectedCpf);
     setColRemessa(detectedRemessa);
     setColObs(detectedObs);
@@ -382,15 +389,19 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
       json.forEach((row) => {
         const rawNome = colNome ? String(row[colNome] || "").trim() : "";
         const rawPa = colPa ? String(row[colPa] || "").trim() : "";
+        const rawLote = colLote ? String(row[colLote] || "").trim() : "";
         const rawCpf = colCpf ? String(row[colCpf] || "").trim() : "";
         const rawRemessa = colRemessa ? String(row[colRemessa] || "").trim() : "";
         const rawObs = colObs ? String(row[colObs] || "").trim() : "";
 
-        if ((rawNome && rawNome.length > 1) || (rawPa && rawPa.replace(/\D/g, "").length >= 3)) {
+        const finalLote = rawLote || defaultLoteInput.trim() || undefined;
+
+        if ((rawNome && rawNome.length > 1) || (rawPa && rawPa.replace(/\D/g, "").length >= 3) || (rawCpf && rawCpf.replace(/\D/g, "").length === 11)) {
           extractedItems.push({
             nome: rawNome ? rawNome.toUpperCase() : "CONDUTOR",
             pa: rawPa,
             cpf: rawCpf,
+            lote: finalLote,
             remessa: rawRemessa,
             observacao: rawObs,
           });
@@ -425,6 +436,8 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
     setPreviewRows([]);
     setColNome("");
     setColPa("");
+    setColLote("");
+    setDefaultLoteInput("");
     setColCpf("");
     setColRemessa("");
     setColObs("");
@@ -489,7 +502,7 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
 
     // 2. Registros que serão CADASTRADOS COMO NOVO REGISTRO COM NOVA ORDEM:
     // - Não localizados na tabela geral (r.cnhMatched === null)
-    // - CNHs que já constam em estoque (Recebida ou Entregue com gaveta/repartição) (r.isAlreadyInStockNewOrder === true)
+    // - CNHs com novo PA para o mesmo CPF ou que já constam em estoque (r.isAlreadyInStockNewOrder === true)
     const toInsert = results.filter((r) => r.selected && (r.cnhMatched === null || r.isAlreadyInStockNewOrder));
 
     if (toUpdate.length === 0 && toInsert.length === 0) {
@@ -512,33 +525,41 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
         ? { gaveta: bulkGaveta, reparticao: bulkReparticao }
         : undefined;
 
-      // 1. Atualizar registros existentes localizados (Remetidas/Pendentes) para RECEBIDA
+      // 1. Atualizar registros existentes localizados (mesmo PA) para RECEBIDA
       if (toUpdate.length > 0) {
-        const itemsPayload = toUpdate.map((r) => ({
-          id: r.cnhMatched!.id,
-          observacaoExtra: `Excel: ${fileName}${r.extracted.remessa ? ` (Remessa ${r.extracted.remessa})` : ""}`,
-        }));
+        const itemsPayload = toUpdate.map((r) => {
+          const itemLote = r.extracted.lote || defaultLoteInput.trim() || undefined;
+          return {
+            id: r.cnhMatched!.id,
+            lote: itemLote,
+            cpf: r.extracted.cpf || undefined,
+            pa: r.extracted.pa || undefined,
+            observacaoExtra: `Excel: ${fileName}${itemLote ? ` (Lote ${itemLote})` : ""}${r.extracted.remessa ? ` (Remessa ${r.extracted.remessa})` : ""}`,
+          };
+        });
         const resUpdate = await receberCNHsBulk(itemsPayload, userId, userNome, bulkLocation);
         updatedCount = resUpdate.updatedCount;
       }
 
-      // 2. Inserir novos registros (não localizados OU já em estoque preparados para nova ordem)
+      // 2. Inserir novos registros (novo PA / novo processo para CPF existente OU não localizados)
       if (toInsert.length > 0) {
         const newPayload = toInsert.map((r) => {
-          const isStock = Boolean(r.isAlreadyInStockNewOrder && r.cnhMatched);
-          const extraObs = isStock
-            ? `Importado via planilha Excel (${fileName}) - Nova via/emissão (Constava no estoque na Ordem #${r.cnhMatched!.ordem} como ${r.cnhMatched!.situacao} em ${r.cnhMatched!.gaveta || "-"} / ${r.cnhMatched!.reparticao || "-"}) - Cadastrado diretamente como RECEBIDA com nova ordem`
-            : `Importado via planilha Excel (${fileName}) - Não localizado na tabela geral - Cadastrado diretamente como RECEBIDA`;
+          const isCitizenPrevious = Boolean(r.isAlreadyInStockNewOrder && r.cnhMatched);
+          const itemLote = r.extracted.lote || defaultLoteInput.trim() || undefined;
+          const extraObs = isCitizenPrevious
+            ? `Importado via planilha Excel (${fileName})${itemLote ? ` - Lote ${itemLote}` : ""} - Novo processo/renovação (Histórico anterior na Ordem #${r.cnhMatched!.ordem} como ${r.cnhMatched!.situacao} em ${r.cnhMatched!.gaveta || "-"} / ${r.cnhMatched!.reparticao || "-"}) - Cadastrado diretamente como RECEBIDA com nova ordem`
+            : `Importado via planilha Excel (${fileName})${itemLote ? ` - Lote ${itemLote}` : ""} - Não localizado na tabela geral - Cadastrado diretamente como RECEBIDA`;
 
           return {
             nome: r.extracted.nome || r.cnhMatched?.nome || "",
             pa: r.extracted.pa || r.cnhMatched?.pa || undefined,
             cpf: r.extracted.cpf || r.cnhMatched?.cpf || undefined,
+            lote: itemLote,
             remessa: r.extracted.remessa || r.cnhMatched?.remessa || undefined,
             observacaoExtra: extraObs,
             forceNewRecord: true,
-            cnhAnteriorOrdem: isStock ? r.cnhMatched!.ordem : undefined,
-            cnhAnteriorSituacao: isStock ? r.cnhMatched!.situacao : undefined,
+            cnhAnteriorOrdem: isCitizenPrevious ? r.cnhMatched!.ordem : undefined,
+            cnhAnteriorSituacao: isCitizenPrevious ? r.cnhMatched!.situacao : undefined,
           };
         });
 
@@ -623,6 +644,7 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
         const ordemStr = isMatched ? `#${item.cnhMatched!.ordem}` : "Novo";
         const nomeStr = (item.extracted.nome || item.cnhMatched?.nome || "-").toUpperCase();
         const paStr = item.extracted.pa || item.cnhMatched?.pa || "-";
+        const loteStr = item.extracted.lote || defaultLoteInput.trim() || item.cnhMatched?.lote || "-";
         const cpfRaw = item.extracted.cpf || item.cnhMatched?.cpf || "";
         const cpfStr = cpfRaw ? formatCPF(cpfRaw) : "-";
 
@@ -641,6 +663,7 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
           ordemStr,
           nomeStr,
           paStr,
+          loteStr,
           cpfStr,
           gavetaClean,
           reparticaoClean,
@@ -652,7 +675,7 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
       autoTable(doc, {
         startY: 25,
         margin: { top: 25, bottom: 12, left: 10, right: 10 },
-        head: [["Item", "Ordem", "Nome do Titular", "PA", "CPF", "Gav.", "Rep.", "Data", "Assinatura / Visto"]],
+        head: [["Item", "Ordem", "Nome do Titular", "PA", "Lote", "CPF", "Gav.", "Rep.", "Data", "Assinatura / Visto"]],
         body: tableData,
         theme: "grid",
         styles: {
@@ -672,15 +695,16 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
           halign: "center",
         },
         columnStyles: {
-          0: { halign: "center", cellWidth: 9, fontStyle: "bold" },
-          1: { halign: "center", cellWidth: 14, fontStyle: "bold" },
-          2: { cellWidth: 56, fontStyle: "bold", overflow: "ellipsize" },
-          3: { halign: "center", cellWidth: 19, font: "helvetica" },
-          4: { halign: "center", cellWidth: 23, font: "helvetica" },
-          5: { halign: "center", cellWidth: 9, fontStyle: "bold" },
+          0: { halign: "center", cellWidth: 8, fontStyle: "bold" },
+          1: { halign: "center", cellWidth: 12, fontStyle: "bold" },
+          2: { cellWidth: 50, fontStyle: "bold", overflow: "ellipsize" },
+          3: { halign: "center", cellWidth: 18, font: "helvetica" },
+          4: { halign: "center", cellWidth: 15, fontStyle: "bold" },
+          5: { halign: "center", cellWidth: 22, font: "helvetica" },
           6: { halign: "center", cellWidth: 9, fontStyle: "bold" },
-          7: { halign: "center", cellWidth: 16 },
-          8: { cellWidth: 35 },
+          7: { halign: "center", cellWidth: 9, fontStyle: "bold" },
+          8: { halign: "center", cellWidth: 15 },
+          9: { cellWidth: 32 },
         },
         didDrawPage: (data) => {
           const pageWidth = doc.internal.pageSize.getWidth();
@@ -915,50 +939,115 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
                     )}
                   </div>
 
-                  {/* As 2 Colunas Principais: NOME e PA */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border-2 border-emerald-300 dark:border-emerald-700/60 shadow-xs">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
-                          <span>1. Coluna do NOME</span>
-                          <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-bold rounded">Obrigatória</span>
-                        </label>
+                  {/* Grid Principal de Mapeamento: NOME, PA, LOTE e CPF */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {/* 1. NOME */}
+                    <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border-2 border-emerald-300 dark:border-emerald-700/60 shadow-xs flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                            <span>1. Coluna do NOME</span>
+                            <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-bold rounded">Obrigatória</span>
+                          </label>
+                        </div>
+                        <select
+                          value={colNome}
+                          onChange={(e) => setColNome(e.target.value)}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg text-xs p-2 text-slate-900 dark:text-white font-semibold"
+                        >
+                          <option value="">Selecione a coluna de Nome...</option>
+                          {rawHeaders.map((h) => (
+                            <option key={h} value={h}>
+                              {h}
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                      <select
-                        value={colNome}
-                        onChange={(e) => setColNome(e.target.value)}
-                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg text-xs p-2 text-slate-900 dark:text-white font-semibold"
-                      >
-                        <option value="">Selecione a coluna de Nome...</option>
-                        {rawHeaders.map((h) => (
-                          <option key={h} value={h}>
-                            {h}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="text-[11px] text-slate-400 mt-1">Nome do condutor na planilha</p>
+                      <p className="text-[10px] text-slate-400 mt-1">Nome do condutor na planilha</p>
                     </div>
 
-                    <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border-2 border-emerald-300 dark:border-emerald-700/60 shadow-xs">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
-                          <span>2. Coluna do PA (Processo CNH)</span>
-                          <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-bold rounded">Chave de Cruzamento</span>
-                        </label>
+                    {/* 2. PA */}
+                    <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border-2 border-emerald-300 dark:border-emerald-700/60 shadow-xs flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                            <span>2. Coluna do PA (Processo)</span>
+                            <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-bold rounded">Único p/ Processo</span>
+                          </label>
+                        </div>
+                        <select
+                          value={colPa}
+                          onChange={(e) => setColPa(e.target.value)}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg text-xs p-2 text-slate-900 dark:text-white font-semibold"
+                        >
+                          <option value="">Selecione a coluna de PA...</option>
+                          {rawHeaders.map((h) => (
+                            <option key={h} value={h}>
+                              {h}
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                      <select
-                        value={colPa}
-                        onChange={(e) => setColPa(e.target.value)}
-                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg text-xs p-2 text-slate-900 dark:text-white font-semibold"
-                      >
-                        <option value="">Selecione a coluna de PA...</option>
-                        {rawHeaders.map((h) => (
-                          <option key={h} value={h}>
-                            {h}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="text-[11px] text-slate-400 mt-1">Número do PA / identificador único da CNH</p>
+                      <p className="text-[10px] text-slate-400 mt-1">PA idêntico atualiza registro; PA novo gera nova ordem</p>
+                    </div>
+
+                    {/* 3. LOTE */}
+                    <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border-2 border-blue-300 dark:border-blue-700/60 shadow-xs flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                            <span>3. Coluna do LOTE</span>
+                            <span className="px-1.5 py-0.2 bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 text-[10px] font-bold rounded">Gravação em Lote</span>
+                          </label>
+                        </div>
+                        <select
+                          value={colLote}
+                          onChange={(e) => setColLote(e.target.value)}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg text-xs p-2 text-slate-900 dark:text-white font-semibold"
+                        >
+                          <option value="">Selecione a coluna de Lote...</option>
+                          {rawHeaders.map((h) => (
+                            <option key={h} value={h}>
+                              {h}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="mt-1.5">
+                        <input
+                          type="text"
+                          value={defaultLoteInput}
+                          onChange={(e) => setDefaultLoteInput(e.target.value)}
+                          placeholder="Ou digite Lote Padrão..."
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-dashed border-blue-300 dark:border-blue-700 rounded-lg text-[11px] px-2 py-1 text-blue-900 dark:text-blue-200 placeholder:text-slate-400 font-mono"
+                          title="Lote padrão caso a planilha não tenha coluna ou para preencher vazios"
+                        />
+                      </div>
+                    </div>
+
+                    {/* 4. CPF */}
+                    <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border-2 border-slate-300 dark:border-slate-700/60 shadow-xs flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                            <span>4. Coluna do CPF</span>
+                            <span className="px-1.5 py-0.2 bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 text-[10px] font-bold rounded">Identificador</span>
+                          </label>
+                        </div>
+                        <select
+                          value={colCpf}
+                          onChange={(e) => setColCpf(e.target.value)}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg text-xs p-2 text-slate-900 dark:text-white font-semibold"
+                        >
+                          <option value="">Selecione a coluna de CPF...</option>
+                          {rawHeaders.map((h) => (
+                            <option key={h} value={h}>
+                              {h}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-1">Gera nova ordem se o cidadão tiver novo PA</p>
                     </div>
                   </div>
 
@@ -1650,12 +1739,12 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
                                 />
                               </td>
 
-                              {/* Dados da Planilha (Nome e PA) */}
+                              {/* Dados da Planilha (Nome, PA, LOTE, CPF) */}
                               <td className="p-3">
-                                <div className="font-bold text-slate-900 dark:text-white uppercase">
-                                  {item.extracted.nome}
+                                <div className="font-bold text-slate-900 dark:text-white uppercase flex items-center gap-2">
+                                  <span>{item.extracted.nome}</span>
                                 </div>
-                                <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2 mt-0.5">
+                                <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-1.5 mt-1">
                                   {item.extracted.pa ? (
                                     <span className="px-2 py-0.5 bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 rounded-md font-mono font-bold text-[10px] border border-emerald-300 dark:border-emerald-800">
                                       PA: {item.extracted.pa}
@@ -1663,9 +1752,21 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
                                   ) : (
                                     <span className="text-slate-400 italic text-[10px]">Sem PA na planilha</span>
                                   )}
-                                  {item.extracted.cpf && (
-                                    <span>CPF: <strong>{item.extracted.cpf}</strong></span>
+
+                                  {/* Badges de LOTE da Planilha */}
+                                  {(item.extracted.lote || defaultLoteInput) && (
+                                    <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-950/80 text-blue-800 dark:text-blue-300 rounded-md font-mono font-bold text-[10px] border border-blue-300 dark:border-blue-800 flex items-center gap-1">
+                                      <Layers className="w-3 h-3 text-blue-600 dark:text-blue-400 shrink-0" />
+                                      <span>LOTE: {item.extracted.lote || defaultLoteInput}</span>
+                                    </span>
                                   )}
+
+                                  {item.extracted.cpf && (
+                                    <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded text-[10px] font-mono">
+                                      CPF: <strong>{item.extracted.cpf}</strong>
+                                    </span>
+                                  )}
+
                                   {item.extracted.remessa && (
                                     <span className="px-1.5 py-0.2 bg-slate-100 dark:bg-slate-800 rounded font-mono text-[10px]">
                                       Remessa: {item.extracted.remessa}
@@ -1681,34 +1782,40 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
                                     <div className="flex items-center gap-1.5 flex-wrap">
                                       <span className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-200 font-extrabold text-[9px] uppercase rounded-md border border-amber-300 dark:border-amber-800 flex items-center gap-1">
                                         <Sparkles className="w-3 h-3 text-amber-600 shrink-0" />
-                                        <span>Já em Estoque (Nova Ordem)</span>
+                                        <span>Novo Processo (Nova Ordem)</span>
                                       </span>
-                                      <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 font-mono font-bold text-[10px] rounded text-slate-700 dark:text-slate-300">
-                                        #{item.cnhMatched!.ordem}
-                                      </span>
-                                      <span className="font-semibold text-slate-800 dark:text-slate-200">
-                                        {item.cnhMatched!.nome}
-                                      </span>
+                                      {item.cnhMatched && (
+                                        <>
+                                          <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 font-mono font-bold text-[10px] rounded text-slate-700 dark:text-slate-300">
+                                            Histórico Ordem #{item.cnhMatched.ordem}
+                                          </span>
+                                          <span className="font-semibold text-slate-800 dark:text-slate-200 text-xs">
+                                            {item.cnhMatched.nome}
+                                          </span>
+                                        </>
+                                      )}
                                     </div>
                                     <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2">
-                                      <span className="text-amber-800 dark:text-amber-300 font-medium">
-                                        Situação atual: <strong>{currentSituacao}</strong> ({item.cnhMatched!.gaveta || "-"} / {item.cnhMatched!.reparticao || "-"})
-                                      </span>
-                                      {item.cnhMatched!.pa && (
-                                        <span className="font-mono text-emerald-700 dark:text-emerald-400 font-semibold text-[10px]">
-                                          PA: {item.cnhMatched!.pa}
+                                      {item.cnhMatched && (
+                                        <span className="text-amber-800 dark:text-amber-300 font-medium">
+                                          Situação anterior: <strong>{currentSituacao}</strong> ({item.cnhMatched.gaveta || "-"} / {item.cnhMatched.reparticao || "-"})
+                                        </span>
+                                      )}
+                                      {item.cnhMatched?.pa && (
+                                        <span className="font-mono text-slate-600 dark:text-slate-400 font-medium text-[10px]">
+                                          PA anterior: {item.cnhMatched.pa}
                                         </span>
                                       )}
                                     </div>
                                     <p className="text-[10px] font-bold text-amber-700 dark:text-amber-400">
-                                      ⚡ Será criado NOVO CADASTRO com NOVA ORDEM
+                                      ⚡ Novo PA/Processo: Gerará NOVA ORDEM preservando o registro anterior!
                                     </p>
                                   </div>
                                 ) : isMatched ? (
                                   <div>
-                                    <div className="flex items-center gap-1.5">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
                                       <span className="px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-extrabold text-[9px] uppercase rounded">
-                                        ✓ Localizado
+                                        ✓ Correspondência Exata PA
                                       </span>
                                       <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 font-mono font-bold text-[10px] rounded text-slate-700 dark:text-slate-300">
                                         #{item.cnhMatched!.ordem}
@@ -1726,7 +1833,15 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
                                       {item.cnhMatched!.cpf && (
                                         <span>CPF: {item.cnhMatched!.cpf}</span>
                                       )}
+                                      {item.cnhMatched!.lote && (
+                                        <span className="text-blue-700 dark:text-blue-400 font-mono text-[10px]">
+                                          Lote atual: {item.cnhMatched!.lote}
+                                        </span>
+                                      )}
                                     </div>
+                                    <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
+                                      Mesmo processo: Atualizará para RECEBIDA, atualizando data_movimento, lote e usuário.
+                                    </p>
                                   </div>
                                 ) : (
                                   <div className="space-y-1">
@@ -1737,7 +1852,7 @@ export const ExcelRecebimentoModal: React.FC<ExcelRecebimentoModalProps> = ({
                                       </span>
                                     </div>
                                     <p className="text-[11px] text-indigo-700 dark:text-indigo-400">
-                                      Será inserido como novo cadastro com Situação <strong>RECEBIDA</strong>
+                                      Será inserido como novo cadastro com nova ordem sequencial e Situação <strong>RECEBIDA</strong>
                                     </p>
                                   </div>
                                 )}

@@ -5600,7 +5600,15 @@ export async function receberCNH(
 
 // Recebimento em Lote de CNHs (utilizado pelo Escaneamento OCR e ações em massa)
 export async function receberCNHsBulk(
-  items: Array<{ id: string; observacaoExtra?: string; gaveta?: string; reparticao?: string }>,
+  items: Array<{
+    id: string;
+    observacaoExtra?: string;
+    gaveta?: string;
+    reparticao?: string;
+    lote?: string;
+    cpf?: string;
+    pa?: string;
+  }>,
   userId: string,
   userNome: string,
   bulkLocation?: { gaveta: string; reparticao: string }
@@ -5608,7 +5616,14 @@ export async function receberCNHsBulk(
   if (!items || items.length === 0) return { updatedCount: 0, updatedCNHs: [] };
 
   const geralList = await getLocalGeralCNHs();
-  const itemsMap = new Map<string, { observacaoExtra?: string; gaveta?: string; reparticao?: string }>();
+  const itemsMap = new Map<string, {
+    observacaoExtra?: string;
+    gaveta?: string;
+    reparticao?: string;
+    lote?: string;
+    cpf?: string;
+    pa?: string;
+  }>();
   items.forEach((item) => itemsMap.set(item.id, item));
 
   const now = new Date().toISOString();
@@ -5637,6 +5652,9 @@ export async function receberCNHsBulk(
       }
 
       const oldSituacao = cnh.situacao;
+      const newLote = itemConfig.lote && itemConfig.lote.trim() ? itemConfig.lote.trim() : cnh.lote;
+      const newCpf = (!cnh.cpf || !cnh.cpf.trim()) && itemConfig.cpf ? itemConfig.cpf.trim() : cnh.cpf;
+      const newPa = (!cnh.pa || !cnh.pa.trim()) && itemConfig.pa ? itemConfig.pa.trim() : cnh.pa;
 
       const atualizado: GeralCNH = {
         ...cnh,
@@ -5644,9 +5662,13 @@ export async function receberCNHsBulk(
         gaveta: locGaveta,
         reparticao: locReparticao,
         data_movimento: now,
+        updated_at: now,
         usuario_id: userId,
         usuario_nome: userNome,
-        observacao: `${cnh.observacao ? cnh.observacao + " | " : ""}${extraObs ? extraObs + " - " : ""}Recebida no protocolo - Alocada em ${locGaveta} ${locReparticao}`
+        lote: newLote,
+        cpf: newCpf,
+        pa: newPa,
+        observacao: `${cnh.observacao ? cnh.observacao + " | " : ""}${extraObs ? extraObs + " - " : ""}Recebida no protocolo${newLote ? ` (Lote: ${newLote})` : ""} - Alocada em ${locGaveta} ${locReparticao}`
       };
 
       geralList[i] = atualizado;
@@ -5660,7 +5682,7 @@ export async function receberCNHsBulk(
         situacao_nova: "Recebida",
         usuario_id: userId,
         usuario_nome: userNome,
-        observacao: `Recebimento em lote - Alocado na ${locGaveta} / ${locReparticao}`,
+        observacao: `Recebimento em lote${newLote ? ` (Lote ${newLote})` : ""} - Alocado na ${locGaveta} / ${locReparticao}`,
         geral_cpf: atualizado.cpf
       });
 
@@ -5671,7 +5693,7 @@ export async function receberCNHsBulk(
         usuario_id: userId,
         usuario_nome: userNome,
         valores_anteriores: { situacao: oldSituacao },
-        valores_novos: { situacao: "Recebida", gaveta: locGaveta, reparticao: locReparticao }
+        valores_novos: { situacao: "Recebida", gaveta: locGaveta, reparticao: locReparticao, lote: newLote, updated_at: now }
       });
     }
   }
@@ -5693,6 +5715,7 @@ export async function cadastrarNovasCNHsRecebidas(
     nome: string;
     pa?: string;
     cpf?: string;
+    lote?: string;
     remessa?: string;
     observacaoExtra?: string;
     gaveta?: string;
@@ -5752,31 +5775,30 @@ export async function cadastrarNovasCNHsRecebidas(
       }
     }
 
-    // Localiza registro pré-existente (se houver)
-    const existing = (cleanCpf.length === 11 && cnhByCpf.get(cleanCpf)) ||
-                     (cleanPa && cnhByPa.get(cleanPa));
+    // REGRA DE CALIBRAÇÃO DETRAN:
+    // O número PA é único para cada processo/CNH.
+    // 1. Se o cruzamento de CPF, NOME, PA encontrar correspondência exata de PA, atualiza para RECEBIDA, atualiza Data Mov (updated_at), usuário logado etc.
+    // 2. Se encontrar correspondência de CPF apenas (com PA diferente ou novo), cria NOVO REGISTRO adicionando número de ordem sequencial, nome, cpf, lote etc (sem substituir o antigo).
+    const existingByPa = cleanPa && cleanPa.length >= 3 ? cnhByPa.get(cleanPa) : undefined;
+    const existingByCpf = cleanCpf.length === 11 ? cnhByCpf.get(cleanCpf) : undefined;
 
-    // Se já estiver em estoque (Recebida ou Entregue com gaveta/repartição) OU se for explicitamente solicitado forceNewRecord:
-    // CRIA UM NOVO CADASTRO NA TABELA GERAL COM NÚMERO DE ORDEM NOVO!
-    const isExistingInStock = Boolean(
-      existing && (existing.situacao === "Recebida" || existing.situacao === "Entregue")
-    );
-    const shouldCreateNewOrder = Boolean(item.forceNewRecord || isExistingInStock || !existing);
-
-    if (existing && !shouldCreateNewOrder) {
-      // Caso seja apenas um registro Remetida/Pendente anterior que não é nova via, atualiza para Recebida preservando a ordem original
-      const situacaoAntiga = existing.situacao;
+    if (existingByPa && !item.forceNewRecord) {
+      // Correspondência exata de PA: atualiza para Recebida preservando a ordem original
+      const situacaoAntiga = existingByPa.situacao;
+      const newLote = item.lote && item.lote.trim() ? item.lote.trim() : existingByPa.lote;
       const updated: GeralCNH = {
-        ...existing,
+        ...existingByPa,
         situacao: "Recebida",
-        gaveta: locGaveta || existing.gaveta,
-        reparticao: locReparticao || existing.reparticao,
+        gaveta: locGaveta || existingByPa.gaveta,
+        reparticao: locReparticao || existingByPa.reparticao,
         data_movimento: now,
+        updated_at: now,
         usuario_id: userId,
         usuario_nome: userNome,
-        remessa: item.remessa ? item.remessa.trim() : existing.remessa,
-        observacao: item.observacaoExtra || existing.observacao || `Recebida via importação de planilha Excel`,
-        updated_at: now
+        lote: newLote,
+        cpf: item.cpf ? item.cpf.trim() : existingByPa.cpf,
+        remessa: item.remessa ? item.remessa.trim() : existingByPa.remessa,
+        observacao: item.observacaoExtra || existingByPa.observacao || `Recebida via importação de planilha Excel${newLote ? ` (Lote: ${newLote})` : ""}`,
       };
 
       updatedCNHs.push(updated);
@@ -5789,7 +5811,7 @@ export async function cadastrarNovasCNHsRecebidas(
         situacao_nova: "Recebida",
         usuario_id: userId,
         usuario_nome: userNome,
-        observacao: `Atualizado para Recebido via planilha Excel - Gaveta ${locGaveta} / ${locReparticao}`,
+        observacao: `Atualizado para Recebido via planilha Excel${newLote ? ` (Lote ${newLote})` : ""} - Gaveta ${locGaveta} / ${locReparticao}`,
         geral_cpf: updated.cpf
       });
 
@@ -5799,40 +5821,46 @@ export async function cadastrarNovasCNHsRecebidas(
         acao: "Alteração (Importação Excel)",
         usuario_id: userId,
         usuario_nome: userNome,
-        valores_anteriores: existing,
+        valores_anteriores: existingByPa,
         valores_novos: updated
       });
       continue;
     }
 
     // Criação de NOVO REGISTRO com NOVA ORDEM SEQUENCIAL
+    // Seja novo cidadão ou novo processo/renovação de cidadão já existente por CPF
     maxOrdem++;
 
     const uniqueId = typeof crypto !== "undefined" && crypto.randomUUID
       ? crypto.randomUUID()
       : (toValidUUID(`cnh-excel-${Date.now()}-${Math.random()}`) || `cnh-excel-${Date.now()}-${maxOrdem}`);
 
+    const itemLote = item.lote ? item.lote.trim() : "";
+    const isCitizenWithPreviousCnh = Boolean(existingByCpf);
+
     const nova: GeralCNH = {
       id: uniqueId,
       ordem: maxOrdem,
       nome: nomeLimpo,
-      pa: item.pa ? item.pa.trim() : (existing?.pa || undefined),
-      cpf: item.cpf ? item.cpf.trim() : (existing?.cpf || ""),
+      pa: item.pa ? item.pa.trim() : (existingByPa?.pa || ""),
+      cpf: item.cpf ? item.cpf.trim() : (existingByCpf?.cpf || ""),
       gaveta: locGaveta,
       reparticao: locReparticao,
       situacao: "Recebida",
       data_movimento: now,
       usuario_id: userId,
       usuario_nome: userNome,
-      remessa: item.remessa ? item.remessa.trim() : (existing?.remessa || undefined),
-      observacao: item.observacaoExtra || (isExistingInStock && existing
-        ? `Importado via planilha Excel - Nova via/emissão (Constava no estoque na Ordem #${existing.ordem} como ${existing.situacao}) - Cadastrado como Recebida - Alocado em ${locGaveta} ${locReparticao}`
-        : `Importado via planilha Excel - Cadastrado como Recebida - Alocado em ${locGaveta} ${locReparticao}`),
+      lote: itemLote || undefined,
+      remessa: item.remessa ? item.remessa.trim() : (existingByCpf?.remessa || undefined),
+      observacao: item.observacaoExtra || (isCitizenWithPreviousCnh && existingByCpf
+        ? `Importado via planilha Excel${itemLote ? ` (Lote: ${itemLote})` : ""} - Novo processo/renovação (Histórico anterior na Ordem #${existingByCpf.ordem} ${existingByCpf.situacao}) - Cadastrado como Recebida - Alocado em ${locGaveta} ${locReparticao}`
+        : `Importado via planilha Excel${itemLote ? ` (Lote: ${itemLote})` : ""} - Cadastrado como Recebida - Alocado em ${locGaveta} ${locReparticao}`),
       created_at: now,
       updated_at: now
     };
 
     insertedCNHs.push(nova);
+    if (cleanPa) cnhByPa.set(cleanPa, nova);
 
     histEntries.push({
       geral_id: nova.id,
@@ -5842,19 +5870,19 @@ export async function cadastrarNovasCNHsRecebidas(
       situacao_nova: "Recebida",
       usuario_id: userId,
       usuario_nome: userNome,
-      observacao: isExistingInStock && existing
-        ? `Novo cadastro via Excel (Nova emissão - CNH anterior na Ordem #${existing.ordem} ${existing.situacao}) - Alocado na ${locGaveta} / ${locReparticao}`
-        : `Cadastrado via importação de planilha Excel - Alocado na ${locGaveta} / ${locReparticao}`,
+      observacao: isCitizenWithPreviousCnh && existingByCpf
+        ? `Novo processo CNH via Excel (Cidadão com histórico na Ordem #${existingByCpf.ordem})${itemLote ? ` - Lote ${itemLote}` : ""} - Alocado na ${locGaveta} / ${locReparticao}`
+        : `Cadastrado via importação de planilha Excel${itemLote ? ` - Lote ${itemLote}` : ""} - Alocado na ${locGaveta} / ${locReparticao}`,
       geral_cpf: nova.cpf
     });
 
     auditEntries.push({
       tabela: "geral",
       registro_id: `Ordem #${nova.ordem}`,
-      acao: isExistingInStock ? "Novo Cadastro (Nova Via em Estoque)" : "Inclusão",
+      acao: isCitizenWithPreviousCnh ? "Novo Cadastro (Novo Processo CNH)" : "Inclusão",
       usuario_id: userId,
       usuario_nome: userNome,
-      valores_anteriores: isExistingInStock && existing ? { cnh_anterior_ordem: existing.ordem, cnh_anterior_situacao: existing.situacao } : null,
+      valores_anteriores: isCitizenWithPreviousCnh && existingByCpf ? { cnh_anterior_ordem: existingByCpf.ordem, cnh_anterior_situacao: existingByCpf.situacao } : null,
       valores_novos: nova
     });
   }
