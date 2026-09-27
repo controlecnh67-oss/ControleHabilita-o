@@ -45,7 +45,8 @@ import {
   Zap,
   Database,
   Archive,
-  CheckSquare
+  CheckSquare,
+  BookOpen
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -79,6 +80,7 @@ import { CadastroManualModal } from "../components/CadastroManualModal";
 import { ReceberCNHModal } from "../components/ReceberCNHModal";
 import { EditarCNHModal } from "../components/EditarCNHModal";
 import { LotesSubTab } from "../components/geral/LotesSubTab";
+import { ManualDoUsuarioSubTab } from "../components/geral/ManualDoUsuarioSubTab";
 import { ImportarLoteModal } from "../components/ImportarLoteModal";
 import { AlterarGavetaReparticaoModal } from "../components/AlterarGavetaReparticaoModal";
 import { downloadCNHFichaPDF, buildCNHShareableText } from "../services/cnhFichaPdfService";
@@ -153,8 +155,8 @@ export const GeralPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [responsaveis, setResponsaveis] = useState<Responsavel[]>([]);
 
-  // Sub-aba ativa do Protocolo Geral: "cnhs" ou "lotes"
-  const [activeSubTab, setActiveSubTab] = useState<"cnhs" | "lotes">("cnhs");
+  // Sub-aba ativa do Protocolo Geral: "cnhs", "lotes" ou "manual"
+  const [activeSubTab, setActiveSubTab] = useState<"cnhs" | "lotes" | "manual">("cnhs");
   const [lotesCount, setLotesCount] = useState<number>(0);
 
   // Filtros e Busca Instantânea
@@ -1405,7 +1407,9 @@ export const GeralPage: React.FC = () => {
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               {activeSubTab === "cnhs" 
                 ? "Gestão de protocolo: remessas recebidas, arquivamento nas gavetas físicas e entrega ao titular ou despachante."
-                : "Gestão e controle de lotes de CNHs recebidas com anexo de comprovantes e documentos em PDF."}
+                : activeSubTab === "lotes"
+                ? "Gestão e controle de lotes de CNHs recebidas com anexo de comprovantes e documentos em PDF."
+                : "Guia didático operacional completo para cada perfil de usuário, regras de negócio e download da cartilha oficial em PDF."}
             </p>
           </div>
 
@@ -1534,10 +1538,31 @@ export const GeralPage: React.FC = () => {
               {lotesCount}
             </span>
           </button>
+
+          <button
+            onClick={() => setActiveSubTab("manual")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+              activeSubTab === "manual"
+                ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            <span>Manual do Usuário</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+              activeSubTab === "manual"
+                ? "bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300"
+                : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+            }`}>
+              Guia
+            </span>
+          </button>
         </div>
 
         {activeSubTab === "lotes" ? (
           <LotesSubTab />
+        ) : activeSubTab === "manual" ? (
+          <ManualDoUsuarioSubTab />
         ) : (
           <div className="space-y-6">
 

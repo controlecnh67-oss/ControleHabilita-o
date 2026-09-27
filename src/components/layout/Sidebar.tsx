@@ -20,7 +20,8 @@ import {
   BarChart3,
   Activity,
   PackageCheck,
-  Search
+  Search,
+  BookOpen
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { cn } from "../../lib/utils";
@@ -88,6 +89,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: "geral" as NavTab, label: "Protocolo Geral (CNHs)", icon: FolderArchive },
     { id: "consulta_cnh" as NavTab, label: "Consulta CNH", icon: Search },
     { id: "protocolo_entrega" as NavTab, label: "Protocolo Entrega", icon: PackageCheck },
+    { id: "manual" as NavTab, label: "Manual do Usuário", icon: BookOpen },
     { id: "candidatos" as NavTab, label: "Candidatos", icon: UserCheck },
     { id: "memorandos" as NavTab, label: "Memorandos e Remessas", icon: FileText },
     { id: "declaracao" as NavTab, label: "Declaração", icon: FileCheck },
@@ -207,6 +209,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     )}
                   />
                   <span className="truncate">{item.label}</span>
+
+                  {item.id === "manual" && (
+                    <span
+                      title="Acesso Geral: Guia Operacional e Cartilha em PDF"
+                      className="ml-auto px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-400/30 shrink-0"
+                    >
+                      Guia
+                    </span>
+                  )}
 
                   {item.id === "monitoramento" && unresolvedErrors.length > 0 && (
                     <span

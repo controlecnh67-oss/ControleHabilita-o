@@ -8,6 +8,7 @@ export type NavTab =
   | "geral" 
   | "consulta_cnh"
   | "protocolo_entrega"
+  | "manual"
   | "candidatos"
   | "memorandos" 
   | "declaracao"
@@ -28,6 +29,9 @@ export function isTabAllowedForProfile(
   permissoes?: string[]
 ): boolean {
   if (!perfil) return false;
+
+  // Manual do Usuário é de ACESSO GERAL para todos os usuários do sistema
+  if (tab === "manual") return true;
 
   // Administrador tem acesso irrestrito a todas as abas
   if (perfil === "Administrador") return true;
@@ -117,13 +121,13 @@ export function isTabAllowedForProfile(
   // Fallback padrão se não houver array de permissões customizadas
   switch (perfil) {
     case "Supervisor":
-      return ["dashboard", "geral", "consulta_cnh", "protocolo_entrega", "candidatos", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento", "historico", "auditoria", "orgao"].includes(tab);
+      return ["dashboard", "geral", "consulta_cnh", "protocolo_entrega", "manual", "candidatos", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento", "historico", "auditoria", "orgao"].includes(tab);
 
     case "Operador":
-      return ["dashboard", "geral", "consulta_cnh", "protocolo_entrega", "candidatos", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento"].includes(tab);
+      return ["dashboard", "geral", "consulta_cnh", "protocolo_entrega", "manual", "candidatos", "memorandos", "declaracao", "acessos_cidadao", "relatorios", "responsaveis", "mapeamento"].includes(tab);
 
     case "Consulta":
-      return ["dashboard", "geral", "consulta_cnh", "protocolo_entrega", "candidatos", "declaracao", "acessos_cidadao", "relatorios", "historico", "auditoria"].includes(tab);
+      return ["dashboard", "geral", "consulta_cnh", "protocolo_entrega", "manual", "candidatos", "declaracao", "acessos_cidadao", "relatorios", "historico", "auditoria"].includes(tab);
 
     default:
       return false;
@@ -317,6 +321,15 @@ export const PERMISSOES_SISTEMA: PermissaoItem[] = [
     category: "Administração do Sistema", 
     description: "Permite realizar backups, restaurar dados e sincronizar com nuvem/Supabase",
     isTab: true
+  },
+
+  // 13. Manual do Usuário (Acesso Geral)
+  { 
+    id: "manual:visualizar", 
+    label: "Aba Manual do Usuário", 
+    category: "Geral & Ajuda", 
+    description: "Orientações operacionais para cada perfil, regras de PA/Lote e download da cartilha oficial em PDF",
+    isTab: true
   }
 ];
 
@@ -327,7 +340,7 @@ export function getPermissoesPadrao(perfil: PerfilUsuario): string[] {
     case "Supervisor":
       return [
         "dashboard:visualizar",
-        "geral:visualizar", "protocolo_entrega:visualizar", "cnh:receber", "cnh:entregar", "cnh:editar",
+        "geral:visualizar", "protocolo_entrega:visualizar", "manual:visualizar", "cnh:receber", "cnh:entregar", "cnh:editar",
         "memorandos:criar", "memorandos:remeter",
         "declaracao:gerenciar",
         "acessos_cidadao:visualizar",
@@ -341,7 +354,7 @@ export function getPermissoesPadrao(perfil: PerfilUsuario): string[] {
     case "Operador":
       return [
         "dashboard:visualizar",
-        "geral:visualizar", "protocolo_entrega:visualizar", "cnh:receber", "cnh:entregar",
+        "geral:visualizar", "protocolo_entrega:visualizar", "manual:visualizar", "cnh:receber", "cnh:entregar",
         "memorandos:criar", "memorandos:remeter",
         "declaracao:gerenciar",
         "acessos_cidadao:visualizar",
@@ -352,7 +365,7 @@ export function getPermissoesPadrao(perfil: PerfilUsuario): string[] {
     case "Consulta":
       return [
         "dashboard:visualizar",
-        "geral:visualizar", "protocolo_entrega:visualizar",
+        "geral:visualizar", "protocolo_entrega:visualizar", "manual:visualizar",
         "acessos_cidadao:visualizar",
         "relatorios:visualizar",
         "historico:visualizar",

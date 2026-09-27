@@ -21,6 +21,7 @@ import { AcessosCidadaoPage } from "./pages/AcessosCidadaoPage";
 import { RelatoriosPage } from "./pages/RelatoriosPage";
 import { DeclaracoesPage } from "./pages/DeclaracoesPage";
 import { CandidatosPage } from "./pages/CandidatosPage";
+import { ManualDoUsuarioPage } from "./pages/ManualDoUsuarioPage";
 import { isTabAllowedForProfile, NavTab } from "./types";
 import { loadOrgaoConfigFromSupabase } from "./services/orgaoService";
 import { isSupabaseConfigured, subscribeToMultipleSupabaseRealtime } from "./services/supabase";
@@ -333,6 +334,7 @@ const MainLayout: React.FC = () => {
             {activeTab === "geral" && isTabAllowedForProfile("geral", user?.perfil, user?.permissoes) && <GeralPage />}
             {activeTab === "consulta_cnh" && isTabAllowedForProfile("consulta_cnh", user?.perfil, user?.permissoes) && <ConsultaCNHPage />}
             {activeTab === "protocolo_entrega" && isTabAllowedForProfile("protocolo_entrega", user?.perfil, user?.permissoes) && <ProtocoloEntregaPage />}
+            {activeTab === "manual" && isTabAllowedForProfile("manual", user?.perfil, user?.permissoes) && <ManualDoUsuarioPage />}
             {activeTab === "candidatos" && isTabAllowedForProfile("candidatos", user?.perfil, user?.permissoes) && <CandidatosPage />}
             {activeTab === "memorandos" && isTabAllowedForProfile("memorandos", user?.perfil, user?.permissoes) && <MemorandosPage onNavigateToGeral={() => setActiveTab("geral")} />}
             {activeTab === "declaracao" && isTabAllowedForProfile("declaracao", user?.perfil, user?.permissoes) && <DeclaracoesPage />}
