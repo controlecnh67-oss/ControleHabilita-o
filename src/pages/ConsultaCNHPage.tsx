@@ -28,8 +28,15 @@ import {
   FileSpreadsheet
 } from "lucide-react";
 import { GeralCNH, Responsavel, SituacaoGeral } from "../types";
-import { getGeralCNHs, getResponsaveis } from "../services/db";
+import { 
+  getGeralCNHs, 
+  getResponsaveis, 
+  getUnifiedCNHCounts, 
+  UnifiedCNHCounts, 
+  normalizeSituacao 
+} from "../services/db";
 import { syncGeralWithSupabase, deduplicateCNHRecords } from "../services/dexieDb";
+import { subscribeToSupabaseRealtime } from "../services/supabase";
 import { useAuth } from "../context/AuthContext";
 import { Modal } from "../components/ui/Modal";
 import { Badge } from "../components/ui/Badge";
@@ -203,6 +210,15 @@ ${cnh.observacao ? `Observação: ${cnh.observacao}` : ""}`;
     window.print();
   };
 
+  // Contadores por Situação Unificados (Reconciliados com Dashboard e Protocolo Geral)
+  const [counts, setCounts] = useState<UnifiedCNHCounts>({
+    todas: 0,
+    Recebida: 0,
+    Entregue: 0,
+    Remetida: 0,
+    Pendente: 0,
+  });
+
   // Carregar dados
   const fetchDados = async () => {
     try {
@@ -210,6 +226,10 @@ ${cnh.observacao ? `Observação: ${cnh.observacao}` : ""}`;
       const { cleanList } = deduplicateCNHRecords(dataCnhs);
       setCnhs(cleanList);
       setResponsaveis(dataResp);
+
+      // Busca contagens rigorosamente unificadas com a base da nuvem e local
+      const unifiedCounts = await getUnifiedCNHCounts(cleanList);
+      setCounts(unifiedCounts);
     } catch (err) {
       console.error("Erro ao carregar dados da Consulta CNH:", err);
     } finally {
@@ -224,6 +244,25 @@ ${cnh.observacao ? `Observação: ${cnh.observacao}` : ""}`;
     syncGeralWithSupabase(false).then(() => {
       fetchDados();
     });
+
+    // Ouvir eventos globais de sincronização e atualizações entre abas
+    const handleSync = () => {
+      fetchDados();
+    };
+
+    window.addEventListener("detran_sync_updated", handleSync);
+    window.addEventListener("storage", handleSync);
+
+    // Ouvir Realtime do Supabase para alterações feitas em outros guichês/terminais
+    const unsubRealtime = subscribeToSupabaseRealtime("geral_cnhs", () => {
+      fetchDados();
+    });
+
+    return () => {
+      window.removeEventListener("detran_sync_updated", handleSync);
+      window.removeEventListener("storage", handleSync);
+      unsubRealtime();
+    };
   }, []);
 
   const handleManualRefresh = async () => {
@@ -232,30 +271,13 @@ ${cnh.observacao ? `Observação: ${cnh.observacao}` : ""}`;
     await fetchDados();
   };
 
-  // Contadores por Situação
-  const counts = useMemo(() => {
-    const res = {
-      todas: cnhs.length,
-      Recebida: 0,
-      Entregue: 0,
-      Remetida: 0,
-      Pendente: 0,
-    };
-    cnhs.forEach((c) => {
-      if (c.situacao && res[c.situacao] !== undefined) {
-        res[c.situacao]++;
-      }
-    });
-    return res;
-  }, [cnhs]);
-
   // Filtragem e Ordenação Rápida
   const filteredData = useMemo(() => {
     const normSearch = normalizeSearch(searchTerm);
     return cnhs
       .filter((c) => {
-        // Filtro de Situação
-        if (filtroSituacao !== "todas" && c.situacao !== filtroSituacao) {
+        // Filtro de Situação Normalizado
+        if (filtroSituacao !== "todas" && normalizeSituacao(c.situacao) !== filtroSituacao) {
           return false;
         }
 
@@ -769,7 +791,7 @@ ${cnh.observacao ? `Observação: ${cnh.observacao}` : ""}`;
         <div className="px-4 py-3 bg-slate-50/70 dark:bg-slate-800/40 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2">
             <span className="font-bold text-slate-800 dark:text-slate-200">
-              Listando {filteredData.length} de {cnhs.length} registro(s)
+              Listando {filteredData.length} de {(counts.todas || cnhs.length).toLocaleString("pt-BR")} registro(s)
             </span>
             {searchTerm && (
               <span className="px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono text-[11px]">

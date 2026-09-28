@@ -66,7 +66,9 @@ import {
   createResponsavel,
   importSpreadsheetData,
   getPublicSearchCount,
-  getLotes
+  getLotes,
+  getUnifiedCNHCounts,
+  normalizeSituacao
 } from "../services/db";
 import { syncGeralWithSupabase, dexieDb, normalizeCNHRecord, deduplicateCNHRecords, cleanAndDeduplicateGeralTable } from "../services/dexieDb";
 import { getPublicShareUrl, subscribeToSupabaseRealtime, supabase, isSupabaseConfigured } from "../services/supabase";
@@ -79,6 +81,7 @@ import { DuplicatasModal } from "../components/DuplicatasModal";
 import { CadastroManualModal } from "../components/CadastroManualModal";
 import { ReceberCNHModal } from "../components/ReceberCNHModal";
 import { EditarCNHModal } from "../components/EditarCNHModal";
+import { ImportSpreadsheetConferenceModal } from "../components/ImportSpreadsheetConferenceModal";
 import { LotesSubTab } from "../components/geral/LotesSubTab";
 import { ManualDoUsuarioSubTab } from "../components/geral/ManualDoUsuarioSubTab";
 import { ImportarLoteModal } from "../components/ImportarLoteModal";
@@ -672,18 +675,10 @@ export const GeralPage: React.FC = () => {
         cleanAndDeduplicateGeralTable().catch(() => {});
       }
 
-      // Consulta a quantidade exata de registros no banco de dados da nuvem (Supabase)
-      if (isSupabaseConfigured()) {
-        try {
-          const { count, error } = await supabase
-            .from("geral_cnhs")
-            .select("*", { count: "exact", head: true });
-          if (!error && typeof count === "number" && count > 0) {
-            setCloudCnhCount(count);
-          }
-        } catch (e) {
-          console.warn("Aviso ao buscar contagem exata no Supabase:", e);
-        }
+      // Reconcilia contagem unificada com a base da nuvem e local
+      const unified = await getUnifiedCNHCounts(cleanList);
+      if (unified.todas > 0) {
+        setCloudCnhCount(unified.todas);
       }
     } catch (err) {
       console.error("Erro ao buscar CNHs no protocolo:", err);
@@ -831,7 +826,7 @@ export const GeralPage: React.FC = () => {
         normalizeSearch(c.reparticao).includes(normSearch) ||
         normalizeSearch(c.observacao).includes(normSearch);
 
-      const matchSituacao = filtroSituacao === "todas" || c.situacao === filtroSituacao;
+      const matchSituacao = filtroSituacao === "todas" || normalizeSituacao(c.situacao) === filtroSituacao;
       const matchLote = !filtroLote.trim() || (Boolean(c.lote) && normalizeSearch(c.lote!).includes(normalizeSearch(filtroLote)));
       const matchOrdemInicial = !filtroOrdemInicial || Number(c.ordem) >= Number(filtroOrdemInicial);
       const matchOrdemFinal = !filtroOrdemFinal || Number(c.ordem) <= Number(filtroOrdemFinal);
@@ -3424,110 +3419,31 @@ export const GeralPage: React.FC = () => {
         </div>
       </Modal>
 
-      {/* Modal 5: Importar Planilha CSV / XLSX */}
-      <Modal
+      {/* Modal 5: Conferência e Identificação de Planilha CSV / XLSX */}
+      <ImportSpreadsheetConferenceModal
         isOpen={isImportModalOpen}
-        onClose={() => setIsImportModalOpen(false)}
-        title="📥 Importar Planilha (CSV ou Excel)"
-      >
-        <div className="space-y-4 text-xs">
-          <div className="p-3.5 bg-blue-50 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200">
-            <div className="font-bold flex items-center gap-2 mb-1">
-              <FileSpreadsheet className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-              <span>Arquivo Selecionado: <strong>{selectedImportFile?.name}</strong></span>
-            </div>
-            <p className="text-[11px] text-slate-600 dark:text-slate-300">
-              Tamanho: {(selectedImportFile?.size ? selectedImportFile.size / 1024 : 0).toFixed(1)} KB
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <label className="font-bold text-slate-800 dark:text-slate-200 block">
-              Modo de Inserção no Sistema
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <label className={`p-3 rounded-xl border cursor-pointer transition-all flex items-start gap-2.5 ${
-                importMode === "merge" 
-                  ? "bg-blue-50/70 border-blue-500 dark:bg-blue-950/60 ring-1 ring-blue-500" 
-                  : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-              }`}>
-                <input
-                  type="radio"
-                  name="importMode"
-                  checked={importMode === "merge"}
-                  onChange={() => setImportMode("merge")}
-                  className="mt-0.5 text-blue-600 focus:ring-blue-500"
-                />
-                <div>
-                  <div className="font-bold text-slate-900 dark:text-white">Mesclar e Atualizar</div>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    Atualiza os registros existentes por CPF/Ordem e adiciona os novos sem apagar os atuais.
-                  </p>
-                </div>
-              </label>
-
-              <label className={`p-3 rounded-xl border cursor-pointer transition-all flex items-start gap-2.5 ${
-                importMode === "replace" 
-                  ? "bg-rose-50/70 border-rose-500 dark:bg-rose-950/60 ring-1 ring-rose-500" 
-                  : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-              }`}>
-                <input
-                  type="radio"
-                  name="importMode"
-                  checked={importMode === "replace"}
-                  onChange={() => setImportMode("replace")}
-                  className="mt-0.5 text-rose-600 focus:ring-rose-500"
-                />
-                <div>
-                  <div className="font-bold text-slate-900 dark:text-white">Substituir Lista Local</div>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    Substitui inteiramente todos os registros da tabela local pelos dados desta planilha.
-                  </p>
-                </div>
-              </label>
-            </div>
-          </div>
-
-          <div className="p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
-            <label className="flex items-center gap-2 font-bold text-slate-900 dark:text-white cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={syncImportToSupabase}
-                onChange={(e) => setSyncImportToSupabase(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-              />
-              <span>Sincronizar também com o banco Supabase em nuvem</span>
-            </label>
-            <p className="text-[10px] text-slate-500 dark:text-slate-400 pl-6">
-              Quando ativado, envia todos os registros importados da planilha diretamente para a tabela <code className="font-mono bg-slate-200 dark:bg-slate-700 px-1 py-0.5 rounded">geral_cnhs</code> no Supabase.
-            </p>
-          </div>
-
-          <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-[11px] leading-relaxed">
-            💡 <strong>Reconhecimento Automático de Colunas:</strong> A planilha pode estar em <code className="font-mono">.csv</code> ou <code className="font-mono">.xlsx</code>. O sistema detecta colunas como <em>Ordem, Nome/Candidato, CPF, Gaveta, Repartição, Situação, Responsável, Memorando e Observações</em>.
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={() => setIsImportModalOpen(false)}
-              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
-            >
-              Cancelar
-            </button>
-
-            <button
-              type="button"
-              onClick={handleConfirmImport}
-              disabled={isImporting}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm cursor-pointer"
-            >
-              {isImporting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              <span>{isImporting ? "Importando Planilha..." : "Iniciar Importação"}</span>
-            </button>
-          </div>
-        </div>
-      </Modal>
+        file={selectedImportFile}
+        onClose={() => {
+          setIsImportModalOpen(false);
+          setSelectedImportFile(null);
+        }}
+        onSuccess={async (res) => {
+          if (res.success) {
+            setMessage({
+              type: "success",
+              text: `🎉 ${res.importedCount} registros importados da planilha com sucesso!` +
+                (res.supabaseSyncedCount ? ` (${res.supabaseSyncedCount} salvos no Supabase)` : "") +
+                (res.supabaseError ? ` [Aviso Supabase: ${res.supabaseError}]` : "")
+            });
+            setIsImportModalOpen(false);
+            setSelectedImportFile(null);
+            await fetchDados();
+          } else {
+            alert(`Erro ao importar planilha: ${res.message}`);
+          }
+        }}
+        defaultSyncToSupabase={syncImportToSupabase}
+      />
 
       {/* Modal 6: Visualização Detalhada da CNH */}
       <Modal

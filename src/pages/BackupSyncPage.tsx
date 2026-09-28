@@ -41,6 +41,7 @@ import {
   SyncStatusItem
 } from "../services/db";
 import { Modal } from "../components/ui/Modal";
+import { ImportSpreadsheetConferenceModal } from "../components/ImportSpreadsheetConferenceModal";
 import { useAuth } from "../context/AuthContext";
 import { 
   getSupabaseCredentials, 
@@ -1778,112 +1779,27 @@ END $$;`;
           </div>
         </div>
       )}
-      {/* Modal de Importação de Planilha CSV / XLSX */}
-      <Modal
+      {/* Modal de Conferência e Identificação de Planilha de CNHs */}
+      <ImportSpreadsheetConferenceModal
         isOpen={spreadsheetModalOpen}
-        onClose={() => setSpreadsheetModalOpen(false)}
-        title="📥 Importar Planilha de CNHs (CSV ou Excel)"
-      >
-        <div className="space-y-4 text-xs">
-          <div className="p-3.5 bg-blue-50 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200">
-            <div className="font-bold flex items-center gap-2 mb-1">
-              <FileSpreadsheet className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-              <span>Arquivo Selecionado: <strong>{selectedSpreadsheetFile?.name}</strong></span>
-            </div>
-            <p className="text-[11px] text-slate-600 dark:text-slate-300">
-              Tamanho: {(selectedSpreadsheetFile?.size ? selectedSpreadsheetFile.size / 1024 : 0).toFixed(1)} KB
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <label className="font-bold text-slate-800 dark:text-slate-200 block">
-              Modo de Inserção de Dados
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <label className={`p-3 rounded-xl border cursor-pointer transition-all flex items-start gap-2.5 ${
-                importMode === "merge" 
-                  ? "bg-blue-50/70 border-blue-500 dark:bg-blue-950/60 ring-1 ring-blue-500" 
-                  : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-              }`}>
-                <input
-                  type="radio"
-                  name="syncImportMode"
-                  checked={importMode === "merge"}
-                  onChange={() => setImportMode("merge")}
-                  className="mt-0.5 text-blue-600 focus:ring-blue-500"
-                />
-                <div>
-                  <div className="font-bold text-slate-900 dark:text-white">Mesclar e Atualizar</div>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    Atualiza os registros existentes por CPF/Ordem e adiciona os novos mantendo os atuais.
-                  </p>
-                </div>
-              </label>
-
-              <label className={`p-3 rounded-xl border cursor-pointer transition-all flex items-start gap-2.5 ${
-                importMode === "replace" 
-                  ? "bg-rose-50/70 border-rose-500 dark:bg-rose-950/60 ring-1 ring-rose-500" 
-                  : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-              }`}>
-                <input
-                  type="radio"
-                  name="syncImportMode"
-                  checked={importMode === "replace"}
-                  onChange={() => setImportMode("replace")}
-                  className="mt-0.5 text-rose-600 focus:ring-rose-500"
-                />
-                <div>
-                  <div className="font-bold text-slate-900 dark:text-white">Substituir Tabela Local</div>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    Substitui totalmente todos os registros da tabela local de CNHs pelos dados desta planilha.
-                  </p>
-                </div>
-              </label>
-            </div>
-          </div>
-
-          <div className="p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
-            <label className="flex items-center gap-2 font-bold text-slate-900 dark:text-white cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={syncSpreadsheetToSupabase}
-                onChange={(e) => setSyncSpreadsheetToSupabase(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-              />
-              <span>Sincronizar dados automaticamente com o Supabase</span>
-            </label>
-            <p className="text-[10px] text-slate-500 dark:text-slate-400 pl-6">
-              {isConnected 
-                ? "Conexão com o Supabase ativa. Os dados serão enviados via upsert para a tabela 'geral_cnhs'."
-                : "Aviso: Conexão com Supabase não configurada. Apenas a tabela local será atualizada."}
-            </p>
-          </div>
-
-          <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-[11px] leading-relaxed">
-            💡 <strong>Reconhecimento Inteligente:</strong> O sistema mapeia dinamicamente colunas como <em>Ordem, Nome/Candidato, CPF, Gaveta, Repartição, Situação, Responsável, Memorando e Observações</em>.
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={() => setSpreadsheetModalOpen(false)}
-              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
-            >
-              Cancelar
-            </button>
-
-            <button
-              type="button"
-              onClick={handleConfirmSpreadsheetImport}
-              disabled={isImportingSpreadsheet}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm cursor-pointer"
-            >
-              {isImportingSpreadsheet ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              <span>{isImportingSpreadsheet ? "Processando..." : "Iniciar Importação"}</span>
-            </button>
-          </div>
-        </div>
-      </Modal>
+        file={selectedSpreadsheetFile}
+        onClose={() => {
+          setSpreadsheetModalOpen(false);
+          setSelectedSpreadsheetFile(null);
+        }}
+        onSuccess={async (res) => {
+          setImportResult({
+            success: res.success,
+            message: res.message + (res.supabaseSyncedCount ? ` (${res.supabaseSyncedCount} salvos no Supabase)` : "") + (res.supabaseError ? ` [Aviso: ${res.supabaseError}]` : "")
+          });
+          if (res.success) {
+            await loadStats();
+            setSpreadsheetModalOpen(false);
+            setSelectedSpreadsheetFile(null);
+          }
+        }}
+        defaultSyncToSupabase={isConnected}
+      />
     </div>
   );
 };

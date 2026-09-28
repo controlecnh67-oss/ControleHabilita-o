@@ -7,7 +7,8 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
-  maxWidth?: "sm" | "md" | "lg" | "xl" | "2xl";
+  maxWidth?: "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "4xl" | "5xl";
+  size?: "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "4xl" | "5xl";
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -15,7 +16,8 @@ export const Modal: React.FC<ModalProps> = ({
   onClose,
   title,
   children,
-  maxWidth = "lg"
+  maxWidth = "lg",
+  size
 }) => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -29,12 +31,17 @@ export const Modal: React.FC<ModalProps> = ({
 
   if (!isOpen) return null;
 
+  const actualWidth = size || maxWidth;
+
   const widthMap = {
     sm: "max-w-sm",
     md: "max-w-md",
     lg: "max-w-lg",
     xl: "max-w-xl",
-    "2xl": "max-w-2xl"
+    "2xl": "max-w-2xl",
+    "3xl": "max-w-3xl",
+    "4xl": "max-w-4xl",
+    "5xl": "max-w-5xl"
   };
 
   return (
@@ -42,7 +49,7 @@ export const Modal: React.FC<ModalProps> = ({
       <div
         className={cn(
           "relative w-full bg-white dark:bg-slate-900 rounded-lg shadow-xl border border-slate-200 dark:border-slate-800 overflow-hidden my-8 transform transition-all",
-          widthMap[maxWidth]
+          widthMap[actualWidth]
         )}
       >
         {/* Cabeçalho do Modal */}

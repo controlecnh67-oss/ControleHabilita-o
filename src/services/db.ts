@@ -348,7 +348,7 @@ const SEED_RESPONSAVEIS: Responsavel[] = [
   { id: "75da89d6", nome: "EMANUEL AUTO ESCOLA", cpf: "4561.515613", telefone: "93991386008", ativo: true, created_at: new Date().toISOString() }
 ];
 
-const SEED_MAPEAMENTO: MapeamentoLocalizacao[] = [
+export const SEED_MAPEAMENTO: MapeamentoLocalizacao[] = [
   { id: "m-a", inicial: "A", gaveta: "Gaveta 1", reparticao: "Repartição 1", ativo: true },
   { id: "m-b", inicial: "B", gaveta: "Gaveta 1", reparticao: "Repartição 2", ativo: true },
   { id: "m-c", inicial: "C", gaveta: "Gaveta 1", reparticao: "Repartição 3", ativo: true },
@@ -6248,6 +6248,100 @@ export async function getAuditoriaList(): Promise<Auditoria[]> {
 }
 
 // ============================================================================
+// ESTATÍSTICAS UNIFICADAS E CONTAGENS DE CNHS (FONTE ÚNICA DA VERDADE)
+// ============================================================================
+
+export interface UnifiedCNHCounts {
+  todas: number;
+  Recebida: number;
+  Entregue: number;
+  Remetida: number;
+  Pendente: number;
+  isCloudAccurate?: boolean;
+}
+
+/**
+ * Normaliza qualquer variação de texto para as 4 situações oficiais do sistema
+ */
+export function normalizeSituacao(raw?: string): SituacaoGeral {
+  if (!raw) return "Recebida";
+  const s = String(raw).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (s.includes("entreg")) return "Entregue";
+  if (s.includes("pend")) return "Pendente";
+  if (s.includes("remet") || s.includes("trans")) return "Remetida";
+  if (s.includes("receb") || s.includes("balcao") || s.includes("pront") || s.includes("agenc")) return "Recebida";
+  return "Recebida";
+}
+
+let cachedUnifiedCounts: UnifiedCNHCounts | null = null;
+let lastCountsFetchTime = 0;
+
+/**
+ * Retorna contagens de CNHs consistentes e rigorosamente reconciliadas para todas as abas:
+ * Dashboard, Protocolo Geral, Protocolo Entrega e Consulta CNH
+ */
+export async function getUnifiedCNHCounts(providedList?: GeralCNH[], forceRefresh = false): Promise<UnifiedCNHCounts> {
+  const now = Date.now();
+  if (!forceRefresh && cachedUnifiedCounts && (now - lastCountsFetchTime < 3000) && !providedList) {
+    return cachedUnifiedCounts;
+  }
+
+  const list = providedList || (await getGeralCNHs());
+  const counts: UnifiedCNHCounts = {
+    todas: list.length,
+    Recebida: 0,
+    Entregue: 0,
+    Remetida: 0,
+    Pendente: 0,
+    isCloudAccurate: false,
+  };
+
+  list.forEach((c) => {
+    const sit = normalizeSituacao(c.situacao);
+    counts[sit]++;
+  });
+
+  // Reconciliação direta com a base da nuvem (Supabase)
+  if (isSupabaseConfigured()) {
+    try {
+      const { count: exactTotal, error: errTotal } = await supabase
+        .from("geral_cnhs")
+        .select("*", { count: "exact", head: true });
+
+      if (!errTotal && typeof exactTotal === "number" && exactTotal > 0) {
+        if (exactTotal !== counts.todas) {
+          counts.todas = exactTotal;
+
+          const [resRem, resRec, resPen, resEnt] = await Promise.all([
+            supabase.from("geral_cnhs").select("*", { count: "exact", head: true }).or("situacao.ilike.%remet%,situacao.ilike.%trans%,situacao.eq.Remetida"),
+            supabase.from("geral_cnhs").select("*", { count: "exact", head: true }).or("situacao.ilike.%receb%,situacao.ilike.%balcao%,situacao.eq.Recebida"),
+            supabase.from("geral_cnhs").select("*", { count: "exact", head: true }).or("situacao.ilike.%pend%,situacao.eq.Pendente"),
+            supabase.from("geral_cnhs").select("*", { count: "exact", head: true }).or("situacao.ilike.%entreg%,situacao.eq.Entregue"),
+          ]);
+
+          if (typeof resRem.count === "number") counts.Remetida = resRem.count;
+          if (typeof resRec.count === "number") counts.Recebida = resRec.count;
+          if (typeof resPen.count === "number") counts.Pendente = resPen.count;
+          if (typeof resEnt.count === "number") counts.Entregue = resEnt.count;
+
+          const sum = counts.Remetida + counts.Recebida + counts.Pendente + counts.Entregue;
+          if (exactTotal > sum) {
+            counts.Recebida += (exactTotal - sum);
+          }
+          counts.isCloudAccurate = true;
+        }
+      }
+    } catch (e) {
+      console.warn("Aviso ao reconciliar contagens com Supabase:", e);
+    }
+  }
+
+  cachedUnifiedCounts = counts;
+  lastCountsFetchTime = now;
+  return counts;
+}
+
+// ============================================================================
 // ESTATÍSTICAS PARA DASHBOARD INICIAL
 // ============================================================================
 
@@ -6256,40 +6350,13 @@ export async function getDashboardStats() {
   const memorandos = await getMemorandos();
   const usuarios = await getUsuarios();
 
-  let totalGeral = geral.length;
-  let remetidas = geral.filter((g) => g.situacao === "Remetida").length;
-  let recebidas = geral.filter((g) => g.situacao === "Recebida").length;
-  let pendentes = geral.filter((g) => g.situacao === "Pendente").length;
-  let entregues = geral.filter((g) => g.situacao === "Entregue").length;
+  const unifiedCounts = await getUnifiedCNHCounts(geral);
 
-  // Busca a quantidade exata de registros no banco de dados da nuvem (Supabase)
-  if (isSupabaseConfigured()) {
-    try {
-      const { count: exactTotal, error: errTotal } = await supabase
-        .from("geral_cnhs")
-        .select("*", { count: "exact", head: true });
-
-      if (!errTotal && typeof exactTotal === "number" && exactTotal > 0) {
-        totalGeral = exactTotal;
-
-        // Se a contagem local diferir da nuvem, consulta as contagens por situação na nuvem
-        if (geral.length !== exactTotal) {
-          const [resRem, resRec, resPen, resEnt] = await Promise.all([
-            supabase.from("geral_cnhs").select("*", { count: "exact", head: true }).eq("situacao", "Remetida"),
-            supabase.from("geral_cnhs").select("*", { count: "exact", head: true }).eq("situacao", "Recebida"),
-            supabase.from("geral_cnhs").select("*", { count: "exact", head: true }).eq("situacao", "Pendente"),
-            supabase.from("geral_cnhs").select("*", { count: "exact", head: true }).eq("situacao", "Entregue"),
-          ]);
-          if (typeof resRem.count === "number") remetidas = resRem.count;
-          if (typeof resRec.count === "number") recebidas = resRec.count;
-          if (typeof resPen.count === "number") pendentes = resPen.count;
-          if (typeof resEnt.count === "number") entregues = resEnt.count;
-        }
-      }
-    } catch (err) {
-      console.warn("Aviso ao buscar contagem exata no Supabase para o dashboard:", err);
-    }
-  }
+  const totalGeral = unifiedCounts.todas;
+  const remetidas = unifiedCounts.Remetida;
+  const recebidas = unifiedCounts.Recebida;
+  const pendentes = unifiedCounts.Pendente;
+  const entregues = unifiedCounts.Entregue;
 
   // Gráfico por Situação
   const chartSituacao = [
@@ -6301,7 +6368,7 @@ export async function getDashboardStats() {
 
   // Gráficos de Alocação Física (Gaveta e Repartição)
   // Contar exclusivamente CNHs com situação "Recebida" para apurar o estoque físico real nas gavetas e repartições
-  const cnhsRecebidas = geral.filter((g) => g.situacao === "Recebida");
+  const cnhsRecebidas = geral.filter((g) => normalizeSituacao(g.situacao) === "Recebida");
 
   // Helper functions para parser seguro de números de gaveta e repartição
   const parseGavetaNum = (val?: string): number | null => {
@@ -6652,6 +6719,8 @@ export interface SpreadsheetImportOptions {
   mode?: "merge" | "replace";
   usuarioId?: string;
   usuarioNome?: string;
+  sheetName?: string;
+  customColumnMapping?: Record<string, string>;
 }
 
 export interface SpreadsheetImportSummary {
@@ -6709,13 +6778,14 @@ function parseSpreadsheetDate(raw: any): string {
   return new Date().toISOString();
 }
 
-function mapSpreadsheetRowToGeralCNH(
+export function mapSpreadsheetRowToGeralCNH(
   row: Record<string, any>,
   index: number,
   maxOrdem: number,
   mapeamento: MapeamentoLocalizacao[],
   usuarioId: string,
-  usuarioNome: string
+  usuarioNome: string,
+  customMapping?: Record<string, string>
 ): GeralCNH | null {
   const keys = Object.keys(row);
   const getVal = (patterns: RegExp[]): any => {
@@ -6730,27 +6800,43 @@ function mapSpreadsheetRowToGeralCNH(
     return undefined;
   };
 
-  const rawNome = getVal([/nome/, /candidato/, /titular/, /aluno/]);
+  const getFieldVal = (fieldName: string, patterns: RegExp[]): any => {
+    if (customMapping && customMapping[fieldName]) {
+      const mappedCol = customMapping[fieldName];
+      if (mappedCol && row[mappedCol] !== undefined && row[mappedCol] !== null && String(row[mappedCol]).trim() !== "") {
+        return row[mappedCol];
+      }
+    }
+    return getVal(patterns);
+  };
+
+  const rawNome = getFieldVal("nome", [/nome/, /candidato/, /titular/, /aluno/]);
   if (!rawNome || String(rawNome).trim() === "") {
     return null;
   }
 
   const nome = String(rawNome).trim().toUpperCase();
 
-  const rawCpf = getVal([/cpf/, /doc/, /documento/]);
+  const rawCpf = getFieldVal("cpf", [/cpf/, /doc/, /documento/]);
   let cpf = rawCpf ? String(rawCpf).replace(/\D/g, "") : "";
   if (cpf.length > 11) cpf = cpf.slice(0, 11);
 
-  const rawOrdem = getVal([/ordem/, /num/, /numero/, /nº/, /posicao/, /pos/]);
+  const rawOrdem = getFieldVal("ordem", [/ordem/, /num/, /numero/, /nº/, /posicao/, /pos/]);
   let ordem = parseInt(String(rawOrdem), 10);
   if (isNaN(ordem) || ordem <= 0) {
     ordem = maxOrdem + index + 1;
   }
 
-  const rawGaveta = getVal([/gaveta/, /local/, /caixa/, /pasta/]);
+  const rawPa = getFieldVal("pa", [/^pa$/, /processo/, /renach/, /registro/]);
+  const pa = rawPa ? String(rawPa).replace(/\D/g, "").slice(0, 11) : undefined;
+
+  const rawTelefone = getFieldVal("telefone", [/telefone/, /fone/, /celular/, /contato/]);
+  const telefone = rawTelefone ? String(rawTelefone).replace(/\D/g, "").slice(0, 15) : undefined;
+
+  const rawGaveta = getFieldVal("gaveta", [/gaveta/, /local/, /caixa/, /pasta/]);
   let gaveta = rawGaveta ? String(rawGaveta).trim() : "";
 
-  const rawReparticao = getVal([/reparti/, /setor/, /unidade/, /depto/]);
+  const rawReparticao = getFieldVal("reparticao", [/reparti/, /setor/, /unidade/, /depto/]);
   let reparticao = rawReparticao ? String(rawReparticao).trim() : "";
 
   if (!gaveta || !reparticao) {
@@ -6765,7 +6851,7 @@ function mapSpreadsheetRowToGeralCNH(
     }
   }
 
-  const rawSituacao = getVal([/situa/, /status/, /estado/]);
+  const rawSituacao = getFieldVal("situacao", [/situa/, /status/, /estado/]);
   let situacao: SituacaoGeral = "Recebida";
   if (rawSituacao) {
     const sitStr = String(rawSituacao).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -6775,7 +6861,7 @@ function mapSpreadsheetRowToGeralCNH(
     else if (sitStr.includes("receb")) situacao = "Recebida";
   }
 
-  const rawId = getVal([/^id$/, /^cnh_id$/, /^id_cnh$/]);
+  const rawId = getFieldVal("id", [/^id$/, /^cnh_id$/, /^id_cnh$/]);
   const id = (rawId && String(rawId).trim() !== "")
     ? String(rawId).trim()
     : `cnh-imp-${ordem}-${Math.random().toString(36).substring(2, 7)}`;
@@ -6783,7 +6869,7 @@ function mapSpreadsheetRowToGeralCNH(
   // Responsável (id e nome)
   const rawRespId = getVal([/^responsavel_id$/, /responsavel_id/, /id_responsavel/, /id_resp/]);
   const rawRespNome = getVal([/^responsavel_nome$/, /responsavel_nome/, /nome_responsavel/]);
-  const rawRespGeneric = getVal([/^responsavel$/, /procurador/, /retirante/]);
+  const rawRespGeneric = getFieldVal("responsavel", [/responsavel/, /procurador/, /retirante/]);
 
   let responsavel_id: string | undefined = rawRespId ? String(rawRespId).trim() : undefined;
   let responsavel_nome: string | undefined = rawRespNome ? String(rawRespNome).trim() : undefined;
@@ -6815,7 +6901,7 @@ function mapSpreadsheetRowToGeralCNH(
   }
 
   // Data de Movimentação
-  const rawDataMov = getVal([/^data_movimentacao$/, /^data_movimento$/, /^data_mov$/, /data_movim/, /^data$/]);
+  const rawDataMov = getFieldVal("data_movimento", [/^data_movimentacao$/, /^data_movimento$/, /^data_mov$/, /data_movim/, /^data$/]);
   const data_movimento = parseSpreadsheetDate(rawDataMov);
 
   // Usuário (id e nome)
@@ -6853,13 +6939,15 @@ function mapSpreadsheetRowToGeralCNH(
     }
   }
 
-  const rawMemo = getVal([/^memorando_numero$/, /^memorando$/, /memo/]);
+  const rawMemo = getFieldVal("memorando", [/^memorando_numero$/, /^memorando$/, /memo/]);
   const memorando_numero = rawMemo ? String(rawMemo).trim() : undefined;
 
-  const rawRemessa = getVal([/^remessa$/]);
-  const remessa = rawRemessa ? String(rawRemessa).trim() : undefined;
+  const rawLote = getFieldVal("lote", [/^lote$/, /lote_num/, /malote/]);
+  const rawRemessa = getFieldVal("remessa", [/^remessa$/]);
+  const remessa = rawRemessa ? String(rawRemessa).trim() : (rawLote ? String(rawLote).trim() : undefined);
+  const lote = rawLote ? String(rawLote).trim() : (rawRemessa ? String(rawRemessa).trim() : undefined);
 
-  const rawObs = getVal([/^observacao$/, /observa/, /obs/, /nota/]);
+  const rawObs = getFieldVal("observacao", [/^observacao$/, /observa/, /obs/, /nota/]);
   const observacao = rawObs ? String(rawObs).trim() : undefined;
 
   const rawCreated = getVal([/^created_at$/]);
@@ -6870,6 +6958,9 @@ function mapSpreadsheetRowToGeralCNH(
     ordem,
     nome,
     cpf,
+    pa,
+    telefone,
+    lote,
     gaveta,
     reparticao,
     situacao,
@@ -6907,12 +6998,16 @@ export async function importSpreadsheetData(
 
     const maxOrdem = existingGeral.reduce((max, item) => Math.max(max, item.ordem || 0), 0);
 
-    let sheetName = workbook.SheetNames[0];
-    const geralSheetMatch = workbook.SheetNames.find(s => 
-      /geral|cnh|protocolo|candidato/i.test(s)
-    );
-    if (geralSheetMatch) {
-      sheetName = geralSheetMatch;
+    let sheetName = options.sheetName && workbook.SheetNames.includes(options.sheetName)
+      ? options.sheetName
+      : workbook.SheetNames[0];
+    if (!options.sheetName) {
+      const geralSheetMatch = workbook.SheetNames.find(s => 
+        /geral|cnh|protocolo|candidato/i.test(s)
+      );
+      if (geralSheetMatch) {
+        sheetName = geralSheetMatch;
+      }
     }
 
     const worksheet = workbook.Sheets[sheetName];
@@ -6925,7 +7020,15 @@ export async function importSpreadsheetData(
     const newItems: GeralCNH[] = [];
 
     rawRows.forEach((row, idx) => {
-      const item = mapSpreadsheetRowToGeralCNH(row, idx, maxOrdem, mapeamento, usuarioId, usuarioNome);
+      const item = mapSpreadsheetRowToGeralCNH(
+        row, 
+        idx, 
+        maxOrdem, 
+        mapeamento, 
+        usuarioId, 
+        usuarioNome, 
+        options.customColumnMapping
+      );
       if (item) {
         newItems.push(item);
       }
@@ -6981,6 +7084,9 @@ export async function importSpreadsheetData(
             ordem: g.ordem,
             nome: g.nome,
             cpf: g.cpf,
+            pa: g.pa || null,
+            telefone: g.telefone || null,
+            lote: g.lote || null,
             gaveta: g.gaveta || "",
             reparticao: g.reparticao || "",
             situacao: g.situacao,
