@@ -46,7 +46,8 @@ import {
   Database,
   Archive,
   CheckSquare,
-  BookOpen
+  BookOpen,
+  Sparkles
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -86,6 +87,7 @@ import { LotesSubTab } from "../components/geral/LotesSubTab";
 import { ManualDoUsuarioSubTab } from "../components/geral/ManualDoUsuarioSubTab";
 import { ImportarLoteModal } from "../components/ImportarLoteModal";
 import { AlterarGavetaReparticaoModal } from "../components/AlterarGavetaReparticaoModal";
+import { MapeamentoInteligenteModal } from "../components/MapeamentoInteligenteModal";
 import { downloadCNHFichaPDF, buildCNHShareableText } from "../services/cnhFichaPdfService";
 import { cn, formatCPF, formatPhone, formatDateTime, normalizeSearch, matchDigitsSafe } from "../lib/utils";
 import { DEFAULT_GAVETAS, DEFAULT_REPARTICOES } from "../lib/constants";
@@ -609,6 +611,7 @@ export const GeralPage: React.FC = () => {
   const [cnhToDelete, setCnhToDelete] = useState<GeralCNH | null>(null);
   const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState<boolean>(false);
   const [isBatchLocationModalOpen, setIsBatchLocationModalOpen] = useState<boolean>(false);
+  const [isMapeamentoInteligenteModalOpen, setIsMapeamentoInteligenteModalOpen] = useState<boolean>(false);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   const handleOpenDetailsModal = (cnh: GeralCNH) => {
@@ -1472,12 +1475,23 @@ export const GeralPage: React.FC = () => {
 
               {canEdit && (
                 <button
+                  onClick={() => setIsMapeamentoInteligenteModalOpen(true)}
+                  title="Abrir modal de checagem e mapeamento inteligente para realocação de gavetas e repartições (com 2 repartições reservadas para A e M)"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white font-bold rounded-xl text-xs transition-all cursor-pointer shadow-sm shadow-indigo-600/20 active:scale-95 border border-indigo-400/30"
+                >
+                  <Sparkles className="w-4 h-4 text-amber-300" />
+                  <span>⚡ Mapeamento Inteligente (A-Z)</span>
+                </button>
+              )}
+
+              {canEdit && (
+                <button
                   onClick={handleOpenBatchLocationModal}
-                  title="Abrir modal de realocação de gaveta e repartição em lote (para CNHs marcadas ou filtradas)"
+                  title="Abrir modal de realocação manual de gaveta e repartição em lote (para CNHs marcadas ou filtradas)"
                   className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-800 dark:text-blue-200 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-blue-300 dark:border-blue-800"
                 >
                   <Archive className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                  <span>Realocar Gaveta / Repartição {selectedIds.length > 0 ? `(${selectedIds.length})` : "em Lote"}</span>
+                  <span>Realocar Manual {selectedIds.length > 0 ? `(${selectedIds.length})` : "em Lote"}</span>
                 </button>
               )}
 
@@ -1963,12 +1977,29 @@ export const GeralPage: React.FC = () => {
               {canEdit && (
                 <button
                   type="button"
-                  onClick={handleOpenBatchLocationModal}
-                  className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-bold rounded-lg text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
-                  title="Abrir modal para realocação de gaveta e repartição em lote para as CNHs marcadas ou filtradas"
+                  onClick={() => {
+                    if (selectedIds.length === 0 && filteredData.length > 0) {
+                      setSelectedIds(filteredData.map(c => c.id));
+                    }
+                    setIsMapeamentoInteligenteModalOpen(true);
+                  }}
+                  className="px-3.5 py-1.5 bg-gradient-to-r from-amber-500 via-indigo-600 to-blue-600 hover:from-amber-600 hover:to-indigo-700 text-white font-bold rounded-lg text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                  title="Abrir modal de checagem e mapeamento inteligente com foco na identificação de gaveta e repartição (A e M duplicados)"
                 >
-                  <Archive className="w-3.5 h-3.5" />
-                  <span>Realocar Gaveta / Repartição por Lote ({selectedIds.length > 0 ? selectedIds.length : filteredData.length})</span>
+                  <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                  <span>⚡ Checagem Inteligente ({selectedIds.length > 0 ? selectedIds.length : filteredData.length})</span>
+                </button>
+              )}
+
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={handleOpenBatchLocationModal}
+                  className="px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs"
+                  title="Abrir modal para realocação manual de gaveta e repartição em lote"
+                >
+                  <Archive className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Realocação Manual ({selectedIds.length > 0 ? selectedIds.length : filteredData.length})</span>
                 </button>
               )}
 
@@ -2021,12 +2052,23 @@ export const GeralPage: React.FC = () => {
               {canEdit && (
                 <button
                   type="button"
-                  onClick={handleOpenBatchLocationModal}
-                  className="px-3.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs"
-                  title="Abrir modal para realocação de gaveta e repartição em lote"
+                  onClick={() => setIsMapeamentoInteligenteModalOpen(true)}
+                  className="px-3.5 py-1 bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs"
+                  title="Abrir modal de checagem e mapeamento inteligente para realocação de gavetas e repartições"
                 >
-                  <Archive className="w-3.5 h-3.5" />
-                  <span>Realocação de Gaveta e Repartição por Lote</span>
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>⚡ Mapeamento Inteligente (A-Z)</span>
+                </button>
+              )}
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={handleOpenBatchLocationModal}
+                  className="px-3.5 py-1 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 font-bold rounded-lg text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-2xs"
+                  title="Abrir modal para realocação manual de gaveta e repartição em lote"
+                >
+                  <Archive className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Realocação Manual</span>
                 </button>
               )}
             </div>
@@ -4184,6 +4226,20 @@ export const GeralPage: React.FC = () => {
         filtroLoteAtual={filtroLote}
         filtroGavetaAtual={filtroGaveta}
         filtroReparticaoAtual={filtroReparticao}
+        onSuccess={(count, msg) => {
+          setMessage({ type: "success", text: msg });
+          setSelectedIds([]);
+          fetchDados();
+        }}
+      />
+
+      {/* Modal de Checagem & Mapeamento Inteligente para Realocação em Lote */}
+      <MapeamentoInteligenteModal
+        isOpen={isMapeamentoInteligenteModalOpen}
+        onClose={() => setIsMapeamentoInteligenteModalOpen(false)}
+        cnhs={cnhs}
+        selectedIds={selectedIds}
+        currentUser={user}
         onSuccess={(count, msg) => {
           setMessage({ type: "success", text: msg });
           setSelectedIds([]);

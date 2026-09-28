@@ -1187,14 +1187,307 @@ export async function deleteMapeamento(
   await logAuditoria("mapeamento", target.id, "Exclusão", userId, userNome, target, null);
 }
 
+export interface RegraMapeamentoInteligente {
+  chave: string; // Ex: "A-1", "A-2", "B", "C", ..., "M-1", "M-2", ...
+  letra: string;
+  subfaixa?: string; // Ex: "Aa - Al", "Am - Az", "Ma - Marc", "Mari - Mz"
+  descricao: string;
+  gaveta: string;
+  reparticao: string;
+  isDupla?: boolean;
+}
+
+/**
+ * Identifica a subfaixa inteligente do nome do condutor,
+ * com regra especial de duas repartições para as iniciais 'A' e 'M'
+ */
+export function getSubfaixaInfo(nome: string): {
+  inicial: string;
+  subChave: string;
+  subfaixaLabel: string;
+  detalheRegra: string;
+} {
+  if (!nome || !nome.trim()) {
+    return { inicial: "", subChave: "", subfaixaLabel: "", detalheRegra: "" };
+  }
+  const clean = nome.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+  const inicial = clean.charAt(0);
+
+  if (inicial === "A") {
+    // 2 Repartições reservadas para A:
+    // Aa - Al (1ª repartição) vs Am - Az (2ª repartição)
+    const secondChar = clean.length > 1 ? clean.charAt(1) : "A";
+    if (secondChar <= "L") {
+      return {
+        inicial: "A",
+        subChave: "A-1",
+        subfaixaLabel: "A (Aa - Al)",
+        detalheRegra: "1ª Repartição de A: nomes com 2ª letra de A até L (ex: Alexandre, Adailton, Alan)"
+      };
+    } else {
+      return {
+        inicial: "A",
+        subChave: "A-2",
+        subfaixaLabel: "A (Am - Az)",
+        detalheRegra: "2ª Repartição de A: nomes com 2ª letra de M até Z (ex: Amanda, Ana, Antonio, Arthur)"
+      };
+    }
+  }
+
+  if (inicial === "M") {
+    // 2 Repartições reservadas para M:
+    // M-1: de 'Ma' até 'Marc' (ex: Magno, Maicon, Manoel, Marcela, Marcelo, Márcio, Marcos)
+    // M-2: de 'Mari' em diante até 'Mz' (ex: Maria [todas], Mariana, Marina, Mateus, Maurício, Mauro, Michel, Moisés, Murilo)
+    if (clean < "MARIA") {
+      return {
+        inicial: "M",
+        subChave: "M-1",
+        subfaixaLabel: "M (Ma - Marc)",
+        detalheRegra: "1ª Repartição de M: nomes de 'Ma' até 'Marc' (ex: Manoel, Marcelo, Márcio, Marcos)"
+      };
+    } else {
+      return {
+        inicial: "M",
+        subChave: "M-2",
+        subfaixaLabel: "M (Mari - Mz)",
+        detalheRegra: "2ª Repartição de M: nomes a partir de 'Maria' até 'Mz' (ex: Maria, Mateus, Mauro, Michel)"
+      };
+    }
+  }
+
+  return {
+    inicial,
+    subChave: inicial,
+    subfaixaLabel: inicial,
+    detalheRegra: `Regra padrão da inicial ${inicial}`
+  };
+}
+
+/**
+ * Tabela Nova de Mapeamento Inteligente Padrão (com 2 repartições para A e M)
+ */
+export const TABELA_MAPEAMENTO_NOVA_PADRAO: RegraMapeamentoInteligente[] = [
+  // Letra A (2 Repartições reservadas)
+  { chave: "A-1", letra: "A", subfaixa: "Aa - Al", descricao: "Inicial A — 1ª Repartição (Aa até Al: Adailton, Alexandre, Alan...)", gaveta: "Gaveta 1", reparticao: "Repartição 1", isDupla: true },
+  { chave: "A-2", letra: "A", subfaixa: "Am - Az", descricao: "Inicial A — 2ª Repartição (Am até Az: Amanda, Ana, Antonio, Arthur...)", gaveta: "Gaveta 1", reparticao: "Repartição 2", isDupla: true },
+
+  // Demais letras de Gaveta 1
+  { chave: "B", letra: "B", descricao: "Inicial B (Bruno, Beatriz, Bernardo...)", gaveta: "Gaveta 1", reparticao: "Repartição 3" },
+  { chave: "C", letra: "C", descricao: "Inicial C (Carlos, Camila, Claudia...)", gaveta: "Gaveta 1", reparticao: "Repartição 4" },
+  { chave: "D", letra: "D", descricao: "Inicial D (Daniel, Diego, Douglas...)", gaveta: "Gaveta 1", reparticao: "Repartição 5" },
+  { chave: "E", letra: "E", descricao: "Inicial E (Eduardo, Eliane, Emerson...)", gaveta: "Gaveta 1", reparticao: "Repartição 6" },
+  { chave: "F", letra: "F", descricao: "Inicial F (Felipe, Fabio, Fernanda...)", gaveta: "Gaveta 1", reparticao: "Repartição 7" },
+  { chave: "G", letra: "G", descricao: "Inicial G (Gabriel, Gustavo, Geraldo...)", gaveta: "Gaveta 1", reparticao: "Repartição 8" },
+
+  // Gaveta 2 / Gaveta 3
+  { chave: "H", letra: "H", descricao: "Inicial H (Helio, Henrique, Hugo...)", gaveta: "Gaveta 2", reparticao: "Repartição 1" },
+  { chave: "I", letra: "I", descricao: "Inicial I (Igor, Isabela, Ivan...)", gaveta: "Gaveta 2", reparticao: "Repartição 2" },
+  { chave: "J", letra: "J", descricao: "Inicial J (Joao, Jose, Jessica...)", gaveta: "Gaveta 2", reparticao: "Repartição 3" },
+  { chave: "K", letra: "K", descricao: "Inicial K (Kaio, Kelly, Kleber...)", gaveta: "Gaveta 2", reparticao: "Repartição 4" },
+  { chave: "L", letra: "L", descricao: "Inicial L (Lucas, Leonardo, Larissa...)", gaveta: "Gaveta 2", reparticao: "Repartição 5" },
+
+  // Letra M (2 Repartições reservadas)
+  { chave: "M-1", letra: "M", subfaixa: "Ma - Marc", descricao: "Inicial M — 1ª Repartição (Ma até Marc: Manoel, Marcelo, Márcio, Marcos...)", gaveta: "Gaveta 2", reparticao: "Repartição 6", isDupla: true },
+  { chave: "M-2", letra: "M", subfaixa: "Mari - Mz", descricao: "Inicial M — 2ª Repartição (Mari até Mz: Maria, Mariana, Mateus, Mauro, Michel...)", gaveta: "Gaveta 2", reparticao: "Repartição 7", isDupla: true },
+
+  { chave: "N", letra: "N", descricao: "Inicial N (Natanael, Nilson, Nair...)", gaveta: "Gaveta 2", reparticao: "Repartição 8" },
+
+  // Gaveta 3
+  { chave: "O", letra: "O", descricao: "Inicial O (Otavio, Osvaldo, Olivia...)", gaveta: "Gaveta 3", reparticao: "Repartição 1" },
+  { chave: "P", letra: "P", descricao: "Inicial P (Paulo, Pedro, Patricia...)", gaveta: "Gaveta 3", reparticao: "Repartição 2" },
+  { chave: "Q", letra: "Q", descricao: "Inicial Q (Quezia, Quercia...)", gaveta: "Gaveta 3", reparticao: "Repartição 3" },
+  { chave: "R", letra: "R", descricao: "Inicial R (Rodrigo, Rafael, Roberto...)", gaveta: "Gaveta 3", reparticao: "Repartição 4" },
+  { chave: "S", letra: "S", descricao: "Inicial S (Samuel, Sandra, Sergio...)", gaveta: "Gaveta 3", reparticao: "Repartição 5" },
+  { chave: "T", letra: "T", descricao: "Inicial T (Tiago, Thiago, Tatiana...)", gaveta: "Gaveta 3", reparticao: "Repartição 6" },
+  { chave: "U", letra: "U", descricao: "Inicial U (Ubiratan, Ulisses...)", gaveta: "Gaveta 3", reparticao: "Repartição 7" },
+  { chave: "V", letra: "V", descricao: "Inicial V (Vinicius, Vanessa, Vitor...)", gaveta: "Gaveta 3", reparticao: "Repartição 8" },
+
+  // Gaveta 4
+  { chave: "W", letra: "W", descricao: "Inicial W (Wagner, Wallace, Willian...)", gaveta: "Gaveta 4", reparticao: "Repartição 1" },
+  { chave: "X", letra: "X", descricao: "Inicial X (Xavier...)", gaveta: "Gaveta 4", reparticao: "Repartição 2" },
+  { chave: "Y", letra: "Y", descricao: "Inicial Y (Yuri, Yago, Yasmin...)", gaveta: "Gaveta 4", reparticao: "Repartição 3" },
+  { chave: "Z", letra: "Z", descricao: "Inicial Z (Zedequias, Zilda...)", gaveta: "Gaveta 4", reparticao: "Repartição 4" },
+];
+
+/**
+ * Calcula a localização inteligente de gaveta e repartição para um nome,
+ * respeitando as regras ativas ou a tabela nova padrão com 2 repartições para A e M.
+ */
+export function calcularLocalizacaoInteligente(
+  nome: string,
+  regras: RegraMapeamentoInteligente[] = TABELA_MAPEAMENTO_NOVA_PADRAO
+): {
+  gaveta: string;
+  reparticao: string;
+  subChave: string;
+  subfaixaLabel: string;
+  detalheRegra: string;
+  regraEncontrada: boolean;
+} {
+  const { inicial, subChave, subfaixaLabel, detalheRegra } = getSubfaixaInfo(nome);
+
+  // 1. Tenta achar regra exata pela subChave (ex: "A-1", "A-2", "M-1", "M-2")
+  let regra = regras.find((r) => r.chave === subChave);
+
+  // 2. Se não achou regra subdividida, busca pela inicial simples
+  if (!regra) {
+    regra = regras.find((r) => r.chave === inicial || r.letra === inicial);
+  }
+
+  if (regra) {
+    return {
+      gaveta: regra.gaveta,
+      reparticao: regra.reparticao,
+      subChave,
+      subfaixaLabel,
+      detalheRegra,
+      regraEncontrada: true
+    };
+  }
+
+  return {
+    gaveta: "Vazio",
+    reparticao: "Vazio",
+    subChave,
+    subfaixaLabel,
+    detalheRegra,
+    regraEncontrada: false
+  };
+}
+
 export async function findLocalizacaoPorNome(nome: string): Promise<{ gaveta: string; reparticao: string }> {
+  // 1. Tenta localização inteligente com suporte às duas repartições de A e M
+  const loc = calcularLocalizacaoInteligente(nome);
+  if (loc.regraEncontrada && loc.gaveta !== "Vazio") {
+    return { gaveta: loc.gaveta, reparticao: loc.reparticao };
+  }
+
+  // 2. Fallback para lista de mapeamentos configurada no banco se existir regra manual ativa
   const char = getInitialChar(nome);
   const list = await getMapeamentos();
-  const mapeamento = list.find((m) => m.inicial.toUpperCase() === char && m.ativo);
+  const mapeamento = list.find((m) => m.inicial.toUpperCase() === char && m.ativo !== false);
   if (mapeamento) {
     return { gaveta: mapeamento.gaveta, reparticao: mapeamento.reparticao };
   }
   return { gaveta: "Vazio", reparticao: "Vazio" };
+}
+
+export interface RealocacaoItem {
+  id: string;
+  gaveta: string;
+  reparticao: string;
+  motivo?: string;
+}
+
+/**
+ * Executa a realocação em lote de CNHs conforme a nova tabela de mapeamento inteligente,
+ * atualizando armazenamento local (IndexedDB/Dexie), nuvem (Supabase), histórico e auditoria.
+ */
+export async function realocarCNHsInteligenteBulk(
+  itens: RealocacaoItem[],
+  userId: string,
+  userNome: string,
+  opcoes?: {
+    atualizarDataMovimento?: boolean;
+    dataMovimentoCustom?: string;
+  }
+): Promise<{ success: boolean; updatedCount: number; message: string }> {
+  if (!itens || itens.length === 0) {
+    return { success: true, updatedCount: 0, message: "Nenhum item informado para realocação." };
+  }
+
+  const itensMap = new Map<string, RealocacaoItem>(itens.map((it) => [it.id, it]));
+  const geralList = await getLocalGeralCNHs();
+  const now = new Date().toISOString();
+  const finalDataMov = opcoes?.atualizarDataMovimento
+    ? (opcoes?.dataMovimentoCustom || now)
+    : undefined;
+
+  const updatedRecords: GeralCNH[] = [];
+  const histEntries: any[] = [];
+  const auditEntries: any[] = [];
+
+  for (let i = 0; i < geralList.length; i++) {
+    const cnh = geralList[i];
+    const realoc = itensMap.get(cnh.id);
+    if (!realoc) continue;
+
+    const prevGaveta = cnh.gaveta || "Vazio";
+    const prevReparticao = cnh.reparticao || "Vazio";
+    const nextGaveta = realoc.gaveta.trim();
+    const nextReparticao = realoc.reparticao.trim();
+
+    // Se já estiver idêntica, pode pular ou atualizar dependendo da data de movimento
+    const isLocalIdentical = prevGaveta === nextGaveta && prevReparticao === nextReparticao;
+
+    const atualizado: GeralCNH = {
+      ...cnh,
+      gaveta: nextGaveta,
+      reparticao: nextReparticao,
+      data_movimento: finalDataMov || cnh.data_movimento,
+      usuario_id: userId,
+      usuario_nome: userNome,
+      updated_at: now,
+    };
+
+    geralList[i] = atualizado;
+    updatedRecords.push(atualizado);
+
+    histEntries.push({
+      geral_id: cnh.id,
+      geral_ordem: cnh.ordem,
+      geral_nome: cnh.nome,
+      geral_cpf: cnh.cpf,
+      situacao_anterior: cnh.situacao,
+      situacao_nova: cnh.situacao,
+      usuario_id: userId,
+      usuario_nome: userNome,
+      observacao: isLocalIdentical
+        ? `⚡ Confirmação de Mapeamento Inteligente: ${nextGaveta} / ${nextReparticao}${realoc.motivo ? ` (${realoc.motivo})` : ""}`
+        : `⚡ Realocação Inteligente: ${prevGaveta} / ${prevReparticao} ➔ ${nextGaveta} / ${nextReparticao}${realoc.motivo ? ` (${realoc.motivo})` : ""}`,
+      data_hora: now,
+    });
+
+    auditEntries.push({
+      tabela: "geral_cnhs",
+      registro_id: cnh.id,
+      acao: "Alteração" as AcaoAuditoria,
+      usuario_id: userId,
+      usuario_nome: userNome,
+      valores_anteriores: { gaveta: prevGaveta, reparticao: prevReparticao },
+      valores_novos: { gaveta: nextGaveta, reparticao: nextReparticao },
+      data_hora: now,
+    });
+  }
+
+  if (updatedRecords.length > 0) {
+    saveStoredList("geral", geralList);
+    await saveLocalGeralCNHsBulk(updatedRecords);
+
+    if (histEntries.length > 0) {
+      try {
+        await logHistoricoBulk(histEntries);
+      } catch (e) {
+        console.warn("Aviso ao salvar histórico de realocação:", e);
+      }
+    }
+
+    if (auditEntries.length > 0) {
+      try {
+        await logAuditoriaBulk(auditEntries);
+      } catch (e) {
+        console.warn("Aviso ao salvar auditoria de realocação:", e);
+      }
+    }
+
+    notifyDataSync("geral");
+  }
+
+  return {
+    success: true,
+    updatedCount: updatedRecords.length,
+    message: `🎉 ${updatedRecords.length} CNH(s) realocada(s) com sucesso conforme o mapeamento inteligente de gavetas e repartições!`
+  };
 }
 
 // ============================================================================
