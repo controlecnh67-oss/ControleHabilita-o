@@ -27,12 +27,18 @@ import {
   ArrowUpDown,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   X,
   UserCheck,
   Hash,
   ShieldCheck,
   SlidersHorizontal,
-  Table as TableIcon
+  Table as TableIcon,
+  Check,
+  CheckSquare,
+  Square,
+  Columns,
+  Eye
 } from "lucide-react";
 import { 
   ResponsiveContainer, 
@@ -78,10 +84,208 @@ import { formatCPF, formatDateTime, normalizeSearch } from "../lib/utils";
 import { useAuth } from "../context/AuthContext";
 import { subscribeToSupabaseRealtime } from "../services/supabase";
 
-type SubTabTipo = "cnh_geral" | "painel_estatistico";
-type PeriodoTipo = "hoje" | "7d" | "30d" | "mes_atual" | "ano_atual" | "custom";
-type CnhPeriodoTipo = "tudo" | "hoje" | "7d" | "15d" | "30d" | "mes_atual" | "mes_anterior" | "ano_atual" | "custom";
-type CnhCampoDataTipo = "data_movimento" | "created_at" | "updated_at";
+export type SubTabTipo = "cnh_geral" | "painel_estatistico";
+export type PeriodoTipo = "hoje" | "7d" | "30d" | "mes_atual" | "ano_atual" | "custom";
+export type CnhPeriodoTipo = "tudo" | "hoje" | "7d" | "15d" | "30d" | "mes_atual" | "mes_anterior" | "ano_atual" | "custom";
+export type CnhCampoDataTipo = "data_movimento" | "created_at" | "updated_at";
+
+export type ColunaRelatorioId =
+  | "sequencia"
+  | "ordem"
+  | "pa"
+  | "nome"
+  | "cpf"
+  | "situacao"
+  | "gaveta"
+  | "reparticao"
+  | "data_movimento"
+  | "responsavel"
+  | "usuario"
+  | "telefone"
+  | "observacoes";
+
+export interface ColunaRelatorioDef {
+  id: ColunaRelatorioId;
+  label: string;
+  labelCurto: string;
+  labelPdf: string;
+  sortField?: keyof GeralCNH | "pa";
+  align: "left" | "center" | "right";
+  defaultVisible: boolean;
+  pdfWidth?: number;
+  fontCourier?: boolean;
+}
+
+export const COLUNAS_RELATORIO: ColunaRelatorioDef[] = [
+  {
+    id: "sequencia",
+    label: "Nº (Sequência)",
+    labelCurto: "Nº",
+    labelPdf: "Nº",
+    align: "center",
+    defaultVisible: true,
+    pdfWidth: 12
+  },
+  {
+    id: "ordem",
+    label: "Ordem (# Ordem)",
+    labelCurto: "Ordem",
+    labelPdf: "ORDEM",
+    sortField: "ordem",
+    align: "center",
+    defaultVisible: true,
+    pdfWidth: 16
+  },
+  {
+    id: "pa",
+    label: "PA (9 Dígitos)",
+    labelCurto: "PA",
+    labelPdf: "PA",
+    sortField: "pa",
+    align: "center",
+    defaultVisible: true,
+    pdfWidth: 22,
+    fontCourier: true
+  },
+  {
+    id: "nome",
+    label: "Nome do Titular",
+    labelCurto: "Nome",
+    labelPdf: "NOME DO TITULAR",
+    sortField: "nome",
+    align: "left",
+    defaultVisible: true,
+    pdfWidth: 62
+  },
+  {
+    id: "cpf",
+    label: "CPF",
+    labelCurto: "CPF",
+    labelPdf: "CPF",
+    sortField: "cpf",
+    align: "center",
+    defaultVisible: true,
+    pdfWidth: 28,
+    fontCourier: true
+  },
+  {
+    id: "situacao",
+    label: "Situação",
+    labelCurto: "Situação",
+    labelPdf: "SITUAÇÃO",
+    sortField: "situacao",
+    align: "center",
+    defaultVisible: true,
+    pdfWidth: 22
+  },
+  {
+    id: "gaveta",
+    label: "Gaveta",
+    labelCurto: "Gaveta",
+    labelPdf: "GAVETA",
+    sortField: "gaveta",
+    align: "center",
+    defaultVisible: true,
+    pdfWidth: 18
+  },
+  {
+    id: "reparticao",
+    label: "Repartição",
+    labelCurto: "Repartição",
+    labelPdf: "REPARTIÇÃO",
+    sortField: "reparticao",
+    align: "center",
+    defaultVisible: false,
+    pdfWidth: 22
+  },
+  {
+    id: "data_movimento",
+    label: "Data Movimento",
+    labelCurto: "Data Mov.",
+    labelPdf: "DATA MOV.",
+    sortField: "data_movimento",
+    align: "center",
+    defaultVisible: true,
+    pdfWidth: 22
+  },
+  {
+    id: "responsavel",
+    label: "Retirante / Responsável",
+    labelCurto: "Retirante / Resp.",
+    labelPdf: "RETIRANTE / RESPONSÁVEL",
+    sortField: "responsavel_nome",
+    align: "left",
+    defaultVisible: true,
+    pdfWidth: 42
+  },
+  {
+    id: "usuario",
+    label: "Servidor Responsável",
+    labelCurto: "Servidor",
+    labelPdf: "SERVIDOR",
+    sortField: "usuario_nome",
+    align: "left",
+    defaultVisible: true,
+    pdfWidth: 32
+  },
+  {
+    id: "telefone",
+    label: "Telefone / Contato",
+    labelCurto: "Telefone",
+    labelPdf: "TELEFONE",
+    sortField: "telefone",
+    align: "center",
+    defaultVisible: false,
+    pdfWidth: 26
+  },
+  {
+    id: "observacoes",
+    label: "Observações",
+    labelCurto: "Observações",
+    labelPdf: "OBSERVAÇÕES",
+    align: "left",
+    defaultVisible: false,
+    pdfWidth: 40
+  },
+];
+
+export const ALFABETO = [
+  "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+  "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"
+];
+
+export const getValorColuna = (c: GeralCNH, colId: ColunaRelatorioId, seqIndex: number): string => {
+  switch (colId) {
+    case "sequencia":
+      return String(seqIndex);
+    case "ordem":
+      return c.ordem ? String(c.ordem) : "-";
+    case "pa":
+      return c.pa || "-";
+    case "nome":
+      return c.nome || "-";
+    case "cpf":
+      return formatCPF(c.cpf);
+    case "situacao":
+      return c.situacao || "-";
+    case "gaveta":
+      return c.gaveta || "-";
+    case "reparticao":
+      return c.reparticao || "-";
+    case "data_movimento":
+      return c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "-";
+    case "responsavel":
+      return c.responsavel_nome || (c.situacao === "Entregue" ? "Titular" : "-");
+    case "usuario":
+      return c.usuario_nome || "-";
+    case "telefone":
+      return c.telefone || "-";
+    case "observacoes":
+      return c.observacao || "-";
+    default:
+      return "-";
+  }
+};
 
 export const RelatoriosPage: React.FC = () => {
   const { user } = useAuth();
@@ -115,7 +319,102 @@ export const RelatoriosPage: React.FC = () => {
   const [cnhUsuario, setCnhUsuario] = useState<string>("todos");
   const [cnhGaveta, setCnhGaveta] = useState<string>("todas");
   const [cnhTipoRetirada, setCnhTipoRetirada] = useState<string>("todos");
+  const [cnhInicialAlfabeto, setCnhInicialAlfabeto] = useState<string>("todas");
   const [cnhSearchTerm, setCnhSearchTerm] = useState<string>("");
+
+  // Seletor de Colunas Visíveis vinculado ao PDF e Tabela
+  const DEFAULT_COLUNAS_IDS = useMemo(() => {
+    return COLUNAS_RELATORIO.filter((c) => c.defaultVisible).map((c) => c.id);
+  }, []);
+
+  const [colunasVisiveis, setColunasVisiveis] = useState<ColunaRelatorioId[]>(() => {
+    try {
+      const saved = localStorage.getItem("detran_cnh_relatorio_colunas");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed as ColunaRelatorioId[];
+        }
+      }
+    } catch (e) {
+      // fallback
+    }
+    return COLUNAS_RELATORIO.filter((c) => c.defaultVisible).map((c) => c.id);
+  });
+
+  const [isSeletorColunasOpen, setIsSeletorColunasOpen] = useState(false);
+  const seletorColunasRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("detran_cnh_relatorio_colunas", JSON.stringify(colunasVisiveis));
+    } catch (e) {
+      // ignore
+    }
+  }, [colunasVisiveis]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (seletorColunasRef.current && !seletorColunasRef.current.contains(event.target as Node)) {
+        setIsSeletorColunasOpen(false);
+      }
+    };
+    if (isSeletorColunasOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isSeletorColunasOpen]);
+
+  // Colunas ativas ordenadas pela ordem da definição
+  const activeCols = useMemo(() => {
+    const list = COLUNAS_RELATORIO.filter((c) => colunasVisiveis.includes(c.id));
+    return list.length > 0 ? list : COLUNAS_RELATORIO.filter((c) => c.defaultVisible);
+  }, [colunasVisiveis]);
+
+  const toggleColunaVisivel = (id: ColunaRelatorioId) => {
+    setColunasVisiveis((prev) => {
+      if (prev.includes(id)) {
+        if (prev.length <= 1) return prev; // Mantém pelo menos uma
+        return prev.filter((colId) => colId !== id);
+      } else {
+        const next = [...prev, id];
+        return COLUNAS_RELATORIO.map((c) => c.id).filter((cId) => next.includes(cId));
+      }
+    });
+  };
+
+  const handleSelectAllColunas = () => {
+    setColunasVisiveis(COLUNAS_RELATORIO.map((c) => c.id));
+  };
+
+  const handleResetColunasPadrao = () => {
+    setColunasVisiveis(DEFAULT_COLUNAS_IDS);
+  };
+
+  const handleSelectColunasEssenciais = () => {
+    setColunasVisiveis(["sequencia", "ordem", "nome", "cpf", "situacao", "gaveta", "responsavel"]);
+  };
+
+  // Contagem de registros por inicial do alfabeto
+  const contagemPorInicial = useMemo(() => {
+    const counts: Record<string, number> = {};
+    ALFABETO.forEach((letra) => {
+      counts[letra] = 0;
+    });
+
+    cnhs.forEach((c) => {
+      if (!c.nome) return;
+      const clean = c.nome.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+      const init = clean.charAt(0);
+      if (counts[init] !== undefined) {
+        counts[init]++;
+      }
+    });
+
+    return counts;
+  }, [cnhs]);
 
   // Paginação e Ordenação da Tabela CNH Geral
   const [cnhPage, setCnhPage] = useState<number>(1);
@@ -692,6 +991,15 @@ export const RelatoriosPage: React.FC = () => {
 
   const cnhsRelatorioFiltradas = useMemo(() => {
     return cnhs.filter((c) => {
+      // 0. Filtro por Inicial do Alfabeto (A-Z)
+      if (cnhInicialAlfabeto !== "todas") {
+        if (!c.nome || !c.nome.trim()) return false;
+        const cleanNome = c.nome.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+        if (cleanNome.charAt(0) !== cnhInicialAlfabeto.toUpperCase()) {
+          return false;
+        }
+      }
+
       // 1. Filtro de Data
       if (cnhPeriodo !== "tudo") {
         let dateValStr = c.data_movimento;
@@ -769,7 +1077,7 @@ export const RelatoriosPage: React.FC = () => {
 
       return true;
     });
-  }, [cnhs, cnhPeriodo, cnhCampoData, cnhDateRange, cnhStatus, cnhUsuario, cnhGaveta, cnhTipoRetirada, cnhSearchTerm, usuarios]);
+  }, [cnhs, cnhPeriodo, cnhCampoData, cnhDateRange, cnhStatus, cnhUsuario, cnhGaveta, cnhTipoRetirada, cnhInicialAlfabeto, cnhSearchTerm, usuarios]);
 
   const resumoNumericoTabela = useMemo(() => {
     const total = cnhsRelatorioFiltradas.length;
@@ -861,11 +1169,12 @@ export const RelatoriosPage: React.FC = () => {
     setCnhUsuario("todos");
     setCnhGaveta("todas");
     setCnhTipoRetirada("todos");
+    setCnhInicialAlfabeto("todas");
     setCnhSearchTerm("");
     setCnhPage(1);
   };
 
-  // ---- IMPRESSÃO DE PDF PADRONIZADO DA TABELA CNH GERAL ----
+  // ---- IMPRESSÃO DE PDF PADRONIZADO DA TABELA CNH GERAL COM VÍNCULO ÀS COLUNAS ATIVAS ----
   const handlePrintTabelaCnhPDF = () => {
     const cfg = getOrgaoConfig();
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
@@ -921,9 +1230,10 @@ export const RelatoriosPage: React.FC = () => {
     }
 
     const gavetaLabel = cnhGaveta === "todas" ? "Todas as Gavetas" : `Gaveta: ${cnhGaveta}`;
+    const inicialLabel = cnhInicialAlfabeto === "todas" ? "Todas as Iniciais (A-Z)" : `Inicial: "${cnhInicialAlfabeto}"`;
     const buscaLabel = cnhSearchTerm.trim() ? ` | Busca: "${cnhSearchTerm.trim()}"` : "";
 
-    doc.text(`Filtros: ${periodoText} (Base: ${campoDataLabel}) | Situação: ${statusLabel} | Servidor: ${usuarioLabel} | ${gavetaLabel}${buscaLabel}`, 12, 32);
+    doc.text(`Filtros: ${periodoText} (Base: ${campoDataLabel}) | Situação: ${statusLabel} | Servidor: ${usuarioLabel} | ${gavetaLabel} | ${inicialLabel}${buscaLabel}`, 12, 32);
     doc.text(`Emissão: ${new Date().toLocaleString("pt-BR")} | Emitido por: ${user?.nome_curto || user?.nome || "Servidor Responsável"} | Total Listado: ${resumoNumericoTabela.total}`, 12, 36);
 
     // Bloco de Resumo Numérico
@@ -959,22 +1269,29 @@ export const RelatoriosPage: React.FC = () => {
 
     const startTableY = (doc as any).lastAutoTable.finalY + 4;
 
-    // Tabela Detalhada de CNHs
-    const tableBody = cnhsOrdenadasTabela.map((c) => [
-      String(c.ordem || "-"),
-      c.pa || "-",
-      c.nome || "-",
-      formatCPF(c.cpf),
-      c.situacao || "-",
-      c.gaveta || "-",
-      c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "-",
-      c.responsavel_nome || (c.situacao === "Entregue" ? "Titular" : "-"),
-      c.usuario_nome || "-"
-    ]);
+    // Cabeçalho da tabela do PDF correspondente estritamente às colunas ativas selecionadas
+    const pdfHead = [activeCols.map((col) => col.labelPdf)];
+
+    // Linhas da tabela do PDF com valores dinâmicos conforme activeCols
+    // Inclui Nº (sequência: 1, 2, 3...) e Ordem (# Ordem original da CNH)
+    const tableBody = cnhsOrdenadasTabela.map((c, idx) => {
+      return activeCols.map((col) => getValorColuna(c, col.id, idx + 1));
+    });
+
+    // Estilos de colunas do PDF calculados proporcionalmente
+    const columnStyles: Record<number, any> = {};
+    activeCols.forEach((col, index) => {
+      columnStyles[index] = {
+        halign: col.align,
+        ...(col.fontCourier ? { font: "courier" } : {}),
+        ...(col.id === "situacao" || col.id === "gaveta" || col.id === "ordem" || col.id === "sequencia" ? { fontStyle: "bold" } : {}),
+        ...(col.pdfWidth ? { cellWidth: col.pdfWidth } : {})
+      };
+    });
 
     autoTable(doc, {
       startY: startTableY,
-      head: [["Nº", "PA", "NOME DO TITULAR", "CPF", "SITUAÇÃO", "GAVETA", "DATA MOV.", "RETIRANTE / RESPONSÁVEL", "SERVIDOR"]],
+      head: pdfHead,
       body: tableBody,
       theme: "striped",
       headStyles: {
@@ -984,17 +1301,7 @@ export const RelatoriosPage: React.FC = () => {
         fontSize: 7.5,
         halign: "left"
       },
-      columnStyles: {
-        0: { halign: "center", cellWidth: 12 },
-        1: { halign: "center", font: "courier", cellWidth: 22 },
-        2: { halign: "left", cellWidth: 65 },
-        3: { halign: "center", font: "courier", cellWidth: 28 },
-        4: { halign: "center", fontStyle: "bold", cellWidth: 24 },
-        5: { halign: "center", fontStyle: "bold", cellWidth: 18 },
-        6: { halign: "center", cellWidth: 22 },
-        7: { halign: "left", cellWidth: 46 },
-        8: { halign: "left", cellWidth: 36 }
-      },
+      columnStyles,
       bodyStyles: {
         fontSize: 7.5,
         textColor: [30, 41, 59],
@@ -1021,7 +1328,7 @@ export const RelatoriosPage: React.FC = () => {
     doc.save(`Relatorio_Geral_CNHs_DETRAN_${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
-  // ---- EXPORTAÇÃO EXCEL DA TABELA CNH GERAL ----
+  // ---- EXPORTAÇÃO EXCEL DA TABELA CNH GERAL VINCULADA ÀS COLUNAS ATIVAS ----
   const handleExportTabelaCnhExcel = () => {
     const wb = XLSX.utils.book_new();
 
@@ -1039,21 +1346,14 @@ export const RelatoriosPage: React.FC = () => {
     const wsResumo = XLSX.utils.json_to_sheet(resumoData);
     XLSX.utils.book_append_sheet(wb, wsResumo, "Resumo Numérico");
 
-    // 2. Tabela de CNHs Filtradas
-    const cnhsExport = cnhsOrdenadasTabela.map((c) => ({
-      Numero_Ordem: c.ordem,
-      PA: c.pa || "",
-      Nome_Titular: c.nome,
-      CPF: formatCPF(c.cpf),
-      Situacao: c.situacao,
-      Gaveta: c.gaveta,
-      Reparticao: c.reparticao,
-      Responsavel_Retirante: c.responsavel_nome || (c.situacao === "Entregue" ? "Titular" : ""),
-      Memorando: c.memorando_numero || "",
-      Data_Movimento: c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "",
-      Servidor_Responsavel: c.usuario_nome || "",
-      Observacao: c.observacao || ""
-    }));
+    // 2. Tabela de CNHs Filtradas vinculada às colunas ativas
+    const cnhsExport = cnhsOrdenadasTabela.map((c, idx) => {
+      const row: Record<string, any> = {};
+      activeCols.forEach((col) => {
+        row[col.label] = getValorColuna(c, col.id, idx + 1);
+      });
+      return row;
+    });
     const wsCnhs = XLSX.utils.json_to_sheet(cnhsExport);
     XLSX.utils.book_append_sheet(wb, wsCnhs, "CNHs Geral");
 
@@ -1603,10 +1903,35 @@ export const RelatoriosPage: React.FC = () => {
                 </select>
               </div>
 
-              {/* 7. Busca Textual Geral */}
-              <div className="sm:col-span-2">
+              {/* 7. Filtro por Inicial do Nome (A-Z) */}
+              <div>
                 <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
-                  Pesquisa Geral (Nome, CPF, PA, Nº Ordem, Memorando, Responsável)
+                  Inicial do Nome (A - Z)
+                </label>
+                <select
+                  value={cnhInicialAlfabeto}
+                  onChange={(e) => {
+                    setCnhInicialAlfabeto(e.target.value);
+                    setCnhPage(1);
+                  }}
+                  className="w-full text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                >
+                  <option value="todas">Todas as Iniciais (A - Z)</option>
+                  {ALFABETO.map((letra) => {
+                    const count = contagemPorInicial[letra] || 0;
+                    return (
+                      <option key={letra} value={letra}>
+                        Letra {letra} {count > 0 ? `(${count})` : "(0)"}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {/* 8. Busca Textual Geral */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                  Pesquisa Geral (Nome, CPF, PA, #Ordem)
                 </label>
                 <div className="relative">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
@@ -1617,7 +1942,7 @@ export const RelatoriosPage: React.FC = () => {
                       setCnhSearchTerm(e.target.value);
                       setCnhPage(1);
                     }}
-                    placeholder="Digite nome do titular, CPF, PA (9 dígitos), memorando..."
+                    placeholder="Digite nome, CPF, PA, memorando..."
                     className="w-full pl-9 pr-8 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl py-2 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   {cnhSearchTerm && (
@@ -1629,6 +1954,83 @@ export const RelatoriosPage: React.FC = () => {
                     </button>
                   )}
                 </div>
+              </div>
+            </div>
+
+            {/* FITA ALFABÉTICA RÁPIDA (A - Z) */}
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 flex items-center gap-1.5 uppercase tracking-wider">
+                  <Filter className="w-3 h-3 text-blue-600" />
+                  Filtro Rápido por Inicial do Alfabeto:
+                </span>
+                {cnhInicialAlfabeto !== "todas" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCnhInicialAlfabeto("todas");
+                      setCnhPage(1);
+                    }}
+                    className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                    Limpar filtro de inicial (Ativa: {cnhInicialAlfabeto})
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-thin">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCnhInicialAlfabeto("todas");
+                    setCnhPage(1);
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 transition-all cursor-pointer ${
+                    cnhInicialAlfabeto === "todas"
+                      ? "bg-blue-600 text-white shadow-xs"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  }`}
+                >
+                  Todas ({cnhs.length})
+                </button>
+
+                {ALFABETO.map((letra) => {
+                  const count = contagemPorInicial[letra] || 0;
+                  const isActive = cnhInicialAlfabeto === letra;
+
+                  return (
+                    <button
+                      key={letra}
+                      type="button"
+                      onClick={() => {
+                        setCnhInicialAlfabeto(isActive ? "todas" : letra);
+                        setCnhPage(1);
+                      }}
+                      title={`Filtrar por inicial ${letra} (${count} CNHs)`}
+                      className={`px-2 py-1 rounded-lg text-xs font-mono font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1 ${
+                        isActive
+                          ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm ring-2 ring-blue-400/50"
+                          : count > 0
+                          ? "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-blue-400 dark:hover:border-blue-500"
+                          : "bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800/80 text-slate-300 dark:text-slate-600 hover:text-slate-500"
+                      }`}
+                    >
+                      <span>{letra}</span>
+                      {count > 0 && (
+                        <span
+                          className={`text-[9px] px-1 py-0.2 rounded-full ${
+                            isActive
+                              ? "bg-white/20 text-white"
+                              : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -1788,11 +2190,115 @@ export const RelatoriosPage: React.FC = () => {
                   </select>
                 </div>
 
+                {/* Seletor de Colunas a Exibir (vinculado ao PDF e Tabela) */}
+                <div className="relative" ref={seletorColunasRef}>
+                  <button
+                    type="button"
+                    onClick={() => setIsSeletorColunasOpen((prev) => !prev)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-500 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors shadow-2xs cursor-pointer"
+                    title="Configurar colunas a exibir na tabela e vincular ao PDF gerado"
+                  >
+                    <Columns className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    <span>Colunas</span>
+                    <span className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 rounded-full text-[10px] font-bold">
+                      {activeCols.length}/{COLUNAS_RELATORIO.length}
+                    </span>
+                    <ChevronDown className="w-3 h-3 text-slate-400" />
+                  </button>
+
+                  {isSeletorColunasOpen && (
+                    <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl z-50 p-3 space-y-2.5 animate-in fade-in zoom-in-95 duration-100">
+                      <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                        <div className="flex items-center gap-1.5">
+                          <Columns className="w-4 h-4 text-blue-600" />
+                          <span className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider">
+                            Colunas a Exibir
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold bg-blue-50 dark:bg-blue-950 px-2 py-0.5 rounded-full">
+                          Vínculo com PDF
+                        </span>
+                      </div>
+
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                        Selecione as colunas visíveis na tabela e na exportação do relatório em PDF / Excel:
+                      </p>
+
+                      {/* Ações rápidas */}
+                      <div className="grid grid-cols-3 gap-1 pt-1 pb-1">
+                        <button
+                          type="button"
+                          onClick={handleSelectAllColunas}
+                          className="px-2 py-1 text-[10px] font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-center transition-colors cursor-pointer"
+                        >
+                          Todas
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleResetColunasPadrao}
+                          className="px-2 py-1 text-[10px] font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-center transition-colors cursor-pointer"
+                        >
+                          Padrão
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSelectColunasEssenciais}
+                          className="px-2 py-1 text-[10px] font-bold bg-blue-50 hover:bg-blue-100 dark:bg-blue-950 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-lg text-center transition-colors cursor-pointer"
+                        >
+                          Essenciais
+                        </button>
+                      </div>
+
+                      {/* Lista de colunas com checkboxes */}
+                      <div className="max-h-60 overflow-y-auto space-y-1 divide-y divide-slate-50 dark:divide-slate-800/60 pr-1 scrollbar-thin">
+                        {COLUNAS_RELATORIO.map((col) => {
+                          const isSelected = colunasVisiveis.includes(col.id);
+                          return (
+                            <label
+                              key={col.id}
+                              className={`flex items-center justify-between p-1.5 rounded-xl cursor-pointer text-xs select-none transition-colors ${
+                                isSelected
+                                  ? "bg-blue-50/60 dark:bg-blue-950/40 text-slate-900 dark:text-white"
+                                  : "hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-500 dark:text-slate-400"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleColunaVisivel(col.id)}
+                                  disabled={isSelected && colunasVisiveis.length <= 1}
+                                  className="w-3.5 h-3.5 text-blue-600 rounded-md border-slate-300 focus:ring-blue-500 cursor-pointer"
+                                />
+                                <span className="font-medium text-[11px]">{col.label}</span>
+                              </div>
+                              <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
+                                {col.labelPdf}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
+                        <span>{colunasVisiveis.length} colunas ativas</span>
+                        <button
+                          type="button"
+                          onClick={() => setIsSeletorColunasOpen(false)}
+                          className="text-blue-600 dark:text-blue-400 font-semibold hover:underline cursor-pointer"
+                        >
+                          Fechar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Botões de Ação Rápidos */}
                 <button
                   onClick={handlePrintTabelaCnhPDF}
-                  title="Baixar Relatório em PDF Padronizado"
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                  title="Baixar Relatório em PDF Padronizado com as colunas ativas"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-xs"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   PDF
@@ -1800,8 +2306,8 @@ export const RelatoriosPage: React.FC = () => {
 
                 <button
                   onClick={handleExportTabelaCnhExcel}
-                  title="Exportar para Planilha Excel (.xlsx)"
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                  title="Exportar para Planilha Excel (.xlsx) com as colunas ativas"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-xs"
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5" />
                   Excel
@@ -1832,151 +2338,175 @@ export const RelatoriosPage: React.FC = () => {
                 <table className="w-full text-left text-xs text-slate-600 dark:text-slate-300">
                   <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 font-bold uppercase tracking-wider border-b border-slate-200 dark:border-slate-800 select-none">
                     <tr>
-                      <th
-                        onClick={() => toggleSort("ordem")}
-                        className="px-4 py-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
-                      >
-                        <div className="flex items-center gap-1">
-                          <span>Nº</span>
-                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                        </div>
-                      </th>
-                      <th
-                        onClick={() => toggleSort("pa")}
-                        className="px-4 py-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
-                      >
-                        <div className="flex items-center gap-1">
-                          <span>PA (9 Dígitos)</span>
-                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                        </div>
-                      </th>
-                      <th
-                        onClick={() => toggleSort("nome")}
-                        className="px-4 py-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
-                      >
-                        <div className="flex items-center gap-1">
-                          <span>Nome do Titular</span>
-                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                        </div>
-                      </th>
-                      <th
-                        onClick={() => toggleSort("cpf")}
-                        className="px-4 py-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
-                      >
-                        <div className="flex items-center gap-1">
-                          <span>CPF</span>
-                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                        </div>
-                      </th>
-                      <th
-                        onClick={() => toggleSort("situacao")}
-                        className="px-4 py-3 text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
-                      >
-                        <div className="flex items-center justify-center gap-1">
-                          <span>Situação</span>
-                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                        </div>
-                      </th>
-                      <th
-                        onClick={() => toggleSort("gaveta")}
-                        className="px-4 py-3 text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
-                      >
-                        <div className="flex items-center justify-center gap-1">
-                          <span>Gaveta</span>
-                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                        </div>
-                      </th>
-                      <th
-                        onClick={() => toggleSort("data_movimento")}
-                        className="px-4 py-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
-                      >
-                        <div className="flex items-center gap-1">
-                          <span>Data Movimento</span>
-                          <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                        </div>
-                      </th>
-                      <th className="px-4 py-3">Retirante / Responsável</th>
-                      <th className="px-4 py-3">Servidor</th>
+                      {activeCols.map((col) => {
+                        const isSortable = !!col.sortField;
+                        const isSorted = col.sortField && cnhSortField === col.sortField;
+                        return (
+                          <th
+                            key={col.id}
+                            onClick={() => isSortable && col.sortField && toggleSort(col.sortField)}
+                            className={`px-4 py-3 ${isSortable ? "cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50" : ""} ${
+                              col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"
+                            }`}
+                          >
+                            <div className={`flex items-center gap-1 ${col.align === "center" ? "justify-center" : col.align === "right" ? "justify-end" : "justify-start"}`}>
+                              <span>{col.labelCurto}</span>
+                              {isSortable && (
+                                <span className="text-slate-400">
+                                  {isSorted ? (
+                                    cnhSortAsc ? (
+                                      <ArrowUpRight className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+                                    ) : (
+                                      <ArrowDownRight className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+                                    )
+                                  ) : (
+                                    <ArrowUpDown className="w-3 h-3" />
+                                  )}
+                                </span>
+                              )}
+                            </div>
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {cnhsPaginadasTabela.map((c) => (
-                      <tr
-                        key={c.id}
-                        className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors"
-                      >
-                        {/* Nº Ordem */}
-                        <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">
-                          #{c.ordem}
-                        </td>
+                    {cnhsPaginadasTabela.map((c, rowIdx) => {
+                      const seqNum = (cnhPageSize > 0 ? (cnhPage - 1) * cnhPageSize : 0) + rowIdx + 1;
+                      return (
+                        <tr
+                          key={c.id}
+                          className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors"
+                        >
+                          {activeCols.map((col) => {
+                            let cellContent: React.ReactNode = null;
+                            const cellClasses = `px-4 py-3 ${
+                              col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left"
+                            }`;
 
-                        {/* PA */}
-                        <td className="px-4 py-3 font-mono font-bold text-purple-700 dark:text-purple-400 tracking-wider">
-                          {c.pa || "-"}
-                        </td>
+                            switch (col.id) {
+                              case "sequencia":
+                                cellContent = (
+                                  <span className="font-mono text-slate-500 dark:text-slate-400 font-semibold">
+                                    {seqNum}
+                                  </span>
+                                );
+                                break;
+                              case "ordem":
+                                cellContent = (
+                                  <span className="font-bold text-slate-900 dark:text-white">
+                                    #{c.ordem}
+                                  </span>
+                                );
+                                break;
+                              case "pa":
+                                cellContent = (
+                                  <span className="font-mono font-bold text-purple-700 dark:text-purple-400 tracking-wider">
+                                    {c.pa || "-"}
+                                  </span>
+                                );
+                                break;
+                              case "nome":
+                                cellContent = (
+                                  <span className="font-medium text-slate-800 dark:text-slate-100">
+                                    {c.nome}
+                                  </span>
+                                );
+                                break;
+                              case "cpf":
+                                cellContent = (
+                                  <span className="font-mono text-slate-600 dark:text-slate-300">
+                                    {formatCPF(c.cpf)}
+                                  </span>
+                                );
+                                break;
+                              case "situacao":
+                                cellContent = (
+                                  <span
+                                    className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                                      c.situacao === "Recebida"
+                                        ? "bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800"
+                                        : c.situacao === "Entregue"
+                                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800"
+                                        : c.situacao === "Remetida"
+                                        ? "bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800"
+                                        : "bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800"
+                                    }`}
+                                  >
+                                    {c.situacao}
+                                  </span>
+                                );
+                                break;
+                              case "gaveta":
+                                cellContent = c.gaveta ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 bg-slate-100 dark:bg-slate-800 rounded-md text-xs font-bold text-slate-800 dark:text-slate-200">
+                                    {c.gaveta}
+                                  </span>
+                                ) : (
+                                  "-"
+                                );
+                                break;
+                              case "reparticao":
+                                cellContent = c.reparticao ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 rounded-md text-xs font-semibold">
+                                    {c.reparticao}
+                                  </span>
+                                ) : (
+                                  "-"
+                                );
+                                break;
+                              case "data_movimento":
+                                cellContent = (
+                                  <span className="text-slate-500 whitespace-nowrap">
+                                    {c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "-"}
+                                  </span>
+                                );
+                                break;
+                              case "responsavel":
+                                cellContent = c.responsavel_nome ? (
+                                  <span className="font-semibold text-amber-700 dark:text-amber-400">
+                                    {c.responsavel_nome}
+                                  </span>
+                                ) : c.situacao === "Entregue" ? (
+                                  <span className="text-slate-500 italic">Titular</span>
+                                ) : (
+                                  "-"
+                                );
+                                break;
+                              case "usuario":
+                                cellContent = (
+                                  <span className="text-slate-500 text-[11px] whitespace-nowrap">
+                                    {c.usuario_nome || "Servidor"}
+                                  </span>
+                                );
+                                break;
+                              case "telefone":
+                                cellContent = (
+                                  <span className="font-mono text-slate-600 dark:text-slate-300 text-xs">
+                                    {c.telefone || "-"}
+                                  </span>
+                                );
+                                break;
+                              case "observacoes":
+                                cellContent = (
+                                  <span className="text-slate-500 text-xs truncate max-w-xs block" title={c.observacao || ""}>
+                                    {c.observacao || "-"}
+                                  </span>
+                                );
+                                break;
+                              default:
+                                cellContent = "-";
+                            }
 
-                        {/* Nome do Titular */}
-                        <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100">
-                          {c.nome}
-                        </td>
-
-                        {/* CPF */}
-                        <td className="px-4 py-3 font-mono text-slate-600 dark:text-slate-300">
-                          {formatCPF(c.cpf)}
-                        </td>
-
-                        {/* Situação */}
-                        <td className="px-4 py-3 text-center">
-                          <span
-                            className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
-                              c.situacao === "Recebida"
-                                ? "bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800"
-                                : c.situacao === "Entregue"
-                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800"
-                                : c.situacao === "Remetida"
-                                ? "bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800"
-                                : "bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800"
-                            }`}
-                          >
-                            {c.situacao}
-                          </span>
-                        </td>
-
-                        {/* Gaveta */}
-                        <td className="px-4 py-3 text-center font-bold text-slate-800 dark:text-slate-200">
-                          {c.gaveta ? (
-                            <span className="inline-flex items-center px-2 py-0.5 bg-slate-100 dark:bg-slate-800 rounded-md text-xs">
-                              {c.gaveta}
-                            </span>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
-
-                        {/* Data Movimento */}
-                        <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
-                          {c.data_movimento ? new Date(c.data_movimento).toLocaleDateString("pt-BR") : "-"}
-                        </td>
-
-                        {/* Retirante / Responsável */}
-                        <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
-                          {c.responsavel_nome ? (
-                            <span className="font-semibold text-amber-700 dark:text-amber-400">
-                              {c.responsavel_nome}
-                            </span>
-                          ) : c.situacao === "Entregue" ? (
-                            <span className="text-slate-500 italic">Titular</span>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
-
-                        {/* Servidor */}
-                        <td className="px-4 py-3 text-slate-500 text-[11px] whitespace-nowrap">
-                          {c.usuario_nome || "Servidor"}
-                        </td>
-                      </tr>
-                    ))}
+                            return (
+                              <td key={col.id} className={cellClasses}>
+                                {cellContent}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

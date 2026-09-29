@@ -173,12 +173,19 @@ export const SmartRelocationCheckModal: React.FC<SmartRelocationCheckModalProps>
       // 3. Registra auditoria
       try {
         await logAuditoriaBulk(
-          "geral",
-          updatedList.map((c) => c.id),
-          "Realocação Inteligente Nova Matriz",
-          userId,
-          userNome,
-          `Realocadas ${updatedList.length} CNHs conforme matriz oficial de gavetas e repartições (Dual Repartição para A e M).`
+          updatedList.map((c) => ({
+            tabela: "geral",
+            registro_id: c.id,
+            acao: "Alteração",
+            usuario_id: userId,
+            usuario_nome: userNome,
+            valores_anteriores: null,
+            valores_novos: {
+              gaveta: c.gaveta,
+              reparticao: c.reparticao,
+              motivo: "Realocação Inteligente Nova Matriz (Dual Repartição para A e M)"
+            }
+          }))
         );
       } catch {}
 
