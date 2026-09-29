@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS responsaveis (
   created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
 );
 
+-- Garante suporte às colunas registro e tipo se o usuário desejar executar no Supabase
+ALTER TABLE responsaveis ADD COLUMN IF NOT EXISTS registro TEXT DEFAULT '';
+ALTER TABLE responsaveis ADD COLUMN IF NOT EXISTS tipo TEXT DEFAULT 'Despachante';
+
 -- 2. Inserir/Atualizar todos os Responsáveis para evitar Foreign Key Violations
 INSERT INTO responsaveis (id, nome, cpf, telefone, observacao, ativo)
 VALUES

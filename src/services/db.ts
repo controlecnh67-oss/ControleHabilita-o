@@ -1825,23 +1825,36 @@ export function isProprietarioRecord(r?: { id?: string; nome?: string; cpf?: str
 }
 
 // Estado dinâmico para compatibilidade do schema da tabela responsaveis no Supabase
-let supabaseSupportsResponsavelTipo: boolean | null = null;
+// Inicia marcando 'registro' e 'tipo' como não suportados por padrão para evitar PGRST204
+let supabaseSupportsResponsavelTipo: boolean | null = false;
+let supabaseSupportsResponsavelRegistro: boolean | null = false;
+export const unsupportedResponsavelCols = new Set<string>(["registro", "tipo"]);
 
-export function buildResponsavelSupabasePayload(r: Partial<Responsavel>, includeTipo = false) {
+export function buildResponsavelSupabasePayload(
+  r: Partial<Responsavel>,
+  includeTipo = false,
+  includeRegistro = false
+) {
   const payload: any = {
     id: r.id,
-    nome: r.nome,
-    cpf: r.cpf ? r.cpf.trim() : null,
-    telefone: r.telefone ? r.telefone.trim() : null,
-    registro: r.registro ? r.registro.trim() : null,
-    observacao: r.observacao ? r.observacao.trim() : null,
+    nome: r.nome ? r.nome.trim() : "",
+    cpf: r.cpf ? r.cpf.trim() : "",
+    telefone: r.telefone ? r.telefone.trim() : "",
+    observacao: r.observacao ? r.observacao.trim() : "",
     ativo: r.ativo !== false,
   };
   if (r.created_at) {
     payload.created_at = r.created_at;
   }
-  if (includeTipo && r.tipo) {
+  if (includeTipo && r.tipo && !unsupportedResponsavelCols.has("tipo")) {
     payload.tipo = r.tipo;
+  }
+  if (includeRegistro && r.registro && !unsupportedResponsavelCols.has("registro")) {
+    payload.registro = r.registro.trim();
+  }
+  // Garante a remoção de qualquer coluna conhecida como inexistente no schema do Supabase
+  for (const col of unsupportedResponsavelCols) {
+    delete payload[col];
   }
   return payload;
 }
@@ -2610,6 +2623,7 @@ export async function getResponsaveis(): Promise<Responsavel[]> {
         list = data.map((d) => ({
           ...d,
           tipo: d.tipo || localMap.get(d.id)?.tipo || (isProprietarioRecord(d) ? "Titular" : "Despachante"),
+          registro: d.registro || localMap.get(d.id)?.registro || "",
         }));
       }
     } catch (err) {
@@ -2702,41 +2716,63 @@ export async function createResponsavel(
 
   if (isSupabaseConfigured()) {
     try {
-      const shouldTryTipo = supabaseSupportsResponsavelTipo !== false && !!novo.tipo;
-      let payload = buildResponsavelSupabasePayload(novo, shouldTryTipo);
+      const shouldTryTipo = supabaseSupportsResponsavelTipo === true && !!novo.tipo;
+      const shouldTryRegistro = supabaseSupportsResponsavelRegistro === true && !!novo.registro;
+      let payload = buildResponsavelSupabasePayload(novo, shouldTryTipo, shouldTryRegistro);
       let { data: inserted, error } = await supabase.from("responsaveis").insert([payload]).select().single();
 
-      // Se a coluna 'tipo' não existir no schema do Supabase (PGRST204), retenta sem ela de forma transparente
-      if (error && (error.code === "PGRST204" || error.message?.includes("tipo"))) {
-        console.warn("Coluna 'tipo' não encontrada na tabela 'responsaveis' do Supabase. Salvando sem a coluna 'tipo'.");
-        supabaseSupportsResponsavelTipo = false;
-        payload = buildResponsavelSupabasePayload(novo, false);
-        const retry = await supabase.from("responsaveis").insert([payload]).select().single();
-        inserted = retry.data;
-        error = retry.error;
-      } else if (!error && shouldTryTipo) {
-        supabaseSupportsResponsavelTipo = true;
+      // Loop de auto-recuperação resiliente para qualquer erro PGRST204 (coluna inexistente no cache de schema do Supabase)
+      let attempts = 0;
+      while (error && error.code === "PGRST204" && attempts < 3) {
+        attempts++;
+        const missingColMatch = error.message?.match(/Could not find the '([^']+)' column/i);
+        const missingCol = missingColMatch ? missingColMatch[1] : null;
+
+        if (missingCol && payload[missingCol] !== undefined) {
+          console.warn(`Coluna '${missingCol}' não encontrada na tabela 'responsaveis' do Supabase. Removendo do payload e tentando novamente.`);
+          unsupportedResponsavelCols.add(missingCol);
+          if (missingCol === "tipo") supabaseSupportsResponsavelTipo = false;
+          if (missingCol === "registro") supabaseSupportsResponsavelRegistro = false;
+
+          delete payload[missingCol];
+          const retry = await supabase.from("responsaveis").insert([payload]).select().single();
+          inserted = retry.data;
+          error = retry.error;
+        } else {
+          // Fallback ultra-seguro apenas com as colunas canônicas da tabela responsaveis
+          console.warn("PGRST204 em 'responsaveis'. Removendo colunas estendidas e tentando novamente.");
+          unsupportedResponsavelCols.add("registro");
+          unsupportedResponsavelCols.add("tipo");
+          supabaseSupportsResponsavelRegistro = false;
+          supabaseSupportsResponsavelTipo = false;
+          delete payload.registro;
+          delete payload.tipo;
+          const retry = await supabase.from("responsaveis").insert([payload]).select().single();
+          inserted = retry.data;
+          error = retry.error;
+          break;
+        }
       }
 
-      if (error) {
-        console.error("Erro no Supabase ao criar responsável:", error);
-        throw new Error(`Erro no Supabase: ${error.message}`);
-      }
-
-      if (inserted) {
+      if (!error && inserted) {
         const localList = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
         const finalObj: Responsavel = {
           ...novo,
           ...(inserted as Responsavel),
-          tipo: novo.tipo || (inserted as any).tipo || "Despachante"
+          tipo: novo.tipo || (inserted as any).tipo || "Despachante",
+          registro: novo.registro || (inserted as any).registro || ""
         };
         saveStoredList("responsaveis", [finalObj, ...localList]);
         notifyDataSync("responsaveis");
         await logAuditoria("responsaveis", finalObj.nome, "Inclusão", userId, userNome, null, finalObj);
         return finalObj;
       }
+
+      if (error) {
+        console.warn("Aviso no Supabase ao criar responsável (salvando localmente com resiliência):", error);
+      }
     } catch (err: any) {
-      if (err.message && err.message.startsWith("Erro no Supabase")) throw err;
+      console.warn("Aviso ao salvar responsável no Supabase (salvando localmente):", err);
     }
   }
 
@@ -2801,20 +2837,40 @@ export async function updateResponsavel(
 
   if (isSupabaseConfigured()) {
     try {
-      const shouldTryTipo = supabaseSupportsResponsavelTipo !== false && !!atualizado.tipo;
-      let payload = buildResponsavelSupabasePayload(atualizado, shouldTryTipo);
+      const shouldTryTipo = supabaseSupportsResponsavelTipo === true && !!atualizado.tipo;
+      const shouldTryRegistro = supabaseSupportsResponsavelRegistro === true && !!atualizado.registro;
+      let payload = buildResponsavelSupabasePayload(atualizado, shouldTryTipo, shouldTryRegistro);
       let { data: updatedSup, error } = await supabase.from("responsaveis").update(payload).eq("id", id).select().single();
 
-      // Se a coluna 'tipo' não existir no schema do Supabase (PGRST204), retenta sem ela de forma transparente
-      if (error && (error.code === "PGRST204" || error.message?.includes("tipo"))) {
-        console.warn("Coluna 'tipo' não encontrada na tabela 'responsaveis' do Supabase. Atualizando sem a coluna 'tipo'.");
-        supabaseSupportsResponsavelTipo = false;
-        payload = buildResponsavelSupabasePayload(atualizado, false);
-        const retry = await supabase.from("responsaveis").update(payload).eq("id", id).select().single();
-        updatedSup = retry.data;
-        error = retry.error;
-      } else if (!error && shouldTryTipo) {
-        supabaseSupportsResponsavelTipo = true;
+      // Loop de auto-recuperação resiliente para qualquer erro PGRST204
+      let attempts = 0;
+      while (error && error.code === "PGRST204" && attempts < 3) {
+        attempts++;
+        const missingColMatch = error.message?.match(/Could not find the '([^']+)' column/i);
+        const missingCol = missingColMatch ? missingColMatch[1] : null;
+
+        if (missingCol && payload[missingCol] !== undefined) {
+          console.warn(`Coluna '${missingCol}' não encontrada na tabela 'responsaveis' do Supabase. Removendo do payload e tentando novamente.`);
+          unsupportedResponsavelCols.add(missingCol);
+          if (missingCol === "tipo") supabaseSupportsResponsavelTipo = false;
+          if (missingCol === "registro") supabaseSupportsResponsavelRegistro = false;
+
+          delete payload[missingCol];
+          const retry = await supabase.from("responsaveis").update(payload).eq("id", id).select().single();
+          updatedSup = retry.data;
+          error = retry.error;
+        } else {
+          unsupportedResponsavelCols.add("registro");
+          unsupportedResponsavelCols.add("tipo");
+          supabaseSupportsResponsavelRegistro = false;
+          supabaseSupportsResponsavelTipo = false;
+          delete payload.registro;
+          delete payload.tipo;
+          const retry = await supabase.from("responsaveis").update(payload).eq("id", id).select().single();
+          updatedSup = retry.data;
+          error = retry.error;
+          break;
+        }
       }
 
       if (!error && updatedSup) {
@@ -2823,7 +2879,8 @@ export async function updateResponsavel(
         const finalObj: Responsavel = {
           ...atualizado,
           ...(updatedSup as Responsavel),
-          tipo: atualizado.tipo || (updatedSup as any).tipo || "Despachante"
+          tipo: atualizado.tipo || (updatedSup as any).tipo || "Despachante",
+          registro: atualizado.registro || (updatedSup as any).registro || ""
         };
         if (lIndex !== -1) localList[lIndex] = finalObj;
         saveStoredList("responsaveis", localList);
@@ -8071,16 +8128,7 @@ export async function syncLocalToSupabase(
   try {
     log("📦 Sincronizando tabela 'responsaveis'...");
     if (resp.length > 0) {
-      const payload = resp.map(r => ({
-        id: r.id || "e2335b1e",
-        nome: r.nome,
-        cpf: r.cpf || "",
-        telefone: r.telefone || null,
-        registro: r.registro || null,
-        observacao: r.observacao || null,
-        ativo: r.ativo !== false,
-        created_at: r.created_at || new Date().toISOString()
-      }));
+      const payload = resp.map(r => buildResponsavelSupabasePayload(r));
       const synced = await upsertInBatches("responsaveis", payload, 250);
       payload.forEach(r => validRespIds.add(r.id));
       log(`✅ Tabela 'responsaveis' sincronizada (${synced} registros).`);
@@ -8721,16 +8769,7 @@ export async function syncSingleTable(
     const resp = getStoredList<Responsavel>("responsaveis", SEED_RESPONSAVEIS);
     if (resp.length > 0) {
       log(`📦 Enviando ${resp.length} responsáveis para o Supabase...`);
-      const payload = resp.map(r => ({
-        id: r.id || "e2335b1e",
-        nome: r.nome,
-        cpf: r.cpf || "",
-        telefone: r.telefone || null,
-        registro: r.registro || null,
-        observacao: r.observacao || null,
-        ativo: r.ativo !== false,
-        created_at: r.created_at || new Date().toISOString()
-      }));
+      const payload = resp.map(r => buildResponsavelSupabasePayload(r));
       await upsertInBatches("responsaveis", payload, 250);
       log(`✅ Responsáveis enviados com sucesso.`);
     }
