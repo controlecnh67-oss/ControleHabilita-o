@@ -149,6 +149,7 @@ export interface Usuario {
   permissoes?: string[]; // Permissões granulares
   perfil: PerfilUsuario;
   created_at: string;
+  updated_at?: string;
   ativo?: boolean;
 }
 
@@ -388,6 +389,7 @@ export interface Responsavel {
   observacao?: string;
   ativo: boolean;
   created_at: string;
+  updated_at?: string;
 }
 
 export type StatusMemorando = "Em elaboração" | "Remetido";
@@ -400,6 +402,7 @@ export interface Memorando {
   remessa?: string;
   status: StatusMemorando;
   created_at: string;
+  updated_at?: string;
   remetido_em?: string;
   candidatos_count?: number;
 }
@@ -414,6 +417,7 @@ export interface Candidato {
   telefone?: string;
   remessa?: string;
   created_at: string;
+  updated_at?: string;
 }
 
 export type SituacaoGeral = "Remetida" | "Recebida" | "Pendente" | "Entregue";
@@ -483,6 +487,8 @@ export interface MapeamentoLocalizacao {
   gaveta: string;
   reparticao: string;
   ativo: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 // Zod Schemas para Formulários

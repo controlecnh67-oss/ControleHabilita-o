@@ -737,7 +737,7 @@ export function saveStoredList<T>(key: string, data: T[]): void {
   }
 }
 
-function getDeletedIds(key: string): Set<string> {
+export function getDeletedIds(key: string): Set<string> {
   const storeKey = `deleted_${key}`;
   if (memoryStore[storeKey] && Array.isArray(memoryStore[storeKey])) {
     return new Set(memoryStore[storeKey]);
@@ -757,7 +757,7 @@ function getDeletedIds(key: string): Set<string> {
   return new Set();
 }
 
-function addDeletedId(key: string, id: string): void {
+export function addDeletedId(key: string, id: string): void {
   if (!id) return;
   try {
     const set = getDeletedIds(key);
@@ -774,7 +774,7 @@ function addDeletedId(key: string, id: string): void {
   } catch {}
 }
 
-function addDeletedIdsBulk(key: string, ids: string[]): void {
+export function addDeletedIdsBulk(key: string, ids: string[]): void {
   if (!ids || ids.length === 0) return;
   try {
     const set = getDeletedIds(key);
@@ -789,6 +789,29 @@ function addDeletedIdsBulk(key: string, ids: string[]): void {
     idbSet(storageKey, arr).catch(() => {});
     if (typeof localStorage !== "undefined") {
       localStorage.setItem(storageKey, JSON.stringify(arr));
+    }
+  } catch {}
+}
+
+export function clearDeletedIds(key: string, idsToRemove?: string[]): void {
+  try {
+    const storeKey = `deleted_${key}`;
+    const storageKey = `detran_cnh_deleted_${key}`;
+    if (!idsToRemove || idsToRemove.length === 0) {
+      memoryStore[storeKey] = [];
+      idbSet(storageKey, []).catch(() => {});
+      if (typeof localStorage !== "undefined") {
+        localStorage.removeItem(storageKey);
+      }
+    } else {
+      const current = getDeletedIds(key);
+      idsToRemove.forEach((id) => current.delete(id));
+      const arr = Array.from(current);
+      memoryStore[storeKey] = arr;
+      idbSet(storageKey, arr).catch(() => {});
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(storageKey, JSON.stringify(arr));
+      }
     }
   } catch {}
 }
@@ -1157,6 +1180,8 @@ export async function deleteMapeamento(
   const list = getStoredList<MapeamentoLocalizacao>("mapeamento", SEED_MAPEAMENTO);
   const target = list.find((m) => m.id === id);
   if (!target) return;
+
+  addDeletedId("mapeamento", id);
 
   if (isSupabaseConfigured()) {
     try {

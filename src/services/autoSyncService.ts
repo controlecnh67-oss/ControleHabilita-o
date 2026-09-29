@@ -12,7 +12,7 @@ import {
   SyncStatusItem
 } from "./db";
 import { dexieDb, normalizeCNHRecord, notifySyncUpdated } from "./dexieDb";
-import { autoAlignDiscrepancies } from "./discrepancySyncService";
+import { autoAlignDiscrepancies, autoAlignAllTablesCRUD } from "./discrepancySyncService";
 import { ensureBaseEntitiesSynced } from "./fkSanitizerService";
 
 export interface AutoSyncState {
@@ -249,22 +249,20 @@ export async function reconcilePendingDifferences(forceFull: boolean = false): P
 
   isReconciling = true;
   lastReconciliationTime = now;
-  updateState({ status: "syncing", lastMessage: "Verificando diferenças entre banco local e nuvem (updated_at)..." });
+  updateState({ status: "syncing", lastMessage: "Verificando diferenças em todas as tabelas (CRUD e updated_at)..." });
 
   try {
-    // PASSO 0: Alinhamento cirúrgico de timestamps na tabela principal geral_cnhs (coluna updated_at)
-    try {
-      await ensureBaseEntitiesSynced();
-      const discResult = await autoAlignDiscrepancies((msg) => {
-        updateState({ lastMessage: msg });
-      });
-      if (discResult && discResult.totalProcessed > 0) {
-        console.info(`[AutoSync] Alinhamento cirúrgico de CNHs: ${discResult.updatedLocalCount} locais, ${discResult.updatedRemoteCount} nuvem atualizados.`);
-      }
-    } catch (discErr) {
-      console.warn("Aviso ao auto-alinhar discrepâncias cirúrgicas:", discErr);
+    // PASSO 1: Alinhamento cirúrgico de TODAS as 13 tabelas com suporte completo a CRUD
+    // (Create, Read, Update via updated_at, Delete via tombstones)
+    const allResult = await autoAlignAllTablesCRUD((msg) => {
+      updateState({ lastMessage: msg });
+    });
+
+    if (allResult) {
+      console.info(`[AutoSync] Alinhamento cirúrgico (CRUD 13 tabelas): ${allResult.alignedTablesCount}/13 tabelas alinhadas.`);
     }
 
+    // PASSO 2: Verificação do status consolidado
     const stats: SyncStatusItem[] = await checkSyncStatus();
     const pendingTables = stats.filter((s) => s.status === "pending" || (forceFull && s.status !== "not_configured"));
     
@@ -275,13 +273,13 @@ export async function reconcilePendingDifferences(forceFull: boolean = false): P
         status: "synced",
         lastSyncTime: new Date(),
         pendingDifferencesCount: 0,
-        lastMessage: "Bancos local e nuvem 100% alinhados cirurgicamente"
+        lastMessage: "Bancos local e nuvem 100% alinhados cirurgicamente (13 tabelas - CRUD)"
       });
       isReconciling = false;
       return;
     }
 
-    // Ordem estrita de dependência relacional para evitar violação de Foreign Keys
+    // Ordem estrita de dependência relacional para tabelas com status pending
     const priorityOrder = [
       "usuarios",
       "responsaveis",
@@ -307,11 +305,11 @@ export async function reconcilePendingDifferences(forceFull: boolean = false): P
     for (const item of sortedTables) {
       try {
         updateState({
-          lastMessage: `Sincronizando automaticamente '${item.label}'...`
+          lastMessage: `Finalizando conferência de '${item.label}'...`
         });
         await syncSingleTable(item.key);
       } catch (err: any) {
-        console.warn(`Aviso na sincronização automática da tabela '${item.key}':`, err.message);
+        console.warn(`Aviso na sincronização da tabela '${item.key}':`, err.message);
       }
     }
 
@@ -324,7 +322,7 @@ export async function reconcilePendingDifferences(forceFull: boolean = false): P
       lastSyncTime: new Date(),
       pendingDifferencesCount: remainingPending.length,
       lastMessage: remainingPending.length === 0 
-        ? "Todas as tabelas sincronizadas e alinhadas automaticamente" 
+        ? "Todas as 13 tabelas alinhadas cirurgicamente (CRUD) com o Supabase" 
         : `${remainingPending.length} tabela(s) ainda em processo`
     });
   } catch (err: any) {
@@ -449,12 +447,22 @@ export function initAutoSyncService(): () => void {
     window.addEventListener("online", handleOnline);
   }
 
-  // 5. Timer de conferência periódica em segundo plano (a cada 5 minutos)
+  // 5. Retomada ao abrir a tela/computador (ao destravar a tela ou focar na aba)
+  const handleVisibilityChange = () => {
+    if (typeof document !== "undefined" && document.visibilityState === "visible") {
+      autoAlignDiscrepanciesOnStartup(false).catch(() => {});
+    }
+  };
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+  }
+
+  // 6. Timer de conferência periódica em segundo plano (a cada 4 minutos)
   autoSyncTimer = setInterval(() => {
     if (typeof navigator === "undefined" || navigator.onLine) {
       autoAlignDiscrepanciesOnStartup(false).catch(() => {});
     }
-  }, 5 * 60 * 1000);
+  }, 4 * 60 * 1000);
 
   // Função de limpeza / descarte
   return () => {
@@ -464,6 +472,9 @@ export function initAutoSyncService(): () => void {
     if (debouncedMutationTimer) clearTimeout(debouncedMutationTimer);
     if (typeof window !== "undefined") {
       window.removeEventListener("online", handleOnline);
+    }
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     }
     if (broadcastChannel) {
       try {
