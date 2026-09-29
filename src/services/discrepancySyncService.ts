@@ -9,6 +9,12 @@ import { dexieDb, normalizeCNHRecord, notifySyncUpdated } from "./dexieDb";
 import { recordSyncError } from "./syncErrorService";
 import { trackEgress } from "./egressMonitorService";
 import { GeralCNH } from "../types";
+import { 
+  ensureBaseEntitiesSynced, 
+  getValidRemoteFkCache, 
+  sanitizeGeralCnhForSupabase 
+} from "./fkSanitizerService";
+import { notifyDataSync } from "./db";
 
 export type ReconcileDirection = "supabase_to_dexie" | "dexie_to_supabase" | "latest_timestamp";
 
@@ -302,10 +308,17 @@ export async function forceUnidirectionalReconciliation(params: {
         updatedLocalCount += normalized.length;
       }
     }
+
+    notifySyncUpdated("geral");
+    notifyDataSync("geral", true);
   }
 
   // EXECUÇÃO 2: Local ➔ Nuvem (Dexie ➔ Supabase)
   if (idsToPush.length > 0) {
+    onProgress?.("Sincronizando entidades base (usuários e responsáveis)...", updatedLocalCount, totalToProcess);
+    await ensureBaseEntitiesSynced();
+    const { validUserIds, validRespIds } = await getValidRemoteFkCache(true);
+
     onProgress?.("Enviando registros mais recentes do Dexie para a nuvem...", updatedLocalCount, totalToProcess);
 
     const pushChunkSize = 100;
@@ -322,47 +335,105 @@ export async function forceUnidirectionalReconciliation(params: {
 
       if (validRecords.length === 0) continue;
 
-      const payloads = validRecords.map((r) => ({
-        id: r.id,
-        ordem: Number(r.ordem) || 0,
-        nome: (r.nome || "").trim().toUpperCase(),
-        cpf: r.cpf || null,
-        pa: r.pa || null,
-        gaveta: r.gaveta || "",
-        reparticao: r.reparticao || "",
-        situacao: r.situacao,
-        responsavel_id: r.responsavel_id || null,
-        responsavel_nome: r.responsavel_nome || null,
-        data_movimento: r.data_movimento || new Date().toISOString(),
-        usuario_id: r.usuario_id || null,
-        usuario_nome: r.usuario_nome || null,
-        memorando_numero: r.memorando_numero || null,
-        remessa: r.remessa || null,
-        lote: r.lote || null,
-        observacao: r.observacao || null,
-        created_at: r.created_at,
-        updated_at: r.updated_at || new Date().toISOString()
-      }));
+      // Auto-provisiona qualquer responsável referenciado que ainda não conste no cache do Supabase
+      const unmappedResp = validRecords.filter(
+        (c) => c.responsavel_id && !validRespIds.has(c.responsavel_id)
+      );
+      if (unmappedResp.length > 0) {
+        try {
+          const respUpserts = Array.from(
+            new Map(
+              unmappedResp.map((c) => [
+                c.responsavel_id!,
+                {
+                  id: c.responsavel_id!,
+                  nome: c.responsavel_nome || (c.responsavel_id === "a0000000-0000-0000-0000-000000000001" ? "PROPRIETÁRIO" : "RESPONSÁVEL"),
+                  ativo: true
+                }
+              ])
+            ).values()
+          );
+          await supabase.from("responsaveis").upsert(respUpserts, { onConflict: "id" });
+          respUpserts.forEach((r) => validRespIds.add(r.id));
+        } catch (e) {
+          console.warn("Aviso ao auto-provisionar responsáveis na reconciliação:", e);
+        }
+      }
 
-      const { error } = await supabase.from("geral_cnhs").upsert(payloads, { onConflict: "id" });
+      // Sanitiza payloads aplicando regras estritas de integridade relacional
+      const payloads = validRecords.map((r) => sanitizeGeralCnhForSupabase(r, validUserIds, validRespIds));
 
+      let { error } = await supabase.from("geral_cnhs").upsert(payloads, { onConflict: "id" });
+
+      // Se ocorreu violação de FK (23503) ou constraint referencial
+      if (error && (error.code === "23503" || error.message?.includes("foreign key") || error.message?.includes("fkey"))) {
+        console.warn("Aviso no upsert (FK constraint). Aplicando fallback seguro sem FKs conflitantes:", error.message);
+        const safePayloads = payloads.map((p) => ({
+          ...p,
+          usuario_id: null,
+          responsavel_id: p.responsavel_id && validRespIds.has(p.responsavel_id) ? p.responsavel_id : null,
+          memorando_id: null,
+          candidato_id: null
+        }));
+        const retry = await supabase.from("geral_cnhs").upsert(safePayloads, { onConflict: "id" });
+        if (!retry.error) {
+          error = null;
+        } else {
+          error = retry.error;
+        }
+      }
+
+      // Se ainda persistir erro, executa gravação resiliente item a item
       if (error) {
-        errors.push(`Falha ao gravar lote na nuvem: ${error.message}`);
-        recordSyncError({
-          table: "geral_cnhs",
-          direction: "dexie_to_supabase",
-          error,
-          actionTaken: "Re-sincronização unidirecional local->nuvem teve erro no lote.",
-          recordsCount: payloads.length
-        });
+        let savedInChunk = 0;
+        let lastErr: any = null;
+        for (const item of payloads) {
+          const single = await supabase.from("geral_cnhs").upsert([item], { onConflict: "id" });
+          if (!single.error) {
+            savedInChunk++;
+          } else {
+            const safeItem = {
+              ...item,
+              usuario_id: null,
+              responsavel_id: null,
+              memorando_id: null,
+              candidato_id: null
+            };
+            const retrySingle = await supabase.from("geral_cnhs").upsert([safeItem], { onConflict: "id" });
+            if (!retrySingle.error) {
+              savedInChunk++;
+            } else {
+              lastErr = retrySingle.error;
+            }
+          }
+        }
+
+        if (savedInChunk > 0) {
+          updatedRemoteCount += savedInChunk;
+        }
+        if (savedInChunk < payloads.length) {
+          const failed = payloads.length - savedInChunk;
+          errors.push(`Falha ao gravar ${failed} registro(s) no lote: ${lastErr?.message || error.message}`);
+          recordSyncError({
+            table: "geral_cnhs",
+            direction: "dexie_to_supabase",
+            error: lastErr || error,
+            actionTaken: `${savedInChunk} gravados com sucesso na nuvem; ${failed} preservados com segurança no IndexedDB local.`,
+            recordsCount: failed
+          });
+        }
       } else {
         updatedRemoteCount += payloads.length;
       }
     }
+
+    notifySyncUpdated("geral");
+    notifyDataSync("geral", true);
   }
 
   // Notifica o sistema de que os dados foram atualizados
   notifySyncUpdated("geral");
+  notifyDataSync("geral", true);
 
   const durationMs = Date.now() - startTime;
   const dirLabel =
@@ -382,4 +453,53 @@ export async function forceUnidirectionalReconciliation(params: {
     errors,
     message: `Re-sincronização unidirecional [${dirLabel}] concluída em ${durationMs}ms. ${updatedLocalCount} registro(s) atualizado(s) no Dexie e ${updatedRemoteCount} no Supabase.`
   };
+}
+
+/**
+ * Realiza a varredura e o alinhamento cirúrgico de forma 100% autônoma
+ * entre o IndexedDB (Dexie) e o Supabase com base nos timestamps de alteração ('updated_at').
+ */
+export async function autoAlignDiscrepancies(
+  onProgress?: (message: string) => void
+): Promise<ReconcileResult | null> {
+  if (!isSupabaseConfigured()) return null;
+
+  try {
+    onProgress?.("Verificando diferenças entre banco local e nuvem (updated_at)...");
+    const report = await detectDiscrepancies(onProgress);
+
+    if (report.totalDiscrepancies === 0) {
+      return {
+        success: true,
+        direction: "latest_timestamp",
+        updatedLocalCount: 0,
+        updatedRemoteCount: 0,
+        totalProcessed: 0,
+        durationMs: 0,
+        errors: [],
+        message: "Bancos local e nuvem já estão 100% alinhados."
+      };
+    }
+
+    onProgress?.(`Alinhando cirurgicamente ${report.totalDiscrepancies} registro(s) divergente(s)...`);
+    const result = await forceUnidirectionalReconciliation({
+      direction: "latest_timestamp",
+      report,
+      onProgress
+    });
+
+    return result;
+  } catch (err: any) {
+    console.warn("Erro ao auto-alinhar discrepâncias:", err);
+    return {
+      success: false,
+      direction: "latest_timestamp",
+      updatedLocalCount: 0,
+      updatedRemoteCount: 0,
+      totalProcessed: 0,
+      durationMs: 0,
+      errors: [err.message || String(err)],
+      message: "Falha durante o alinhamento automático."
+    };
+  }
 }

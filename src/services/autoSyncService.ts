@@ -12,6 +12,8 @@ import {
   SyncStatusItem
 } from "./db";
 import { dexieDb, normalizeCNHRecord, notifySyncUpdated } from "./dexieDb";
+import { autoAlignDiscrepancies } from "./discrepancySyncService";
+import { ensureBaseEntitiesSynced } from "./fkSanitizerService";
 
 export interface AutoSyncState {
   status: "idle" | "syncing" | "synced" | "error" | "offline";
@@ -247,9 +249,22 @@ export async function reconcilePendingDifferences(forceFull: boolean = false): P
 
   isReconciling = true;
   lastReconciliationTime = now;
-  updateState({ status: "syncing", lastMessage: "Verificando tabelas automáticas..." });
+  updateState({ status: "syncing", lastMessage: "Verificando diferenças entre banco local e nuvem (updated_at)..." });
 
   try {
+    // PASSO 0: Alinhamento cirúrgico de timestamps na tabela principal geral_cnhs (coluna updated_at)
+    try {
+      await ensureBaseEntitiesSynced();
+      const discResult = await autoAlignDiscrepancies((msg) => {
+        updateState({ lastMessage: msg });
+      });
+      if (discResult && discResult.totalProcessed > 0) {
+        console.info(`[AutoSync] Alinhamento cirúrgico de CNHs: ${discResult.updatedLocalCount} locais, ${discResult.updatedRemoteCount} nuvem atualizados.`);
+      }
+    } catch (discErr) {
+      console.warn("Aviso ao auto-alinhar discrepâncias cirúrgicas:", discErr);
+    }
+
     const stats: SyncStatusItem[] = await checkSyncStatus();
     const pendingTables = stats.filter((s) => s.status === "pending" || (forceFull && s.status !== "not_configured"));
     
@@ -260,7 +275,7 @@ export async function reconcilePendingDifferences(forceFull: boolean = false): P
         status: "synced",
         lastSyncTime: new Date(),
         pendingDifferencesCount: 0,
-        lastMessage: "Todas as tabelas estão 100% sincronizadas"
+        lastMessage: "Bancos local e nuvem 100% alinhados cirurgicamente"
       });
       isReconciling = false;
       return;
@@ -309,7 +324,7 @@ export async function reconcilePendingDifferences(forceFull: boolean = false): P
       lastSyncTime: new Date(),
       pendingDifferencesCount: remainingPending.length,
       lastMessage: remainingPending.length === 0 
-        ? "Todas as tabelas sincronizadas automaticamente" 
+        ? "Todas as tabelas sincronizadas e alinhadas automaticamente" 
         : `${remainingPending.length} tabela(s) ainda em processo`
     });
   } catch (err: any) {
@@ -320,6 +335,29 @@ export async function reconcilePendingDifferences(forceFull: boolean = false): P
     });
   } finally {
     isReconciling = false;
+  }
+}
+
+let lastStartupAlignTime = 0;
+const STARTUP_ALIGN_COOLDOWN_MS = 25000;
+
+/**
+ * Executa a verificação e alinhamento cirúrgico de diferenças entre
+ * o IndexedDB (Dexie) e o Supabase com base na coluna 'updated_at'
+ * sempre que o computador/aplicação é aberto.
+ */
+export async function autoAlignDiscrepanciesOnStartup(force: boolean = false): Promise<void> {
+  const now = Date.now();
+  if (!isSupabaseConfigured()) return;
+  if (typeof navigator !== "undefined" && !navigator.onLine) return;
+  if (!force && now - lastStartupAlignTime < STARTUP_ALIGN_COOLDOWN_MS) return;
+  if (isReconciling) return;
+
+  lastStartupAlignTime = now;
+  try {
+    await reconcilePendingDifferences(force);
+  } catch (err) {
+    console.warn("[AutoSync Startup] Falha na auto-sincronização de inicialização:", err);
   }
 }
 
@@ -395,11 +433,38 @@ export function initAutoSyncService(): () => void {
     }
   }
 
+  // 3. Auto-sincronização de inicialização ao abrir o computador/aplicação (sem intervenção manual do usuário)
+  const startupTimer = setTimeout(() => {
+    autoAlignDiscrepanciesOnStartup(true).catch((e) => {
+      console.warn("[AutoSync] Falha na verificação de inicialização:", e);
+    });
+  }, 1500);
+
+  // 4. Reconexão de rede (ao abrir a tampa do computador ou religar a internet)
+  const handleOnline = () => {
+    console.info("[AutoSync] Conexão de rede restabelecida. Alinhando diferenças...");
+    autoAlignDiscrepanciesOnStartup(true).catch(() => {});
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("online", handleOnline);
+  }
+
+  // 5. Timer de conferência periódica em segundo plano (a cada 5 minutos)
+  autoSyncTimer = setInterval(() => {
+    if (typeof navigator === "undefined" || navigator.onLine) {
+      autoAlignDiscrepanciesOnStartup(false).catch(() => {});
+    }
+  }, 5 * 60 * 1000);
+
   // Função de limpeza / descarte
   return () => {
     isInitialized = false;
+    if (startupTimer) clearTimeout(startupTimer);
     if (autoSyncTimer) clearInterval(autoSyncTimer);
     if (debouncedMutationTimer) clearTimeout(debouncedMutationTimer);
+    if (typeof window !== "undefined") {
+      window.removeEventListener("online", handleOnline);
+    }
     if (broadcastChannel) {
       try {
         broadcastChannel.close();

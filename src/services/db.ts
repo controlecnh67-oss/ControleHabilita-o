@@ -64,36 +64,21 @@ export function notifyDataSync(type: string = "all", fromRemote: boolean = false
   }
 }
 
-export function cleanFK(id?: string | null, validSet?: Set<string>): string | null {
-  if (!id || typeof id !== "string") return null;
-  const trimmed = id.trim();
-  if (trimmed === "") return null;
-  if (validSet && !validSet.has(trimmed)) return null;
-  return trimmed;
-}
+import {
+  toValidUUID,
+  cleanFK,
+  getValidRemoteFkCache,
+  ensureBaseEntitiesSynced,
+  sanitizeGeralCnhForSupabase
+} from "./fkSanitizerService";
 
-function toValidUUID(id?: string | null): string | null {
-  if (!id || typeof id !== "string" || id.trim() === "") return null;
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const cleanId = id.trim();
-  if (uuidRegex.test(cleanId)) return cleanId;
-
-  if (cleanId === "admin") return "11111111-1111-1111-1111-111111111111";
-  if (cleanId === "supervisor") return "22222222-2222-2222-2222-222222222222";
-  if (cleanId === "operador") return "33333333-3333-3333-3333-333333333333";
-  if (cleanId === "consulta") return "44444444-4444-4444-4444-444444444444";
-  if (cleanId === "proprietario") return "e2335b1e-0000-4000-8000-000000000000";
-
-  // Gerar um UUID v4 determinístico a partir de qualquer string (ex: "usr-01", "resp-02")
-  let hash = 0;
-  for (let i = 0; i < cleanId.length; i++) {
-    hash = ((hash << 5) - hash) + cleanId.charCodeAt(i);
-    hash |= 0;
-  }
-  const hexHash = Math.abs(hash).toString(16).padStart(8, "0");
-  const safeStr = cleanId.replace(/[^a-f0-9]/gi, "").toLowerCase().padEnd(24, "0").substring(0, 24);
-  return `${hexHash}-${safeStr.substring(0, 4)}-4${safeStr.substring(4, 7)}-8${safeStr.substring(7, 10)}-${safeStr.substring(10, 22)}`;
-}
+export {
+  toValidUUID,
+  cleanFK,
+  getValidRemoteFkCache,
+  ensureBaseEntitiesSynced,
+  sanitizeGeralCnhForSupabase
+};
 
 // ============================================================================
 // DADOS DE SEMENTE (SEED DATA) PARA MODO LOCAL / DEMO IMEDIATO
@@ -8840,27 +8825,9 @@ export async function syncSingleTable(
     const { cleanList: geral } = deduplicateCNHRecords(rawGeral);
     if (geral.length > 0) {
       log(`📦 Enviando ${geral.length} registros de CNHs para o Supabase...`);
-      const payload = geral.map(g => ({
-        id: g.id || `cnh-${g.ordem}`,
-        ordem: g.ordem,
-        memorando_id: g.memorando_id ? g.memorando_id.trim() : null,
-        candidato_id: g.candidato_id ? g.candidato_id.trim() : null,
-        nome: g.nome,
-        cpf: g.cpf,
-        gaveta: g.gaveta || "",
-        reparticao: g.reparticao || "",
-        situacao: g.situacao,
-        responsavel_id: g.responsavel_id ? g.responsavel_id.trim() : null,
-        responsavel_nome: g.responsavel_nome || null,
-        data_movimento: g.data_movimento || new Date().toISOString(),
-        usuario_id: g.usuario_id ? g.usuario_id.trim() : null,
-        usuario_nome: g.usuario_nome || null,
-        memorando_numero: g.memorando_numero || null,
-        remessa: g.remessa || null,
-        observacao: g.observacao || null,
-        created_at: g.created_at || new Date().toISOString(),
-        updated_at: g.updated_at || g.data_movimento || new Date().toISOString()
-      }));
+      await ensureBaseEntitiesSynced();
+      const { validUserIds, validRespIds } = await getValidRemoteFkCache(true);
+      const payload = geral.map(g => sanitizeGeralCnhForSupabase(g, validUserIds, validRespIds));
       await upsertInBatches("geral_cnhs", payload, 250);
       log(`✅ Registros de CNHs enviados com sucesso.`);
     }

@@ -4,6 +4,7 @@ import { supabase, isSupabaseConfigured } from "./supabase";
 import { trackEgress } from "./egressMonitorService";
 import { recordSyncTransaction } from "./syncPerformanceMonitor";
 import { recordSyncError } from "./syncErrorService";
+import { sanitizeGeralCnhForSupabase, getValidRemoteFkCache } from "./fkSanitizerService";
 import cnhSeedData from "../data/cnhSeedData.json";
 
 // Índices rápidos para recuperação de dados de semente (ground truth)
@@ -932,21 +933,23 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
     }
 
     try {
-      const { error } = await withTimeout(
+      const { validUserIds, validRespIds } = await getValidRemoteFkCache();
+      const sanitized = sanitizeGeralCnhForSupabase(normalized, validUserIds, validRespIds);
+      const primaryPayload: any = {
+        ...sanitized,
+        ...(normalized.notificado_whatsapp !== undefined ? { notificado_whatsapp: normalized.notificado_whatsapp } : {}),
+        ...(normalized.notificado_at ? { notificado_at: normalized.notificado_at } : {})
+      };
+
+      let { error } = await withTimeout(
         supabase.from("geral_cnhs").upsert(primaryPayload, { onConflict: "id" }),
         4000,
         "Timeout ao sincronizar com Supabase"
       );
       trackEgress("geral_cnhs", "UPDATE", primaryPayload, false, 0, `Atualização individual CNH: ${normalized.nome || normalized.cpf}`);
-      if (error) {
-        console.warn("Aviso ao fazer upsert completo em geral_cnhs (tentando payload seguro):", error.message);
-        recordSyncError({
-          table: "geral_cnhs",
-          direction: "dexie_to_supabase",
-          error: error,
-          actionTaken: "Ativada tentativa resiliente com payload seguro sem FKs.",
-          recordsCount: 1
-        });
+
+      if (error && (error.code === "23503" || error.message?.includes("foreign key") || error.message?.includes("geral_cnhs_usuario_id_fkey"))) {
+        console.warn("Aviso ao fazer upsert em geral_cnhs (aplicando payload seguro sem FKs):", error.message);
         // Tentativa 1: Sem chaves estrangeiras que possam violar constraints (FKs)
         const safeFkPayload = {
           ...primaryPayload,
@@ -960,15 +963,9 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
           3500,
           "Timeout no upsert safeFk"
         );
-        if (resFk.error) {
-          console.warn("Aviso ao tentar upsert sem FKs (tentando colunas básicas):", resFk.error.message);
-          recordSyncError({
-            table: "geral_cnhs",
-            direction: "dexie_to_supabase",
-            error: resFk.error,
-            actionTaken: "Tentativa de colunas mínimas básicas executada.",
-            recordsCount: 1
-          });
+        if (!resFk.error) {
+          error = null;
+        } else {
           // Tentativa 2: Apenas colunas básicas garantidas (sem updated_at ou colunas opcionais)
           const basicPayload = {
             id: normalized.id,
@@ -983,12 +980,27 @@ export async function saveLocalGeralCNH(record: GeralCNH): Promise<void> {
             usuario_nome: normalized.usuario_nome || null,
             observacao: normalized.observacao || null
           };
-          await withTimeout(
+          const resBasic = await withTimeout(
             supabase.from("geral_cnhs").upsert(basicPayload, { onConflict: "id" }),
             3000,
             "Timeout no upsert básico"
           );
+          if (!resBasic.error) {
+            error = null;
+          } else {
+            error = resBasic.error;
+          }
         }
+      }
+
+      if (error) {
+        recordSyncError({
+          table: "geral_cnhs",
+          direction: "dexie_to_supabase",
+          error: error,
+          actionTaken: "Registro mantido salvo com segurança no IndexedDB local.",
+          recordsCount: 1
+        });
       }
     } catch (err) {
       console.warn("Erro ao sincronizar geral_cnhs com Supabase:", err);
@@ -1046,46 +1058,20 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
   // Save to Supabase (somente se não for download da nuvem)
   if (!skipRemote && isSupabaseConfigured()) {
     try {
-      const payloads = cleanList.map((r) => ({
-        id: r.id,
-        ordem: r.ordem,
-        pa: r.pa || null,
-        nome: r.nome,
-        cpf: r.cpf,
-        telefone: r.telefone || null,
-        gaveta: r.gaveta || "",
-        reparticao: r.reparticao || "",
-        situacao: r.situacao,
-        responsavel_id: r.responsavel_id || null,
-        responsavel_nome: r.responsavel_nome || null,
-        data_movimento: r.data_movimento,
-        usuario_id: r.usuario_id || null,
-        usuario_nome: r.usuario_nome || null,
-        memorando_numero: r.memorando_numero || null,
-        remessa: r.remessa || null,
-        lote: r.lote || null,
-        observacao: r.observacao || null,
-        memorando_id: r.memorando_id || null,
-        candidato_id: r.candidato_id || null,
-        created_at: r.created_at,
-        updated_at: r.updated_at || now
-      }));
+      const { validUserIds, validRespIds } = await getValidRemoteFkCache();
+      const payloads = cleanList.map((r) => sanitizeGeralCnhForSupabase(r, validUserIds, validRespIds));
 
       // Send in chunks of 100
       for (let i = 0; i < payloads.length; i += 100) {
         const chunk = payloads.slice(i, i + 100);
-        const { error } = await supabase.from("geral_cnhs").upsert(chunk, { onConflict: "id" });
+        let { error } = await supabase.from("geral_cnhs").upsert(chunk, { onConflict: "id" });
         trackEgress("geral_cnhs", "BATCH_UPSERT", chunk, false, 0, `Lote de ${chunk.length} CNHs salvas`);
-        if (error) {
-          console.warn("Aviso ao salvar lote no Supabase, garantindo integridade de responsáveis:", error.message);
-          recordSyncError({
-            table: "geral_cnhs",
-            direction: "dexie_to_supabase",
-            error: error,
-            actionTaken: `Lote de ${chunk.length} CNHs falhou no upsert direto. Tentando auto-provisionamento de responsáveis e envio individual seguro.`,
-            recordsCount: chunk.length
-          });
-          // 1. Assegura que todos os responsáveis referenciados no lote existam na tabela responsaveis
+        
+        // Se ocorreu erro de chave estrangeira (FK) ou unicidade
+        if (error && (error.code === "23503" || error.message?.includes("foreign key") || error.message?.includes("geral_cnhs_usuario_id_fkey"))) {
+          console.warn("Violação de FK detectada no lote de CNHs. Aplicando sanitização estrita e auto-recuperação...", error.message);
+          
+          // 1. Assegura que responsáveis referenciados existam na tabela responsaveis
           const referencedResp = chunk.filter((c) => c.responsavel_id);
           if (referencedResp.length > 0) {
             try {
@@ -1095,19 +1081,37 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
                 ativo: true
               }])).values());
               await supabase.from("responsaveis").upsert(respUpserts, { onConflict: "id" });
-              // Tenta novamente enviar o lote completo com FKs intactas
-              const retryFull = await supabase.from("geral_cnhs").upsert(chunk, { onConflict: "id" });
-              if (!retryFull.error) continue;
             } catch (rErr) {
               console.warn("Aviso ao auto-provisionar responsáveis:", rErr);
             }
           }
 
-          // 2. Se ainda falhar, faz upsert item a item para isolar apenas o registro com erro, NUNCA zerando responsavel_nome
+          // 2. Tenta novamente com FKs duvidosas zeradas preservando 100% dos nomes
+          const safeChunk = chunk.map((item) => ({
+            ...item,
+            usuario_id: null,
+            responsavel_id: item.responsavel_id && validRespIds.has(item.responsavel_id) ? item.responsavel_id : null,
+            memorando_id: null,
+            candidato_id: null
+          }));
+          const retrySafe = await supabase.from("geral_cnhs").upsert(safeChunk, { onConflict: "id" });
+          if (!retrySafe.error) {
+            console.info(`✅ Lote de ${chunk.length} CNHs salvo com sucesso com proteção de integridade referencial.`);
+            error = null;
+          } else {
+            error = retrySafe.error;
+          }
+        }
+
+        if (error) {
+          console.warn("Aviso ao salvar lote no Supabase, executando gravação item a item com proteção:", error.message);
+          let anyItemFailed = false;
+          let lastItemError: any = null;
+
+          // 3. Upsert item a item resiliente
           for (const item of chunk) {
             const single = await supabase.from("geral_cnhs").upsert([item], { onConflict: "id" });
             if (single.error) {
-              // Em caso de falha estrita de chave estrangeira neste item específico, mantém responsavel_nome intacto
               const safeItem = {
                 ...item,
                 responsavel_id: null,
@@ -1115,8 +1119,22 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
                 memorando_id: null,
                 candidato_id: null
               };
-              await supabase.from("geral_cnhs").upsert([safeItem], { onConflict: "id" });
+              const retrySingle = await supabase.from("geral_cnhs").upsert([safeItem], { onConflict: "id" });
+              if (retrySingle.error) {
+                anyItemFailed = true;
+                lastItemError = retrySingle.error;
+              }
             }
+          }
+
+          if (anyItemFailed) {
+            recordSyncError({
+              table: "geral_cnhs",
+              direction: "dexie_to_supabase",
+              error: lastItemError || error,
+              actionTaken: `Lote de ${chunk.length} CNHs mantido salvo com segurança no IndexedDB local.`,
+              recordsCount: chunk.length
+            });
           }
         }
       }
