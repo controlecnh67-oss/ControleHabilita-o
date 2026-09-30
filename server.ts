@@ -1,16 +1,26 @@
 import "dotenv/config";
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  
+  // Respeita argumento CLI (--port) em desenvolvimento ou variável de ambiente PORT (Cloud Run / produção)
+  const portArgIndex = process.argv.indexOf("--port");
+  const cliPort = portArgIndex !== -1 ? Number(process.argv[portArgIndex + 1]) : null;
+  const PORT = cliPort || Number(process.env.PORT) || 3000;
 
   // Aumentar o limite do corpo da requisição para suportar uploads de imagens e PDFs em base64
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+  // Health check endpoints para Cloud Run e monitoramento
+  app.get(["/healthz", "/api/health"], (_req, res) => {
+    res.status(200).json({ status: "healthy", timestamp: new Date().toISOString() });
+  });
 
   // Inicialização do cliente Gemini AI no servidor
   const getGeminiClient = () => {
@@ -273,19 +283,30 @@ Retorne a lista com TODOS os nomes identificados. Não omita nenhum nome present
     }
   });
 
-  // Middleware do Vite em ambiente de desenvolvimento
-  if (process.env.NODE_ENV !== "production") {
+  // Middleware do Vite em ambiente de desenvolvimento ou estáticos pré-compilados em produção
+  const distPath = path.join(process.cwd(), "dist");
+  const hasDist = fs.existsSync(distPath) && fs.existsSync(path.join(distPath, "index.html"));
+  const isExplicitDev = process.env.npm_lifecycle_event === "dev";
+
+  if (hasDist && !isExplicitDev) {
+    // Modo de produção: Serve os arquivos estáticos compilados pelo Vite
+    console.log(`[Servidor] Modo Produção: Servindo arquivos estáticos de ${distPath}`);
+    app.use(express.static(distPath));
+    app.get("*", (_req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  } else {
+    // Modo de desenvolvimento: Middleware do Vite (HMR desabilitado conforme ambiente)
+    console.log("[Servidor] Modo Desenvolvimento: Inicializando Vite middleware");
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        ws: false,
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
   }
 
   app.listen(PORT, "0.0.0.0", () => {

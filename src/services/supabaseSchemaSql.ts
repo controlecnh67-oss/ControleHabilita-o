@@ -1,4 +1,9 @@
--- ==============================================================================
+/**
+ * Script Mestre de Banco de Dados PostgreSQL / Supabase
+ * Versao 4.0.0 - 100% Idempotente e Compativel com Supabase SQL Editor
+ * Contem todas as 13 tabelas, triggers, indices, RLS policies, Storage e Realtime.
+ */
+export const SUPABASE_MASTER_SQL = `-- ==============================================================================
 -- SISTEMA DE CONTROLE DE CNH - DETRAN (SETOR DE PROTOCOLO)
 -- SCRIPT MESTRE DE BANCO DE DADOS POSTGRESQL + SUPABASE AUTH + REALTIME + STORAGE
 -- Versão 4.0.0 - 100% Idempotente, Tolerante a Falhas e Totalmente Compatível com o Supabase SQL Editor
@@ -9,59 +14,153 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ==============================================================================
--- 0.1 MIGRAÇÃO AUTOMÁTICA DE TIPOS UUID PARA TEXT (Garante compatibilidade retroativa)
--- Se tabelas já foram criadas anteriormente com colunas UUID, convertemos de forma segura para TEXT
+-- 0.1 MIGRAÇÃO AUTOMÁTICA INFALÍVEL DE TIPOS UUID PARA TEXT (100% Tolerante a Falhas)
+-- Converte com segurança tabelas e colunas antigas de UUID para TEXT para aceitar
+-- identificadores alfanuméricos como 'cnh-0171', 'cand-123', 'ba8dff5e', etc.
 -- ==============================================================================
-DO 163
-BEGIN
-    -- Remover temporariamente restrições de chave estrangeira antigas para permitir alteração de tipos
-    ALTER TABLE IF EXISTS public.candidatos DROP CONSTRAINT IF EXISTS candidatos_memorando_id_fkey;
-    ALTER TABLE IF EXISTS public.geral_cnhs DROP CONSTRAINT IF EXISTS geral_cnhs_memorando_id_fkey;
-    ALTER TABLE IF EXISTS public.geral_cnhs DROP CONSTRAINT IF EXISTS geral_cnhs_candidato_id_fkey;
-    ALTER TABLE IF EXISTS public.geral_cnhs DROP CONSTRAINT IF EXISTS geral_cnhs_responsavel_id_fkey;
-    ALTER TABLE IF EXISTS public.geral_cnhs DROP CONSTRAINT IF EXISTS geral_cnhs_usuario_id_fkey;
-    ALTER TABLE IF EXISTS public.memorandos DROP CONSTRAINT IF EXISTS memorandos_usuario_id_fkey;
-    ALTER TABLE IF EXISTS public.historico_movimentacoes DROP CONSTRAINT IF EXISTS historico_movimentacoes_geral_id_fkey;
-    ALTER TABLE IF EXISTS public.historico_movimentacoes DROP CONSTRAINT IF EXISTS historico_movimentacoes_responsavel_id_fkey;
-    ALTER TABLE IF EXISTS public.historico_movimentacoes DROP CONSTRAINT IF EXISTS historico_movimentacoes_usuario_id_fkey;
-    ALTER TABLE IF EXISTS public.auditoria DROP CONSTRAINT IF EXISTS auditoria_usuario_id_fkey;
-EXCEPTION WHEN OTHERS THEN NULL;
-END 163;
 
-DO 163
+-- 1. Remove dinamicamente TODAS as restrições de Foreign Key que possam travar alterações de tipos
+DO $$
+DECLARE
+    r RECORD;
 BEGIN
-    -- Converter colunas de UUID para TEXT para aceitar UUIDs e identificadores alfanuméricos sem erro
-    ALTER TABLE IF EXISTS public.usuarios ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.responsaveis ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.mapeamento_localizacao ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN usuario_id TYPE TEXT USING usuario_id::text;
-    ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN memorando_id TYPE TEXT USING memorando_id::text;
+    -- Busca via pg_constraint para garantir cobertura total
+    FOR r IN (
+        SELECT conrelid::regclass::text AS table_name, conname
+        FROM pg_constraint
+        WHERE contype = 'f' 
+          AND connamespace = 'public'::regnamespace
+    ) LOOP
+        BEGIN
+            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT IF EXISTS %I CASCADE', r.table_name, r.conname);
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END;
+    END LOOP;
+
+    -- Busca complementar via information_schema
+    FOR r IN (
+        SELECT tc.table_schema, tc.table_name, tc.constraint_name
+        FROM information_schema.table_constraints tc
+        WHERE tc.table_schema = 'public' 
+          AND tc.constraint_type = 'FOREIGN KEY'
+    ) LOOP
+        BEGIN
+            EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT IF EXISTS %I CASCADE', r.table_schema, r.table_name, r.constraint_name);
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END;
+    END LOOP;
+END $$;
+
+-- 2. Converte dinamicamente todas as colunas de UUID para TEXT no schema public
+DO $$
+DECLARE
+    col RECORD;
+BEGIN
+    FOR col IN (
+        SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND data_type = 'uuid'
+          AND table_name IN (
+              SELECT table_name FROM information_schema.tables 
+              WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+          )
+    ) LOOP
+        -- Remove default anterior que possa impedir a conversão
+        BEGIN
+            EXECUTE format('ALTER TABLE public.%I ALTER COLUMN %I DROP DEFAULT', col.table_name, col.column_name);
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END;
+
+        -- Converte a coluna para TEXT usando cast explícito
+        BEGIN
+            EXECUTE format('ALTER TABLE public.%I ALTER COLUMN %I TYPE TEXT USING %I::text', col.table_name, col.column_name, col.column_name);
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END;
+
+        -- Se for 'id', define novo default padrão
+        IF col.column_name = 'id' THEN
+            BEGIN
+                EXECUTE format('ALTER TABLE public.%I ALTER COLUMN id SET DEFAULT gen_random_uuid()::text', col.table_name);
+            EXCEPTION WHEN OTHERS THEN NULL;
+            END;
+        END IF;
+    END LOOP;
+END $$;
+
+-- 3. Garantia explícita e direta nas tabelas principais do sistema
+DO $$
+BEGIN
+    -- geral_cnhs
+    ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN id DROP DEFAULT;
     ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN id TYPE TEXT USING id::text;
+    ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
     ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN memorando_id TYPE TEXT USING memorando_id::text;
     ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN candidato_id TYPE TEXT USING candidato_id::text;
     ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN responsavel_id TYPE TEXT USING responsavel_id::text;
     ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN usuario_id TYPE TEXT USING usuario_id::text;
+
+    -- candidatos
+    ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN id DROP DEFAULT;
+    ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN id TYPE TEXT USING id::text;
+    ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+    ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN memorando_id TYPE TEXT USING memorando_id::text;
+
+    -- memorandos
+    ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN id DROP DEFAULT;
+    ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN id TYPE TEXT USING id::text;
+    ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+    ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN usuario_id TYPE TEXT USING usuario_id::text;
+
+    -- usuarios
+    ALTER TABLE IF EXISTS public.usuarios ALTER COLUMN id DROP DEFAULT;
+    ALTER TABLE IF EXISTS public.usuarios ALTER COLUMN id TYPE TEXT USING id::text;
+    ALTER TABLE IF EXISTS public.usuarios ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+
+    -- responsaveis
+    ALTER TABLE IF EXISTS public.responsaveis ALTER COLUMN id DROP DEFAULT;
+    ALTER TABLE IF EXISTS public.responsaveis ALTER COLUMN id TYPE TEXT USING id::text;
+    ALTER TABLE IF EXISTS public.responsaveis ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+
+    -- historico_movimentacoes
+    ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN id DROP DEFAULT;
     ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN id TYPE TEXT USING id::text;
+    ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
     ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN geral_id TYPE TEXT USING geral_id::text;
     ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN responsavel_id TYPE TEXT USING responsavel_id::text;
     ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN usuario_id TYPE TEXT USING usuario_id::text;
+
+    -- auditoria
+    ALTER TABLE IF EXISTS public.auditoria ALTER COLUMN id DROP DEFAULT;
     ALTER TABLE IF EXISTS public.auditoria ALTER COLUMN id TYPE TEXT USING id::text;
+    ALTER TABLE IF EXISTS public.auditoria ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
     ALTER TABLE IF EXISTS public.auditoria ALTER COLUMN usuario_id TYPE TEXT USING usuario_id::text;
+
+    -- mapeamento, declaracoes, lotes
+    ALTER TABLE IF EXISTS public.mapeamento_localizacao ALTER COLUMN id DROP DEFAULT;
+    ALTER TABLE IF EXISTS public.mapeamento_localizacao ALTER COLUMN id TYPE TEXT USING id::text;
+    ALTER TABLE IF EXISTS public.mapeamento_localizacao ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+
+    ALTER TABLE IF EXISTS public.declaracoes ALTER COLUMN id DROP DEFAULT;
+    ALTER TABLE IF EXISTS public.declaracoes ALTER COLUMN id TYPE TEXT USING id::text;
+    ALTER TABLE IF EXISTS public.declaracoes ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+
+    ALTER TABLE IF EXISTS public.lotes ALTER COLUMN id DROP DEFAULT;
+    ALTER TABLE IF EXISTS public.lotes ALTER COLUMN id TYPE TEXT USING id::text;
+    ALTER TABLE IF EXISTS public.lotes ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
 EXCEPTION WHEN OTHERS THEN NULL;
-END 163;
+END $$;
 
 -- ==============================================================================
 -- 1. FUNÇÕES AUXILIARES DE ATUALIZAÇÃO AUTOMÁTICA (updated_at)
 -- ==============================================================================
 CREATE OR REPLACE FUNCTION public.set_updated_at()
-RETURNS TRIGGER AS 163
+RETURNS TRIGGER AS $$
 BEGIN
     NEW.updated_at = timezone('utc'::text, now());
     RETURN NEW;
 END;
-163 LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 -- ==============================================================================
 -- 2. TABELA DE USUÁRIOS
@@ -100,7 +199,7 @@ BEFORE UPDATE ON public.usuarios
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 -- Se a tabela usuarios já existia com coluna 'senha', removemos para conformidade de segurança
-DO 163
+DO $$
 BEGIN
     IF EXISTS (
         SELECT 1 FROM information_schema.columns 
@@ -109,7 +208,60 @@ BEGIN
         ALTER TABLE public.usuarios DROP COLUMN senha;
     END IF;
 EXCEPTION WHEN OTHERS THEN NULL;
-END 163;
+END $$;
+
+
+-- ==============================================================================
+-- 2.1 INSERÇÃO IDEMPOTENTE DOS 17 USUÁRIOS OFICIAIS DO DETRAN (INCLUINDO CONTROLE CNH 67)
+-- ==============================================================================
+DO $$
+DECLARE
+    u RECORD;
+BEGIN
+    FOR u IN (
+        SELECT * FROM (VALUES
+            ('67676767-6767-6767-6767-676767676767', 'Controle CNH 67 (Administrador)', 'Administrador Geral Controle CNH', 'Controle CNH', NULL, '(67) 99999-9999', 'controlecnh67@gmail.com', 'Administrador do Sistema', 'Protocolo Geral', 'controlecnh67', 'Administrador', '["dashboard:visualizar", "geral:visualizar", "consulta_cnh:visualizar", "protocolo_entrega:visualizar", "cnh:receber", "cnh:entregar", "cnh:editar", "candidatos:visualizar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar", "historico:visualizar", "auditoria:visualizar", "usuarios:gerenciar", "orgao:gerenciar", "backup:gerenciar", "manual:visualizar"]'::jsonb),
+            ('11111111-1111-1111-1111-111111111111', 'Carlos Eduardo Mendes (Administrador)', 'Carlos Eduardo Mendes (Administrador)', 'Carlos Eduardo', NULL, '(67) 99111-2222', 'admin@detran.pa.gov.br', 'Chefe de Setor de Protocolo', 'Protocolo Geral', 'admin', 'Administrador', '["dashboard:visualizar", "geral:visualizar", "consulta_cnh:visualizar", "protocolo_entrega:visualizar", "cnh:receber", "cnh:entregar", "cnh:editar", "candidatos:visualizar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar", "historico:visualizar", "auditoria:visualizar", "usuarios:gerenciar", "orgao:gerenciar", "backup:gerenciar", "manual:visualizar"]'::jsonb),
+            ('a1111111-1111-1111-1111-111111111112', 'Amerson', 'Amerson', 'Amerson', NULL, NULL, 'bentovi007@gmail.com', 'Administrador de Protocolo', 'Protocolo', 'bentovi007', 'Administrador', '["memorandos:criar", "memorandos:remeter", "cnh:receber", "cnh:entregar", "cnh:editar", "mapeamento:gerenciar", "responsaveis:gerenciar", "usuarios:gerenciar", "auditoria:visualizar"]'::jsonb),
+            ('33a4ab38-0000-4000-8000-000000000001', 'DECK', 'DECK', 'Deck', NULL, '(67) 99777-8888', 'deck@detran.pa.gov.br', 'Agente de Trânsito', 'Atendimento CNH', 'deck', 'Supervisor', '["dashboard:visualizar", "geral:visualizar", "cnh:receber", "cnh:entregar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar", "cnh:editar", "candidatos:visualizar", "historico:visualizar", "usuarios:gerenciar", "auditoria:visualizar", "orgao:gerenciar", "backup:gerenciar"]'::jsonb),
+            ('ba8dff5e-0000-4000-8000-000000000002', 'Amerson Gonçalves Bento', 'Amerson Gonçalves Bento', 'Amerson', NULL, '(67) 99333-4444', 'amerson@detran.pa.gov.br', 'Agente de Trânsito', 'Atendimento CNH', 'amerson', 'Operador', '["dashboard:visualizar", "geral:visualizar", "protocolo_entrega:visualizar", "manual:visualizar", "cnh:receber", "cnh:entregar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar"]'::jsonb),
+            ('51f76373-0000-4000-8000-000000000003', 'Kaio ', 'Kaio Lohandes Gomes de Melo', 'Kaio', NULL, '(67) 99111-2222', 'kaio@detran.pa.gov.br', 'Agente de Trânsito', 'Atendimento CNH', 'kaio', 'Operador', '["dashboard:visualizar", "geral:visualizar", "cnh:receber", "cnh:entregar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar"]'::jsonb),
+            ('6459633e-dc86-43dd-9c14-f12aca624da5', 'Dabita Cardoso', 'Dabita Cardoso', 'Dabita', NULL, NULL, 'daby@gmail.com', 'Agente de Protocolo', 'Protocolo', 'daby', 'Operador', '["consulta_cnh:visualizar"]'::jsonb),
+            ('f057331c-4c77-48f7-9dec-6d8047783167', 'João ', 'João Cristovão', 'João', NULL, NULL, 'joao@gmail.com', 'Agente de Protocolo', 'Protocolo', 'joao', 'Operador', '["dashboard:visualizar", "geral:visualizar", "cnh:receber", "memorandos:criar", "memorandos:remeter", "acessos_cidadao:visualizar", "backup:gerenciar"]'::jsonb),
+            ('2837b0a8-0000-4000-8000-000000000004', 'Zedequias', 'Zedequias', 'Zedequias', NULL, '(67) 99666-7777', 'zedequias@detran.pa.gov.br', 'Agente de Trânsito', 'Atendimento CNH', 'zedequias', 'Operador', '["dashboard:visualizar", "geral:visualizar", "protocolo_entrega:visualizar", "manual:visualizar", "cnh:receber", "cnh:entregar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar"]'::jsonb),
+            ('33333333-3333-3333-3333-333333333333', 'Roberto Alves Pereira (Operador)', 'Roberto Alves Pereira', 'Roberto Alves', NULL, '(67) 99333-4444', 'operador@detran.pa.gov.br', 'Agente de Trânsito / Protocolista', 'Guichê de Entrega', 'operador', 'Operador', '["dashboard:visualizar", "geral:visualizar", "protocolo_entrega:visualizar", "manual:visualizar", "cnh:receber", "cnh:entregar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar"]'::jsonb),
+            ('33aa7d87-0000-4000-8000-000000000005', 'Regis', 'Regis', 'Regis', NULL, '(67) 99444-5555', 'regis@detran.pa.gov.br', 'Agente de Trânsito', 'Atendimento CNH', 'regis', 'Operador', '["dashboard:visualizar", "cnh:receber", "cnh:entregar", "consulta_cnh:visualizar", "memorandos:remeter", "memorandos:criar"]'::jsonb),
+            ('44444444-4444-4444-4444-444444444444', 'Juliana Lima Rocha (Consulta)', 'Juliana Lima Rocha (Consulta)', 'Juliana Lima', NULL, '(67) 99444-5555', 'consulta@detran.pa.gov.br', 'Auditora de Controle Interno', 'Auditoria Geral', 'consulta', 'Consulta', '["dashboard:visualizar", "geral:visualizar", "protocolo_entrega:visualizar", "manual:visualizar", "acessos_cidadao:visualizar", "relatorios:visualizar", "historico:visualizar", "auditoria:visualizar"]'::jsonb),
+            ('8bc1be25-0000-4000-8000-000000000006', 'Ivanilde', 'Ivanilde', 'Ivanilde', NULL, '(67) 99555-6666', 'ivanilde@detran.pa.gov.br', 'Agente de Trânsito', 'Atendimento CNH', 'ivanilde', 'Operador', '["memorandos:criar", "memorandos:remeter", "candidatos:visualizar", "consulta_cnh:visualizar", "cnh:entregar", "protocolo_entrega:visualizar"]'::jsonb),
+            ('93fae0a9-657b-4cad-9b75-0a44050a3a6d', 'Ney Atendente', 'Ney Atendente', 'Ney', NULL, NULL, 'ney@gmail.com', 'Agente de Protocolo', 'Protocolo', 'ney', 'Operador', '["geral:visualizar", "dashboard:visualizar"]'::jsonb),
+            ('a3897f28-66bd-401d-afe7-df4b47fb965c', 'Dayane', 'Dayane', 'Day', NULL, NULL, 'dayane@gmail.com', 'Agente de Protocolo', 'Protocolo', 'dayane', 'Operador', '["geral:visualizar", "dashboard:visualizar", "acessos_cidadao:visualizar", "responsaveis:gerenciar", "declaracao:gerenciar"]'::jsonb),
+            ('ca606c23-1574-415c-bfa4-cfd163ce1236', 'Vanessa Aguiar', 'Vanessa Aguiar', 'Vanessa', NULL, NULL, 'vanessa@gmail.com', 'Agente de Protocolo', 'Protocolo', 'vanessa', 'Operador', '["protocolo_entrega:visualizar", "dashboard:visualizar"]'::jsonb),
+            ('00000000-0000-0000-0000-000000000000', 'Agente Sistema', 'Agente Sistema', 'Agente', NULL, NULL, 'sistema@detran.local', 'Agente de Protocolo', 'Protocolo', 'sistema', 'Operador', '["memorandos:criar", "memorandos:remeter", "cnh:receber", "cnh:entregar", "cnh:editar", "mapeamento:gerenciar", "responsaveis:gerenciar", "usuarios:gerenciar", "auditoria:visualizar"]'::jsonb)
+        ) AS t(id, nome, nome_completo, nome_curto, cpf, fone, email, funcao, setor, login, perfil, permissoes)
+    ) LOOP
+        BEGIN
+            INSERT INTO public.usuarios (
+                id, nome, nome_completo, nome_curto, cpf, fone, email, funcao, setor, login, perfil, permissoes, ativo
+            )
+            VALUES (
+                u.id, u.nome, u.nome_completo, u.nome_curto, u.cpf, u.fone, u.email, u.funcao, u.setor, u.login, u.perfil, u.permissoes, true
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                nome = EXCLUDED.nome,
+                nome_completo = EXCLUDED.nome_completo,
+                nome_curto = EXCLUDED.nome_curto,
+                email = EXCLUDED.email,
+                login = EXCLUDED.login,
+                perfil = EXCLUDED.perfil,
+                permissoes = EXCLUDED.permissoes,
+                ativo = true,
+                updated_at = timezone('utc'::text, now());
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
+    END LOOP;
+END $$;
+
 
 -- ==============================================================================
 -- 3. TABELA DE RESPONSÁVEIS PELA RETIRADA DE CNHS (Despachantes, CFCs, Terceiros)
@@ -142,14 +294,14 @@ FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 -- Proteção: O registro padrão "Proprietário" não pode ser excluído
 CREATE OR REPLACE FUNCTION public.proteger_registro_proprietario()
-RETURNS TRIGGER AS 163
+RETURNS TRIGGER AS $$
 BEGIN
     IF OLD.nome = 'Proprietário' OR OLD.cpf = '000.000.000-00' OR OLD.id = 'a0000000-0000-0000-0000-000000000001' THEN
         RAISE EXCEPTION 'O registro padrão Proprietário não pode ser excluído do sistema DETRAN.';
     END IF;
     RETURN OLD;
 END;
-163 LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trigger_proteger_proprietario ON public.responsaveis;
 CREATE TRIGGER trigger_proteger_proprietario
@@ -157,7 +309,7 @@ BEFORE DELETE ON public.responsaveis
 FOR EACH ROW EXECUTE FUNCTION public.proteger_registro_proprietario();
 
 -- Inserção idempotente do Responsável padrão "Proprietário"
-DO 163
+DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.responsaveis WHERE id = 'a0000000-0000-0000-0000-000000000001' OR cpf = '000.000.000-00') THEN
         INSERT INTO public.responsaveis (id, nome, tipo, cpf, telefone, observacao, ativo)
@@ -176,7 +328,7 @@ BEGIN
         WHERE id = 'a0000000-0000-0000-0000-000000000001' OR cpf = '000.000.000-00';
     END IF;
 EXCEPTION WHEN OTHERS THEN NULL;
-END 163;
+END $$;
 
 -- ==============================================================================
 -- 4. TABELA DE MAPEAMENTO DE LOCALIZAÇÃO (Gavetas e Repartições por Inicial)
@@ -201,7 +353,7 @@ BEFORE UPDATE ON public.mapeamento_localizacao
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 -- Seed inicial de mapeamento A-Z
-DO 163
+DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.mapeamento_localizacao LIMIT 1) THEN
         INSERT INTO public.mapeamento_localizacao (inicial, gaveta, reparticao, ativo) VALUES
@@ -233,7 +385,7 @@ BEGIN
         ('Z', 'GAVETA 5', 'REPARTIÇÃO 5', true);
     END IF;
 EXCEPTION WHEN OTHERS THEN NULL;
-END 163;
+END $$;
 
 -- ==============================================================================
 -- 5. TABELA DE MEMORANDOS
@@ -381,12 +533,12 @@ ALTER TABLE public.historico_movimentacoes ADD COLUMN IF NOT EXISTS data_hora TI
 
 -- Proteção: Registros de histórico nunca devem ser excluídos
 CREATE OR REPLACE FUNCTION public.impedir_exclusao_historico()
-RETURNS TRIGGER AS 163
+RETURNS TRIGGER AS $$
 BEGIN
     RAISE EXCEPTION 'Registros de histórico de movimentação são imutáveis e não podem ser excluídos.';
     RETURN OLD;
 END;
-163 LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trigger_impedir_exclusao_historico ON public.historico_movimentacoes;
 CREATE TRIGGER trigger_impedir_exclusao_historico
@@ -418,12 +570,12 @@ ALTER TABLE public.auditoria ADD COLUMN IF NOT EXISTS data_hora TIMESTAMPTZ DEFA
 
 -- Proteção: Logs de auditoria são imutáveis (sem UPDATE ou DELETE)
 CREATE OR REPLACE FUNCTION public.impedir_modificacao_auditoria()
-RETURNS TRIGGER AS 163
+RETURNS TRIGGER AS $$
 BEGIN
     RAISE EXCEPTION 'A tabela de auditoria é estritamente append-only. Operações de UPDATE ou DELETE são proibidas.';
     RETURN NULL;
 END;
-163 LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trigger_impedir_modificacao_auditoria ON public.auditoria;
 CREATE TRIGGER trigger_impedir_modificacao_auditoria
@@ -470,13 +622,13 @@ BEFORE UPDATE ON public.orgao_config
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 -- Inserção idempotente do registro padrão de configurações
-DO 163
+DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.orgao_config WHERE id = 'default') THEN
         INSERT INTO public.orgao_config (id) VALUES ('default');
     END IF;
 EXCEPTION WHEN OTHERS THEN NULL;
-END 163;
+END $$;
 
 -- ==============================================================================
 -- 11. TABELA DE CONSULTAS DO CIDADÃO (LOGS DE ACESSO WEB MOBILE)
@@ -759,7 +911,7 @@ CREATE POLICY "lotes_write_policy" ON public.lotes FOR ALL TO authenticated, ano
 -- ==============================================================================
 -- 17. REPLICAÇÃO SUPABASE REALTIME (13 Tabelas)
 -- ==============================================================================
-DO 163
+DO $$
 DECLARE
     tbl text;
     tbls text[] := ARRAY[
@@ -794,7 +946,7 @@ BEGIN
     END IF;
 EXCEPTION WHEN OTHERS THEN
     NULL;
-END 163;
+END $$;
 
 -- ==============================================================================
 -- 18. PERMISSÕES DE ACESSO (GRANTS) PARA ROLES SUPABASE
@@ -810,7 +962,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, ano
 -- ==============================================================================
 -- 19. CONFIGURAÇÃO DE STORAGE DO SUPABASE (Buckets para Logos e Anexos)
 -- ==============================================================================
-DO 163
+DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'buckets') THEN
         INSERT INTO storage.buckets (id, name, public) 
@@ -827,9 +979,9 @@ BEGIN
     END IF;
 EXCEPTION WHEN OTHERS THEN
     NULL;
-END 163;
+END $$;
 
-DO 163
+DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'objects') THEN
         DROP POLICY IF EXISTS "orgao_logos_public_read" ON storage.objects;
@@ -852,4 +1004,5 @@ BEGIN
     END IF;
 EXCEPTION WHEN OTHERS THEN
     NULL;
-END 163;
+END $$;
+`;

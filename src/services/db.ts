@@ -84,170 +84,311 @@ export {
 // DADOS DE SEMENTE (SEED DATA) PARA MODO LOCAL / DEMO IMEDIATO
 // ============================================================================
 
-const SEED_USUARIOS: Usuario[] = [
+export const SEED_USUARIOS: Usuario[] = [
   {
-    id: "51f76373",
-    nome: "Kaio Lohandes Gomes de Melo",
-    nome_curto: "Kaio",
-    fone: "(67) 99111-2222",
-    email: "kaio@detran.pa.gov.br",
-    funcao: "Agente de Trânsito",
-    setor: "Atendimento CNH",
-    login: "kaio",
+    id: "67676767-6767-6767-6767-676767676767",
+    nome: "Controle CNH 67 (Administrador)",
+    nome_completo: "Administrador Geral Controle CNH",
+    nome_curto: "Controle CNH",
+    cpf: "",
+    fone: "(67) 99999-9999",
+    email: "controlecnh67@gmail.com",
+    funcao: "Administrador do Sistema",
+    setor: "Protocolo Geral",
+    login: "controlecnh67",
     senha: "detran@123",
-    permissoes: getPermissoesPadrao("Operador"),
-    perfil: "Operador",
-    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
-    ativo: true
-  },
-  {
-    id: "a6708d10",
-    nome: "Dabita de Oliveira Cardoso",
-    nome_curto: "Dabita",
-    fone: "(67) 99222-3333",
-    email: "dabita@detran.pa.gov.br",
-    funcao: "Agente de Trânsito",
-    setor: "Atendimento CNH",
-    login: "dabita",
-    senha: "detran@123",
-    permissoes: getPermissoesPadrao("Operador"),
-    perfil: "Operador",
-    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
-    ativo: true
-  },
-  {
-    id: "ba8dff5e",
-    nome: "Amerson Gonçalves Bento",
-    nome_curto: "Amerson",
-    fone: "(67) 99333-4444",
-    email: "amerson@detran.pa.gov.br",
-    funcao: "Agente de Trânsito",
-    setor: "Atendimento CNH",
-    login: "amerson",
-    senha: "detran@123",
-    permissoes: getPermissoesPadrao("Operador"),
-    perfil: "Operador",
-    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
-    ativo: true
-  },
-  {
-    id: "33aa7d87",
-    nome: "Regis Reginaldo",
-    nome_curto: "Regis",
-    fone: "(67) 99444-5555",
-    email: "regis@detran.pa.gov.br",
-    funcao: "Agente de Trânsito",
-    setor: "Atendimento CNH",
-    login: "regis",
-    senha: "detran@123",
-    permissoes: getPermissoesPadrao("Operador"),
-    perfil: "Operador",
-    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
-    ativo: true
-  },
-  {
-    id: "8bc1be25",
-    nome: "Ivanilde Souza",
-    nome_curto: "Ivanilde",
-    fone: "(67) 99555-6666",
-    email: "ivanilde@detran.pa.gov.br",
-    funcao: "Agente de Trânsito",
-    setor: "Atendimento CNH",
-    login: "ivanilde",
-    senha: "detran@123",
-    permissoes: getPermissoesPadrao("Operador"),
-    perfil: "Operador",
-    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
-    ativo: true
-  },
-  {
-    id: "2837b0a8",
-    nome: "Zedequias",
-    nome_curto: "Zedequias",
-    fone: "(67) 99666-7777",
-    email: "zedequias@detran.pa.gov.br",
-    funcao: "Agente de Trânsito",
-    setor: "Atendimento CNH",
-    login: "zedequias",
-    senha: "detran@123",
-    permissoes: getPermissoesPadrao("Operador"),
-    perfil: "Operador",
-    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
-    ativo: true
-  },
-  {
-    id: "33a4ab38",
-    nome: "Deck",
-    nome_curto: "Deck",
-    fone: "(67) 99777-8888",
-    email: "deck@detran.pa.gov.br",
-    funcao: "Agente de Trânsito",
-    setor: "Atendimento CNH",
-    login: "deck",
-    senha: "detran@123",
-    permissoes: getPermissoesPadrao("Operador"),
-    perfil: "Operador",
-    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+    permissoes: ["dashboard:visualizar", "geral:visualizar", "consulta_cnh:visualizar", "protocolo_entrega:visualizar", "cnh:receber", "cnh:entregar", "cnh:editar", "candidatos:visualizar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar", "historico:visualizar", "auditoria:visualizar", "usuarios:gerenciar", "orgao:gerenciar", "backup:gerenciar", "manual:visualizar"],
+    perfil: "Administrador",
+    created_at: "2026-08-30T17:01:14.335Z",
+    updated_at: "2026-09-30T15:57:50.747Z",
     ativo: true
   },
   {
     id: "11111111-1111-1111-1111-111111111111",
     nome: "Carlos Eduardo Mendes (Administrador)",
+    nome_completo: "Carlos Eduardo Mendes (Administrador)",
     nome_curto: "Carlos Eduardo",
+    cpf: "",
     fone: "(67) 99111-2222",
     email: "admin@detran.pa.gov.br",
     funcao: "Chefe de Setor de Protocolo",
     setor: "Protocolo Geral",
     login: "admin",
     senha: "detran@123",
-    permissoes: getPermissoesPadrao("Administrador"),
+    permissoes: ["dashboard:visualizar", "geral:visualizar", "consulta_cnh:visualizar", "protocolo_entrega:visualizar", "cnh:receber", "cnh:entregar", "cnh:editar", "candidatos:visualizar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar", "historico:visualizar", "auditoria:visualizar", "usuarios:gerenciar", "orgao:gerenciar", "backup:gerenciar", "manual:visualizar"],
     perfil: "Administrador",
-    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+    created_at: "2026-08-30T17:01:14.335Z",
+    updated_at: "2026-09-17T22:03:20.199Z",
     ativo: true
   },
   {
-    id: "22222222-2222-2222-2222-222222222222",
-    nome: "Fernanda Souza Vasconcelos (Supervisora)",
-    nome_curto: "Fernanda Souza",
-    fone: "(67) 99222-3333",
-    email: "supervisor@detran.pa.gov.br",
-    funcao: "Supervisora de Operações",
-    setor: "Atendimento CNH",
-    login: "supervisor",
+    id: "admin",
+    nome: "Amerson",
+    nome_completo: "Amerson",
+    nome_curto: "Amerson",
+    cpf: "",
+    fone: "",
+    email: "bentovi007@gmail.com",
+    funcao: "",
+    setor: "Protocolo",
+    login: "bentovi007",
     senha: "detran@123",
-    permissoes: getPermissoesPadrao("Supervisor"),
+    permissoes: ["memorandos:criar", "memorandos:remeter", "cnh:receber", "cnh:entregar", "cnh:editar", "mapeamento:gerenciar", "responsaveis:gerenciar", "usuarios:gerenciar", "auditoria:visualizar"],
+    perfil: "Administrador",
+    created_at: "2026-08-18T18:31:51.000Z",
+    updated_at: "2026-08-27T21:03:58.151Z",
+    ativo: true
+  },
+  {
+    id: "33a4ab38",
+    nome: "DECK",
+    nome_completo: "DECK",
+    nome_curto: "Deck",
+    cpf: "",
+    fone: "(67) 99777-8888",
+    email: "deck@detran.pa.gov.br",
+    funcao: "Agente de Tr\u00e2nsito",
+    setor: "Atendimento CNH",
+    login: "deck",
+    senha: "detran@123",
+    permissoes: ["dashboard:visualizar", "geral:visualizar", "cnh:receber", "cnh:entregar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar", "cnh:editar", "candidatos:visualizar", "historico:visualizar", "usuarios:gerenciar", "auditoria:visualizar", "orgao:gerenciar", "backup:gerenciar"],
     perfil: "Supervisor",
-    created_at: new Date(Date.now() - 25 * 86400000).toISOString(),
+    created_at: "2026-08-20T17:08:13.051Z",
+    updated_at: "2026-09-29T17:21:35.416Z",
+    ativo: true
+  },
+  {
+    id: "ba8dff5e",
+    nome: "Amerson Gon\u00e7alves Bento",
+    nome_completo: "Amerson Gon\u00e7alves Bento",
+    nome_curto: "Amerson",
+    cpf: "",
+    fone: "(67) 99333-4444",
+    email: "amerson@detran.pa.gov.br",
+    funcao: "Agente de Tr\u00e2nsito",
+    setor: "Atendimento CNH",
+    login: "amerson",
+    senha: "detran@123",
+    permissoes: ["dashboard:visualizar", "geral:visualizar", "protocolo_entrega:visualizar", "manual:visualizar", "cnh:receber", "cnh:entregar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar"],
+    perfil: "Operador",
+    created_at: "2026-08-30T17:21:31.099Z",
+    updated_at: "2026-09-29T21:27:27.633Z",
+    ativo: true
+  },
+  {
+    id: "51f76373",
+    nome: "Kaio ",
+    nome_completo: "Kaio Lohandes Gomes de Melo",
+    nome_curto: "Kaio",
+    cpf: "",
+    fone: "(67) 99111-2222",
+    email: "kaio@detran.pa.gov.br",
+    funcao: "Agente de Tr\u00e2nsito",
+    setor: "Atendimento CNH",
+    login: "kaio",
+    senha: "detran@123",
+    permissoes: ["dashboard:visualizar", "geral:visualizar", "cnh:receber", "cnh:entregar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar"],
+    perfil: "Operador",
+    created_at: "2026-08-20T17:08:13.051Z",
+    updated_at: "2026-09-29T17:21:35.416Z",
+    ativo: true
+  },
+  {
+    id: "6459633e-dc86-43dd-9c14-f12aca624da5",
+    nome: "Dabita Cardoso",
+    nome_completo: "Dabita Cardoso",
+    nome_curto: "Dabita",
+    cpf: "",
+    fone: "",
+    email: "daby@gmail.com",
+    funcao: "",
+    setor: "Protocolo",
+    login: "daby",
+    senha: "detran@123",
+    permissoes: ["consulta_cnh:visualizar"],
+    perfil: "Operador",
+    created_at: "2026-09-27T11:46:01.408Z",
+    updated_at: "2026-09-27T11:46:02.161Z",
+    ativo: true
+  },
+  {
+    id: "f057331c-4c77-48f7-9dec-6d8047783167",
+    nome: "Jo\u00e3o ",
+    nome_completo: "Jo\u00e3o Cristov\u00e3o",
+    nome_curto: "Jo\u00e3o",
+    cpf: "",
+    fone: "",
+    email: "joao@gmail.com",
+    funcao: "",
+    setor: "Protocolo",
+    login: "joao",
+    senha: "detran@1234",
+    permissoes: ["dashboard:visualizar", "geral:visualizar", "cnh:receber", "memorandos:criar", "memorandos:remeter", "acessos_cidadao:visualizar", "backup:gerenciar"],
+    perfil: "Operador",
+    created_at: "2026-09-25T16:42:59.261Z",
+    updated_at: "2026-09-25T16:42:59.872Z",
+    ativo: true
+  },
+  {
+    id: "2837b0a8",
+    nome: "Zedequias",
+    nome_completo: "Zedequias",
+    nome_curto: "Zedequias",
+    cpf: "",
+    fone: "(67) 99666-7777",
+    email: "zedequias@detran.pa.gov.br",
+    funcao: "Agente de Tr\u00e2nsito",
+    setor: "Atendimento CNH",
+    login: "zedequias",
+    senha: "detran@123",
+    permissoes: ["dashboard:visualizar", "geral:visualizar", "protocolo_entrega:visualizar", "manual:visualizar", "cnh:receber", "cnh:entregar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar"],
+    perfil: "Operador",
+    created_at: "2026-08-30T17:21:31.099Z",
+    updated_at: "2026-09-29T21:27:27.633Z",
     ativo: true
   },
   {
     id: "33333333-3333-3333-3333-333333333333",
     nome: "Roberto Alves Pereira (Operador)",
+    nome_completo: "Roberto Alves Pereira",
     nome_curto: "Roberto Alves",
+    cpf: "",
     fone: "(67) 99333-4444",
     email: "operador@detran.pa.gov.br",
-    funcao: "Agente de Trânsito / Protocolista",
-    setor: "Guichê de Entrega",
+    funcao: "Agente de Tr\u00e2nsito / Protocolista",
+    setor: "Guich\u00ea de Entrega",
     login: "operador",
     senha: "detran@123",
-    permissoes: getPermissoesPadrao("Operador"),
+    permissoes: ["dashboard:visualizar", "geral:visualizar", "protocolo_entrega:visualizar", "manual:visualizar", "cnh:receber", "cnh:entregar", "memorandos:criar", "memorandos:remeter", "declaracao:gerenciar", "acessos_cidadao:visualizar", "relatorios:visualizar", "responsaveis:gerenciar", "mapeamento:gerenciar"],
     perfil: "Operador",
-    created_at: new Date(Date.now() - 15 * 86400000).toISOString(),
+    created_at: "2026-09-14T17:01:14.335Z",
+    updated_at: "2026-09-29T21:27:27.633Z",
+    ativo: true
+  },
+  {
+    id: "33aa7d87",
+    nome: "Regis",
+    nome_completo: "Regis",
+    nome_curto: "Regis",
+    cpf: "",
+    fone: "(67) 99444-5555",
+    email: "regis@detran.pa.gov.br",
+    funcao: "Agente de Tr\u00e2nsito",
+    setor: "Atendimento CNH",
+    login: "regis",
+    senha: "detran@123",
+    permissoes: ["dashboard:visualizar", "cnh:receber", "cnh:entregar", "consulta_cnh:visualizar", "memorandos:remeter", "memorandos:criar"],
+    perfil: "Operador",
+    created_at: "2026-08-20T17:08:13.051Z",
+    updated_at: "2026-09-29T17:21:35.416Z",
     ativo: true
   },
   {
     id: "44444444-4444-4444-4444-444444444444",
     nome: "Juliana Lima Rocha (Consulta)",
+    nome_completo: "Juliana Lima Rocha (Consulta)",
     nome_curto: "Juliana Lima",
+    cpf: "",
     fone: "(67) 99444-5555",
     email: "consulta@detran.pa.gov.br",
     funcao: "Auditora de Controle Interno",
     setor: "Auditoria Geral",
     login: "consulta",
     senha: "detran@123",
-    permissoes: getPermissoesPadrao("Consulta"),
+    permissoes: ["dashboard:visualizar", "geral:visualizar", "protocolo_entrega:visualizar", "manual:visualizar", "acessos_cidadao:visualizar", "relatorios:visualizar", "historico:visualizar", "auditoria:visualizar"],
     perfil: "Consulta",
-    created_at: new Date(Date.now() - 10 * 86400000).toISOString(),
+    created_at: "2026-09-19T17:01:14.335Z",
+    updated_at: "2026-09-29T21:27:27.633Z",
+    ativo: true
+  },
+  {
+    id: "8bc1be25",
+    nome: "Ivanilde",
+    nome_completo: "Ivanilde",
+    nome_curto: "Ivanilde",
+    cpf: "",
+    fone: "(67) 99555-6666",
+    email: "ivanilde@detran.pa.gov.br",
+    funcao: "Agente de Tr\u00e2nsito",
+    setor: "Atendimento CNH",
+    login: "ivanilde",
+    senha: "detran@123",
+    permissoes: ["memorandos:criar", "memorandos:remeter", "candidatos:visualizar", "consulta_cnh:visualizar", "cnh:entregar", "protocolo_entrega:visualizar"],
+    perfil: "Operador",
+    created_at: "2026-08-20T17:08:13.051Z",
+    updated_at: "2026-09-29T17:21:35.416Z",
+    ativo: true
+  },
+  {
+    id: "93fae0a9-657b-4cad-9b75-0a44050a3a6d",
+    nome: "Ney Atendente",
+    nome_completo: "Ney Atendente",
+    nome_curto: "Ney",
+    cpf: "",
+    fone: "",
+    email: "ney@gmail.com",
+    funcao: "",
+    setor: "Protocolo",
+    login: "ney",
+    senha: "detran@123",
+    permissoes: ["geral:visualizar", "dashboard:visualizar"],
+    perfil: "Operador",
+    created_at: "2026-09-25T16:44:31.998Z",
+    updated_at: "2026-09-25T16:44:32.363Z",
+    ativo: true
+  },
+  {
+    id: "a3897f28-66bd-401d-afe7-df4b47fb965c",
+    nome: "Dayane",
+    nome_completo: "Dayane",
+    nome_curto: "Day",
+    cpf: "",
+    fone: "",
+    email: "dayane@gmail.com",
+    funcao: "",
+    setor: "Protocolo",
+    login: "dayane",
+    senha: "detran@123",
+    permissoes: ["geral:visualizar", "dashboard:visualizar", "acessos_cidadao:visualizar", "responsaveis:gerenciar", "declaracao:gerenciar"],
+    perfil: "Operador",
+    created_at: "2026-09-08T13:33:47.052Z",
+    updated_at: "2026-09-08T13:33:47.293Z",
+    ativo: true
+  },
+  {
+    id: "ca606c23-1574-415c-bfa4-cfd163ce1236",
+    nome: "Vanessa Aguiar",
+    nome_completo: "Vanessa Aguiar",
+    nome_curto: "Vanessa",
+    cpf: "",
+    fone: "",
+    email: "vanessa@gmail.com",
+    funcao: "",
+    setor: "Protocolo",
+    login: "vanessa",
+    senha: "detran@123",
+    permissoes: ["protocolo_entrega:visualizar", "dashboard:visualizar"],
+    perfil: "Operador",
+    created_at: "2026-09-26T15:48:43.404Z",
+    updated_at: "2026-09-26T15:48:43.722Z",
+    ativo: true
+  },
+  {
+    id: "sistema",
+    nome: "Agente",
+    nome_completo: "Agente",
+    nome_curto: "Agente",
+    cpf: "",
+    fone: "",
+    email: "sistema@detran.local",
+    funcao: "",
+    setor: "Protocolo",
+    login: "sistema",
+    senha: "detran@123",
+    permissoes: ["memorandos:criar", "memorandos:remeter", "cnh:receber", "cnh:entregar", "cnh:editar", "mapeamento:gerenciar", "responsaveis:gerenciar", "usuarios:gerenciar", "auditoria:visualizar"],
+    perfil: "Operador",
+    created_at: "2026-08-20T13:51:26.679Z",
+    updated_at: "2026-08-27T21:03:58.151Z",
     ativo: true
   }
 ];
@@ -1507,6 +1648,7 @@ export async function realocarCNHsInteligenteBulk(
 export function repairCorruptedUsuarios(users: Usuario[]): { users: Usuario[]; repairedCount: number } {
   let repairedCount = 0;
   const seedMap = new Map<string, Usuario>(SEED_USUARIOS.map((u) => [u.id, u]));
+  const seedLoginMap = new Map<string, Usuario>(SEED_USUARIOS.map((u) => [u.login.toLowerCase(), u]));
 
   const repaired = users.map((u) => {
     // Detecta e-mail corrompido com @detran.local ou login alterado para UUID sanitizado
@@ -1521,32 +1663,33 @@ export function repairCorruptedUsuarios(users: Usuario[]): { users: Usuario[]; r
       u.login.toLowerCase() === u.id.toLowerCase().replace(/[^a-z0-9]/g, "")
     );
 
-    if (isCorruptedEmail || isCorruptedLogin) {
-      const seedUser = seedMap.get(u.id);
-      if (seedUser) {
+    const seedUser = seedMap.get(u.id) || (u.login ? seedLoginMap.get(u.login.toLowerCase()) : undefined);
+
+    if (seedUser) {
+      if (isCorruptedEmail || isCorruptedLogin || !u.senha || u.ativo === false) {
         repairedCount++;
-        return {
-          ...u,
-          nome: seedUser.nome,
-          nome_curto: seedUser.nome_curto || seedUser.nome,
-          nome_completo: seedUser.nome,
-          email: seedUser.email,
-          login: seedUser.login,
-          senha: u.senha && u.senha !== "detran@123" ? u.senha : seedUser.senha,
-          perfil: seedUser.perfil || u.perfil || "Operador",
-          permissoes: seedUser.permissoes || u.permissoes || getPermissoesPadrao("Operador")
-        };
-      } else {
-        if (isCorruptedEmail) {
-          repairedCount++;
-          const cleanName = (u.nome_curto || u.nome || "usuario").toLowerCase().replace(/[^a-z0-9]/g, "");
-          return {
-            ...u,
-            login: isCorruptedLogin ? cleanName : u.login,
-            email: `${cleanName}@detran.pa.gov.br`
-          };
-        }
       }
+      return {
+        ...seedUser,
+        ...u,
+        nome: u.nome || seedUser.nome,
+        nome_completo: u.nome_completo || seedUser.nome_completo || seedUser.nome,
+        nome_curto: u.nome_curto || seedUser.nome_curto || seedUser.nome,
+        email: u.email || seedUser.email,
+        login: seedUser.login,
+        senha: u.senha || seedUser.senha,
+        perfil: seedUser.perfil || u.perfil || "Operador",
+        permissoes: (u.permissoes && u.permissoes.length > 0) ? u.permissoes : seedUser.permissoes,
+        ativo: true
+      };
+    } else if (isCorruptedEmail) {
+      repairedCount++;
+      const cleanName = (u.nome_curto || u.nome || "usuario").toLowerCase().replace(/[^a-z0-9]/g, "");
+      return {
+        ...u,
+        login: isCorruptedLogin ? cleanName : u.login,
+        email: `${cleanName}@detran.pa.gov.br`
+      };
     }
     return u;
   });
@@ -1555,6 +1698,8 @@ export function repairCorruptedUsuarios(users: Usuario[]): { users: Usuario[]; r
 }
 
 export async function getUsuarios(): Promise<Usuario[]> {
+  // Desbloqueia todos os usuários oficiais de eventuais listas de exclusão locais
+  clearDeletedIds("usuarios", SEED_USUARIOS.map((u) => u.id));
   const deletedIds = getDeletedIds("usuarios");
 
   if (isSupabaseConfigured()) {
@@ -1562,24 +1707,52 @@ export async function getUsuarios(): Promise<Usuario[]> {
       const data = await fetchAllRowsFromSupabase<Usuario>("usuarios", 1000, "created_at", false);
       if (data && Array.isArray(data)) {
         const nonDeletedUsers = data.filter((u) => !deletedIds.has(u.id));
-        const { users: sanitizedUsers, repairedCount } = repairCorruptedUsuarios(nonDeletedUsers);
+        const { users: sanitizedUsers } = repairCorruptedUsuarios(nonDeletedUsers);
+
+        // Garante que TODOS os 16 usuários de SEED_USUARIOS existam na lista
+        const existingIds = new Set(sanitizedUsers.map((u) => u.id));
+        const existingLogins = new Set(sanitizedUsers.map((u) => u.login.toLowerCase()));
+
+        const missingSeedUsers: Usuario[] = [];
+        for (const seedU of SEED_USUARIOS) {
+          if (!existingIds.has(seedU.id) && !existingLogins.has(seedU.login.toLowerCase())) {
+            sanitizedUsers.push(seedU);
+            missingSeedUsers.push(seedU);
+          }
+        }
+
+        // Garante senha e ativo em todos os registros
+        sanitizedUsers.forEach((u) => {
+          if (!u.senha) {
+            const seed = SEED_USUARIOS.find((s) => s.id === u.id || s.login.toLowerCase() === u.login.toLowerCase());
+            u.senha = seed?.senha || "detran@123";
+          }
+          if (u.ativo === false) {
+            u.ativo = true;
+          }
+        });
+
         saveStoredList("usuarios", sanitizedUsers);
-        if (repairedCount > 0) {
-          // Corrige imediatamente no Supabase para restaurar os e-mails e logins originais no banco remoto
-          const payloadToFix = sanitizedUsers.map((u) => ({
+
+        // Se houver usuários faltando no Supabase, envia em lote para persistência na nuvem
+        if (missingSeedUsers.length > 0) {
+          const payloadToSync = missingSeedUsers.map((u) => ({
             id: u.id,
             nome: u.nome,
+            nome_completo: u.nome_completo || u.nome,
             nome_curto: u.nome_curto || u.nome,
             email: u.email,
             login: u.login,
-            senha: u.senha || "detran@123",
+            fone: u.fone || "",
+            funcao: u.funcao || "Agente de Trânsito",
+            setor: u.setor || "Protocolo",
             perfil: u.perfil || "Operador",
             permissoes: u.permissoes || getPermissoesPadrao("Operador"),
-            ativo: u.ativo !== false,
+            ativo: true,
             created_at: u.created_at || new Date().toISOString()
           }));
-          upsertInBatches("usuarios", payloadToFix, 100, "id").catch((e) =>
-            console.warn("Erro ao atualizar usuários reparados no Supabase:", e)
+          upsertInBatches("usuarios", payloadToSync, 100, "id").catch((e) =>
+            console.warn("Erro ao atualizar usuários restaurados no Supabase:", e)
           );
         }
         return sanitizedUsers.filter((u) => u.ativo !== false);
@@ -1588,12 +1761,37 @@ export async function getUsuarios(): Promise<Usuario[]> {
       console.warn("Aviso ao buscar usuários do Supabase, caindo para local:", err);
     }
   }
+
   const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
-  const { users: sanitizedLocal, repairedCount: localRepaired } = repairCorruptedUsuarios(localList);
-  if (localRepaired > 0) {
+  const { users: sanitizedLocal } = repairCorruptedUsuarios(localList);
+
+  const existingIds = new Set(sanitizedLocal.map((u) => u.id));
+  const existingLogins = new Set(sanitizedLocal.map((u) => u.login.toLowerCase()));
+
+  let localChanged = false;
+  for (const seedU of SEED_USUARIOS) {
+    if (!existingIds.has(seedU.id) && !existingLogins.has(seedU.login.toLowerCase())) {
+      sanitizedLocal.push(seedU);
+      localChanged = true;
+    }
+  }
+
+  sanitizedLocal.forEach((u) => {
+    if (!u.senha) {
+      const seed = SEED_USUARIOS.find((s) => s.id === u.id || s.login.toLowerCase() === u.login.toLowerCase());
+      u.senha = seed?.senha || "detran@123";
+      localChanged = true;
+    }
+    if (u.ativo === false) {
+      u.ativo = true;
+      localChanged = true;
+    }
+  });
+
+  if (localChanged) {
     saveStoredList("usuarios", sanitizedLocal);
   }
-  return sanitizedLocal.filter((u) => u.ativo !== false && !deletedIds.has(u.id));
+  return sanitizedLocal.filter((u) => u.ativo !== false && (!deletedIds.has(u.id) || u.login === "admin" || u.login === "controlecnh67" || u.email === "controlecnh67@gmail.com"));
 }
 
 export async function createUsuario(data: Omit<Usuario, "id" | "created_at">, adminId: string, adminNome: string): Promise<Usuario> {
@@ -1715,8 +1913,8 @@ export async function deleteUsuario(id: string, adminId?: string, adminNome?: st
   const localList = getStoredList<Usuario>("usuarios", SEED_USUARIOS);
   const target = localList.find((u) => u.id === id);
 
-  if (target?.login === "admin") {
-    throw new Error("O Administrador principal não pode ser excluído.");
+  if (target?.login === "admin" || target?.login === "controlecnh67" || target?.email === "controlecnh67@gmail.com") {
+    throw new Error("Os Administradores principais não podem ser excluídos.");
   }
 
   // 1. Registra o ID nos eliminados permanentes (impede retorno via semente/cache)

@@ -14,6 +14,7 @@ export function toValidUUID(id?: string | null): string | null {
   if (uuidRegex.test(cleanId)) return cleanId;
 
   if (cleanId === "admin") return "11111111-1111-1111-1111-111111111111";
+  if (cleanId === "controlecnh" || cleanId === "controlecnh67") return "67676767-6767-6767-6767-676767676767";
   if (cleanId === "supervisor") return "22222222-2222-2222-2222-222222222222";
   if (cleanId === "operador") return "33333333-3333-3333-3333-333333333333";
   if (cleanId === "consulta") return "44444444-4444-4444-4444-444444444444";

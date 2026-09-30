@@ -31,6 +31,7 @@ import {
   notifyDataSync, 
   getStoredList, 
   saveStoredList, 
+  idbGet,
   idbSet, 
   getDeletedIds, 
   getAcessosCidadaoLogs 

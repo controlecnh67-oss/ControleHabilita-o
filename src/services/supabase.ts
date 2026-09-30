@@ -4,8 +4,8 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 // CLIENTE DE CONEXÃO COM O SUPABASE (POSTGRESQL)
 // ============================================================================
 
-const DEFAULT_URL = "https://sua-url.supabase.co";
-const DEFAULT_KEY = "sua-chave-anon";
+const DEFAULT_URL = "https://kynwmpcmiewwzmrctgxd.supabase.co";
+const DEFAULT_KEY = "sb_publishable_5-c82JGP1cvqTAp1Hr0PbA_zh4RxHbj";
 
 export interface SupabaseConfigInfo {
   url: string;
@@ -20,12 +20,16 @@ export function getSupabaseCredentials(): SupabaseConfigInfo {
   const localUrl = typeof window !== 'undefined' ? localStorage.getItem("detran_supabase_url") : null;
   const localKey = typeof window !== 'undefined' ? localStorage.getItem("detran_supabase_key") : null;
 
-  if (localUrl && localKey && localUrl.trim() !== "" && localUrl !== DEFAULT_URL) {
+  if (localUrl && localKey && localUrl.trim() !== "" && localUrl !== "https://sua-url.supabase.co") {
     return { url: localUrl.trim(), key: localKey.trim(), source: 'local' };
   }
 
-  if (envUrl && envKey && envUrl.trim() !== "" && envUrl !== DEFAULT_URL && envUrl !== "https://seu-projeto.supabase.co") {
+  if (envUrl && envKey && envUrl.trim() !== "" && envUrl !== "https://sua-url.supabase.co" && envUrl !== "https://seu-projeto.supabase.co") {
     return { url: envUrl.trim(), key: envKey.trim(), source: 'env' };
+  }
+
+  if (DEFAULT_URL && !DEFAULT_URL.includes("sua-url") && !DEFAULT_URL.includes("seu-projeto")) {
+    return { url: DEFAULT_URL, key: DEFAULT_KEY, source: 'env' };
   }
 
   return {
@@ -68,7 +72,7 @@ export function isSupabaseConfigured(): boolean {
     source !== 'none' &&
     !!url &&
     !!key &&
-    url !== DEFAULT_URL &&
+    url !== "https://sua-url.supabase.co" &&
     url !== "https://seu-projeto.supabase.co"
   );
 }

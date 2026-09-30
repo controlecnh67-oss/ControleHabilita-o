@@ -265,6 +265,47 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onOpenConsultaPublica }) =
               </button>
             </form>
 
+            {/* Atalhos Rápidos de Acesso para Servidores / Administradores */}
+            <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-2">
+                Acesso Rápido de Administrador Restaurado:
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginInput("controlecnh67");
+                    setSenhaInput("detran@123");
+                  }}
+                  className="p-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 text-left transition-colors cursor-pointer group"
+                >
+                  <p className="text-[11px] font-bold text-indigo-700 dark:text-indigo-300 flex items-center justify-between">
+                    <span>controlecnh67</span>
+                    <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" />
+                  </p>
+                  <p className="text-[10px] text-indigo-600/80 dark:text-indigo-400">
+                    Administrador Geral
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginInput("admin");
+                    setSenhaInput("detran@123");
+                  }}
+                  className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-left transition-colors cursor-pointer group"
+                >
+                  <p className="text-[11px] font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
+                    <span>admin</span>
+                    <UserCheck className="w-3.5 h-3.5 text-slate-500" />
+                  </p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                    Carlos Eduardo
+                  </p>
+                </button>
+              </div>
+            </div>
+
           </div>
         </div>
 

@@ -50,6 +50,7 @@ import {
   supabase, 
   isSupabaseConfigured 
 } from "../services/supabase";
+import { SUPABASE_MASTER_SQL } from "../services/supabaseSchemaSql";
 import { GoogleDriveBackupCard } from "../components/GoogleDriveBackupCard";
 import { useAutoSync, reconcilePendingDifferences } from "../services/autoSyncService";
 
@@ -67,384 +68,21 @@ export const BackupSyncPage: React.FC = () => {
   const [pingStatus, setPingStatus] = useState<{ status: 'idle' | 'testing' | 'success' | 'error'; message?: string; latency?: number }>({ status: 'idle' });
 
   const handleCopyFullSchemaSql = () => {
-    const sql = `-- ==============================================================================
--- SISTEMA DE CONTROLE DE CNH - DETRAN (SETOR DE PROTOCOLO)
--- SCRIPT MESTRE DE BANCO DE DADOS POSTGRESQL + SUPABASE AUTH + REALTIME + STORAGE
--- Versão 3.0.0 - Oficial, Idempotente e Compatível com Vercel / Supabase
--- ==============================================================================
-
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
-CREATE OR REPLACE FUNCTION public.set_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = timezone('utc'::text, now());
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- 1. TABELA DE USUÁRIOS
-CREATE TABLE IF NOT EXISTS public.usuarios (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    nome VARCHAR(255) NOT NULL,
-    nome_curto VARCHAR(100) NOT NULL,
-    fone VARCHAR(50),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    funcao VARCHAR(100) DEFAULT 'Agente de Trânsito',
-    setor VARCHAR(100) DEFAULT 'Protocolo',
-    login VARCHAR(100) UNIQUE NOT NULL,
-    perfil VARCHAR(50) NOT NULL CHECK (perfil IN ('Administrador', 'Supervisor', 'Operador', 'Consulta')),
-    permissoes JSONB DEFAULT '[]'::jsonb,
-    ativo BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
-ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
-ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
-ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS permissoes JSONB DEFAULT '[]'::jsonb;
-ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE;
-
--- 2. TABELA DE RESPONSÁVEIS
-CREATE TABLE IF NOT EXISTS public.responsaveis (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    nome VARCHAR(255) NOT NULL,
-    tipo VARCHAR(50) DEFAULT 'Despachante',
-    cpf VARCHAR(14) UNIQUE NOT NULL,
-    telefone VARCHAR(50),
-    registro VARCHAR(100),
-    observacao TEXT,
-    ativo BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
-ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS tipo VARCHAR(50) DEFAULT 'Despachante';
-ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
-ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
-ALTER TABLE public.responsaveis ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE;
-
--- Inserção segura do Responsável padrão "Proprietário"
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM public.responsaveis WHERE id = 'a0000000-0000-0000-0000-000000000001' OR cpf = '000.000.000-00') THEN
-        INSERT INTO public.responsaveis (id, nome, tipo, cpf, telefone, observacao, ativo)
-        VALUES (
-            'a0000000-0000-0000-0000-000000000001',
-            'Proprietário',
-            'Titular',
-            '000.000.000-00',
-            '(93) 00000-0000',
-            'Titular da CNH retirando seu próprio documento no guichê',
-            TRUE
-        );
-    ELSE
-        UPDATE public.responsaveis 
-        SET nome = 'Proprietário', tipo = 'Titular', ativo = TRUE 
-        WHERE id = 'a0000000-0000-0000-0000-000000000001' OR cpf = '000.000.000-00';
-    END IF;
-END $$;
-
--- 3. TABELA DE MAPEAMENTO DE LOCALIZAÇÃO
-CREATE TABLE IF NOT EXISTS public.mapeamento_localizacao (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    inicial VARCHAR(5) UNIQUE NOT NULL,
-    gaveta VARCHAR(50) NOT NULL,
-    reparticao VARCHAR(50) NOT NULL,
-    ativo BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
-ALTER TABLE public.mapeamento_localizacao ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
-ALTER TABLE public.mapeamento_localizacao ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
-ALTER TABLE public.mapeamento_localizacao ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE;
-
--- 4. TABELA DE MEMORANDOS
-CREATE TABLE IF NOT EXISTS public.memorandos (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    numero VARCHAR(100) NOT NULL,
-    usuario_id UUID REFERENCES public.usuarios(id) ON DELETE SET NULL,
-    usuario_nome VARCHAR(255),
-    remessa VARCHAR(100),
-    status VARCHAR(50) NOT NULL DEFAULT 'Em elaboração' CHECK (status IN ('Em elaboração', 'Remetido', 'Recebido')),
-    candidatos_count INTEGER DEFAULT 0,
-    remetido_em TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
-ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
-ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
-ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS candidatos_count INTEGER DEFAULT 0;
-ALTER TABLE public.memorandos ADD COLUMN IF NOT EXISTS remetido_em TIMESTAMPTZ;
-
--- 5. TABELA DE CANDIDATOS
-CREATE TABLE IF NOT EXISTS public.candidatos (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    memorando_id UUID REFERENCES public.memorandos(id) ON DELETE CASCADE,
-    numero VARCHAR(50),
-    pa VARCHAR(20),
-    nome VARCHAR(255) NOT NULL,
-    cpf VARCHAR(14) NOT NULL,
-    telefone VARCHAR(50),
-    remessa VARCHAR(100),
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
-ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
-ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS remessa VARCHAR(100);
-ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS telefone VARCHAR(50);
-ALTER TABLE public.candidatos ADD COLUMN IF NOT EXISTS pa VARCHAR(20);
-
--- 6. TABELA OFICIAL DE CNHS (GERAL_CNHS)
-CREATE SEQUENCE IF NOT EXISTS public.geral_cnhs_ordem_seq START 1;
-
-CREATE TABLE IF NOT EXISTS public.geral_cnhs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    ordem INTEGER NOT NULL DEFAULT nextval('public.geral_cnhs_ordem_seq'),
-    memorando_id UUID REFERENCES public.memorandos(id) ON DELETE SET NULL,
-    candidato_id UUID REFERENCES public.candidatos(id) ON DELETE SET NULL,
-    pa VARCHAR(20),
-    nome VARCHAR(255) NOT NULL,
-    cpf VARCHAR(14) NOT NULL,
-    telefone VARCHAR(50),
-    notificado_whatsapp BOOLEAN DEFAULT FALSE,
-    notificado_at TIMESTAMPTZ,
-    gaveta VARCHAR(50) DEFAULT '',
-    reparticao VARCHAR(50) DEFAULT '',
-    situacao VARCHAR(50) NOT NULL DEFAULT 'Remetida' CHECK (situacao IN ('Remetida', 'Recebida', 'Pendente', 'Entregue')),
-    responsavel_id UUID REFERENCES public.responsaveis(id) ON DELETE SET NULL,
-    responsavel_nome VARCHAR(255),
-    data_movimento TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
-    usuario_id UUID REFERENCES public.usuarios(id) ON DELETE SET NULL,
-    usuario_nome VARCHAR(255),
-    memorando_numero VARCHAR(100),
-    remessa VARCHAR(100),
-    observacao TEXT,
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
-ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
-ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
-ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS pa VARCHAR(20);
-ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS notificado_whatsapp BOOLEAN DEFAULT FALSE;
-ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS notificado_at TIMESTAMPTZ;
-ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS remessa VARCHAR(100);
-ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS memorando_numero VARCHAR(100);
-ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS responsavel_nome VARCHAR(255);
-ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS usuario_nome VARCHAR(255);
-ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS observacao TEXT;
-ALTER TABLE public.geral_cnhs ADD COLUMN IF NOT EXISTS telefone VARCHAR(50);
-
--- 7. TABELA DE HISTÓRICO DE MOVIMENTAÇÕES
-CREATE TABLE IF NOT EXISTS public.historico_movimentacoes (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    geral_id UUID REFERENCES public.geral_cnhs(id) ON DELETE CASCADE,
-    situacao_anterior VARCHAR(50),
-    situacao_nova VARCHAR(50) NOT NULL,
-    responsavel_id UUID REFERENCES public.responsaveis(id) ON DELETE SET NULL,
-    responsavel_nome VARCHAR(255),
-    usuario_id UUID REFERENCES public.usuarios(id) ON DELETE SET NULL,
-    usuario_nome VARCHAR(255),
-    observacao TEXT,
-    data_hora TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
--- 8. TABELA DE AUDITORIA
-CREATE TABLE IF NOT EXISTS public.auditoria (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    tabela VARCHAR(100) NOT NULL,
-    registro_id VARCHAR(100) NOT NULL,
-    acao VARCHAR(50) NOT NULL CHECK (acao IN ('Inclusão', 'Alteração', 'Exclusão', 'Login', 'Logout', 'Remessa', 'Recebimento', 'Entrega', 'Reabertura', 'Importação', 'Backup')),
-    usuario_id UUID REFERENCES public.usuarios(id) ON DELETE SET NULL,
-    usuario_nome VARCHAR(255),
-    data_hora TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
-    ip VARCHAR(50) DEFAULT '127.0.0.1',
-    valores_anteriores JSONB,
-    valores_novos JSONB
-);
-
--- 9. TABELA DE CONFIGURAÇÃO DO ÓRGÃO
-CREATE TABLE IF NOT EXISTS public.orgao_config (
-    id TEXT PRIMARY KEY DEFAULT 'default',
-    governo TEXT DEFAULT 'GOVERNO DO ESTADO DO PARÁ',
-    secretaria TEXT DEFAULT 'SECRETARIA DE ESTADO DE TRANSPORTES',
-    orgao TEXT DEFAULT 'DEPARTAMENTO DE TRÂNSITO DO ESTADO DO PARÁ',
-    sigla TEXT DEFAULT 'DETRAN/PA - Ciretran Itaituba',
-    origem_padrao TEXT DEFAULT 'Agência DETRAN Itaituba',
-    destino_padrao TEXT DEFAULT 'Coordenação de Habilitação / RENACH',
-    cidade_uf TEXT DEFAULT 'Itaituba - PA',
-    telefone TEXT DEFAULT '(93) 3518-1234',
-    email TEXT DEFAULT 'protocolo.itaituba@detran.pa.gov.br',
-    endereco TEXT DEFAULT 'Rod. Transamazônica, Km 02 - Bela Vista',
-    subtitulo_relatorio TEXT DEFAULT 'Setor de Protocolo e Controle de CNHs',
-    logo TEXT,
-    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
--- 10. TABELA DE CONSULTAS DO CIDADÃO
-CREATE TABLE IF NOT EXISTS public.acessos_cidadao (
-    id TEXT PRIMARY KEY,
-    numero INTEGER,
-    data_hora TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
-    cpf TEXT NOT NULL,
-    nome_titular TEXT,
-    situacao TEXT,
-    resultado_status TEXT,
-    canal TEXT DEFAULT 'Web Mobile',
-    dispositivo TEXT,
-    cidade_origem TEXT,
-    ip_mascarado TEXT
-);
-
--- 11. TABELA DE IMAGENS E ANEXOS
-CREATE TABLE IF NOT EXISTS public.imagens_sync (
-    id TEXT PRIMARY KEY,
-    tabela_ref TEXT,
-    registro_id TEXT,
-    nome TEXT NOT NULL,
-    tipo TEXT,
-    tamanho INTEGER,
-    dados_base64 TEXT,
-    url_publica TEXT,
-    usuario_id TEXT,
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
--- 12. TABELA DE LOTES DE CNHs (CNHs RECEBIDAS)
-CREATE TABLE IF NOT EXISTS public.lotes (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-    numero BIGINT NOT NULL,
-    data_recebimento DATE NOT NULL DEFAULT CURRENT_DATE,
-    documentos_impressos INTEGER NOT NULL DEFAULT 0,
-    pdf_nome TEXT,
-    pdf_url TEXT,
-    pdf_tamanho BIGINT,
-    observacao TEXT,
-    usuario_id TEXT,
-    usuario_nome VARCHAR(255),
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
--- 13. TABELA DE DECLARAÇÕES EMITIDAS
-CREATE TABLE IF NOT EXISTS public.declaracoes (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-    numero VARCHAR(100) NOT NULL,
-    ano INTEGER NOT NULL,
-    data_emissao DATE NOT NULL DEFAULT CURRENT_DATE,
-    procurador_id TEXT,
-    procurador_nome TEXT NOT NULL,
-    procurador_cpf VARCHAR(14) NOT NULL,
-    procurador_telefone VARCHAR(50),
-    procurador_endereco TEXT,
-    texto_declaracao TEXT,
-    condutores JSONB DEFAULT '[]'::jsonb,
-    cidade VARCHAR(100) DEFAULT 'Itaituba',
-    uf VARCHAR(10) DEFAULT 'PA',
-    gerente_nome VARCHAR(255),
-    gerente_cargo VARCHAR(255),
-    gerente_unidade VARCHAR(255),
-    gerente_portaria VARCHAR(255),
-    observacao TEXT,
-    usuario_id TEXT,
-    usuario_nome VARCHAR(255),
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
--- 14. ÍNDICES DE PERFORMANCE
-CREATE INDEX IF NOT EXISTS idx_geral_cnhs_cpf ON public.geral_cnhs(cpf);
-CREATE INDEX IF NOT EXISTS idx_geral_cnhs_pa ON public.geral_cnhs(pa);
-CREATE INDEX IF NOT EXISTS idx_candidatos_pa ON public.candidatos(pa);
-CREATE INDEX IF NOT EXISTS idx_geral_cnhs_nome ON public.geral_cnhs(nome);
-CREATE INDEX IF NOT EXISTS idx_geral_cnhs_situacao ON public.geral_cnhs(situacao);
-CREATE INDEX IF NOT EXISTS idx_geral_cnhs_ordem ON public.geral_cnhs(ordem DESC);
-CREATE INDEX IF NOT EXISTS idx_geral_cnhs_memorando ON public.geral_cnhs(memorando_id);
-CREATE INDEX IF NOT EXISTS idx_geral_cnhs_updated_at ON public.geral_cnhs(updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_lotes_numero ON public.lotes(numero);
-CREATE INDEX IF NOT EXISTS idx_lotes_data_recebimento ON public.lotes(data_recebimento DESC);
-CREATE INDEX IF NOT EXISTS idx_declaracoes_numero ON public.declaracoes(numero);
-
--- Garantir colunas compatíveis em bancos legados
-ALTER TABLE public.lotes ALTER COLUMN numero TYPE BIGINT;
-ALTER TABLE public.lotes ADD COLUMN IF NOT EXISTS pdf_tamanho BIGINT;
-ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS procurador_telefone VARCHAR(50);
-ALTER TABLE public.declaracoes ADD COLUMN IF NOT EXISTS procurador_fone VARCHAR(50);
-
--- 15. HABILITAR ROW LEVEL SECURITY (RLS)
-ALTER TABLE public.usuarios ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.responsaveis ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.mapeamento_localizacao ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.memorandos ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.candidatos ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.geral_cnhs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.historico_movimentacoes ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.auditoria ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.orgao_config ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.acessos_cidadao ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.imagens_sync ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.lotes ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.declaracoes ENABLE ROW LEVEL SECURITY;
-
--- 16. POLÍTICAS DE ACESSO
-DO $$
-DECLARE
-    pol RECORD;
-BEGIN
-    FOR pol IN 
-        SELECT schemaname, tablename, policyname 
-        FROM pg_policies 
-        WHERE schemaname = 'public'
-    LOOP
-        EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', pol.policyname, pol.schemaname, pol.tablename);
-    END LOOP;
-END $$;
-
-CREATE POLICY "usuarios_policy" ON public.usuarios FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
-CREATE POLICY "responsaveis_policy" ON public.responsaveis FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
-CREATE POLICY "mapeamento_policy" ON public.mapeamento_localizacao FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
-CREATE POLICY "memorandos_policy" ON public.memorandos FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
-CREATE POLICY "candidatos_policy" ON public.candidatos FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
-CREATE POLICY "geral_cnhs_policy" ON public.geral_cnhs FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
-CREATE POLICY "historico_policy" ON public.historico_movimentacoes FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
-CREATE POLICY "auditoria_policy" ON public.auditoria FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
-CREATE POLICY "orgao_config_policy" ON public.orgao_config FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
-CREATE POLICY "acessos_cidadao_policy" ON public.acessos_cidadao FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
-CREATE POLICY "imagens_sync_policy" ON public.imagens_sync FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
-CREATE POLICY "lotes_policy" ON public.lotes FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
-CREATE POLICY "declaracoes_policy" ON public.declaracoes FOR ALL TO authenticated, anon USING (true) WITH CHECK (true);
-
--- 17. HABILITAR REALTIME REPLICATION
-DO $$
-DECLARE
-    tbl text;
-    tbls text[] := ARRAY['geral_cnhs', 'memorandos', 'candidatos', 'responsaveis', 'mapeamento_localizacao', 'acessos_cidadao', 'orgao_config', 'declaracoes', 'lotes'];
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-        FOREACH tbl IN ARRAY tbls LOOP
-            IF NOT EXISTS (
-                SELECT 1 FROM pg_publication_tables 
-                WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = tbl
-            ) THEN
-                BEGIN
-                    EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', tbl);
-                EXCEPTION
-                    WHEN duplicate_object OR duplicate_table OR undefined_object THEN
-                        NULL;
-                END;
-            END IF;
-        END LOOP;
-    END IF;
-END $$;
-`;
-
-    navigator.clipboard.writeText(sql);
+    navigator.clipboard.writeText(SUPABASE_MASTER_SQL);
     setCopiedFullSql(true);
     setTimeout(() => setCopiedFullSql(false), 3000);
+  };
+
+  const handleDownloadFullSchemaSql = () => {
+    const blob = new Blob([SUPABASE_MASTER_SQL], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "supabase_schema_v4.sql";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleCopyImagesAndStorageSql = () => {
@@ -1256,13 +894,23 @@ END $$;`;
               </p>
             </div>
           </div>
-          <button
-            onClick={handleCopyFullSchemaSql}
-            className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 cursor-pointer shadow-xs"
-          >
-            {copiedFullSql ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-            <span>{copiedFullSql ? "Script Copiado!" : "Copiar Script SQL Completo"}</span>
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleCopyFullSchemaSql}
+              className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-xs"
+            >
+              {copiedFullSql ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+              <span>{copiedFullSql ? "Script Copiado!" : "Copiar Script SQL Completo"}</span>
+            </button>
+            <button
+              onClick={handleDownloadFullSchemaSql}
+              className="px-3 py-2 bg-amber-700/80 hover:bg-amber-800 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+              title="Baixar arquivo supabase_schema_v4.sql"
+            >
+              <FileDown className="w-4 h-4" />
+              <span>Baixar .SQL</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -1607,6 +1255,15 @@ END $$;`;
             >
               {copiedFullSql ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
               <span>{copiedFullSql ? "Script Completo Copiado!" : "Copiar Script SQL Completo"}</span>
+            </button>
+
+            <button
+              onClick={handleDownloadFullSchemaSql}
+              className="py-2.5 px-3 bg-blue-100/60 hover:bg-blue-200/60 dark:bg-blue-900/40 dark:hover:bg-blue-800/50 text-blue-800 dark:text-blue-200 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 border border-blue-300 dark:border-blue-700 cursor-pointer"
+              title="Baixar arquivo supabase_schema_v4.sql"
+            >
+              <FileDown className="w-4 h-4" />
+              <span>Baixar .SQL</span>
             </button>
 
             <button
