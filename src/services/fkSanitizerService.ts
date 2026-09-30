@@ -222,7 +222,7 @@ export function sanitizeGeralCnhForSupabase(
   }
 
   return {
-    id: r.id,
+    id: toValidUUID(r.id) || r.id,
     ordem: Number(r.ordem) || 0,
     pa: r.pa || null,
     nome: (r.nome || "").trim().toUpperCase(),

@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS imagens_sync (
   tamanho INTEGER,
   dados_base64 TEXT,
   url_publica TEXT,
-  usuario_id TEXT REFERENCES usuarios(id) ON DELETE SET NULL,
+  usuario_id TEXT,
   created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW())
 );
 
@@ -134,36 +134,21 @@ DROP POLICY IF EXISTS "Permitir acesso total em imagens_sync" ON imagens_sync;
 CREATE POLICY "Permitir acesso total em imagens_sync" ON imagens_sync FOR ALL USING (true) WITH CHECK (true);
 
 -- 3. BUCKET DE IMAGENS NO SUPABASE STORAGE (storage.buckets)
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-  'app_images', 
-  'app_images', 
-  true, 
-  10485760,
-  ARRAY['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'application/pdf']
-)
-ON CONFLICT (id) DO UPDATE SET public = true;
-
--- POLÍTICAS DE SEGURANÇA (RLS) PARA ARQUIVOS NO SUPABASE STORAGE (storage.objects)
-DROP POLICY IF EXISTS "Permitir Leitura Publica de Imagens" ON storage.objects;
-CREATE POLICY "Permitir Leitura Publica de Imagens"
-ON storage.objects FOR SELECT
-USING (bucket_id = 'app_images');
-
-DROP POLICY IF EXISTS "Permitir Upload de Imagens" ON storage.objects;
-CREATE POLICY "Permitir Upload de Imagens"
-ON storage.objects FOR INSERT
-WITH CHECK (bucket_id = 'app_images');
-
-DROP POLICY IF EXISTS "Permitir Atualizacao de Imagens" ON storage.objects;
-CREATE POLICY "Permitir Atualizacao de Imagens"
-ON storage.objects FOR UPDATE
-USING (bucket_id = 'app_images');
-
-DROP POLICY IF EXISTS "Permitir Delecao de Imagens" ON storage.objects;
-CREATE POLICY "Permitir Delecao de Imagens"
-ON storage.objects FOR DELETE
-USING (bucket_id = 'app_images');
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'buckets') THEN
+    INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    VALUES (
+      'app_images', 
+      'app_images', 
+      true, 
+      10485760,
+      ARRAY['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'application/pdf']
+    )
+    ON CONFLICT (id) DO UPDATE SET public = true;
+  END IF;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 `;
 
     navigator.clipboard.writeText(sql);

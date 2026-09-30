@@ -390,11 +390,18 @@ export async function forceUnidirectionalReconciliation(params: {
 
       let { error } = await supabase.from("geral_cnhs").upsert(payloads, { onConflict: "id" });
 
-      // Se ocorreu violação de FK (23503) ou constraint referencial
-      if (error && (error.code === "23503" || error.message?.includes("foreign key") || error.message?.includes("fkey"))) {
-        console.warn("Aviso no upsert (FK constraint). Aplicando fallback seguro sem FKs conflitantes:", error.message);
+      // Se ocorreu violação de FK (23503), formato UUID (22P02) ou constraint referencial
+      if (error && (
+        error.code === "23503" || 
+        error.code === "22P02" || 
+        error.message?.includes("foreign key") || 
+        error.message?.includes("uuid") || 
+        error.message?.includes("fkey")
+      )) {
+        console.warn("Aviso no upsert (FK ou UUID constraint). Aplicando fallback seguro sem FKs conflitantes e com UUID determinístico:", error.message);
         const safePayloads = payloads.map((p) => ({
           ...p,
+          id: toValidUUID(p.id) || p.id,
           usuario_id: null,
           responsavel_id: p.responsavel_id && validRespIds.has(p.responsavel_id) ? p.responsavel_id : null,
           memorando_id: null,
@@ -413,12 +420,16 @@ export async function forceUnidirectionalReconciliation(params: {
         let savedInChunk = 0;
         let lastErr: any = null;
         for (const item of payloads) {
-          const single = await supabase.from("geral_cnhs").upsert([item], { onConflict: "id" });
+          const safeItemBase = {
+            ...item,
+            id: toValidUUID(item.id) || item.id
+          };
+          const single = await supabase.from("geral_cnhs").upsert([safeItemBase], { onConflict: "id" });
           if (!single.error) {
             savedInChunk++;
           } else {
             const safeItem = {
-              ...item,
+              ...safeItemBase,
               usuario_id: null,
               responsavel_id: null,
               memorando_id: null,

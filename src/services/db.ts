@@ -2531,7 +2531,7 @@ export async function restoreResponsaveisInfoAndDatabase(
     log("Gravando CNHs com Gavetas, Repartições, CPFs, Usuários e Responsáveis no banco de dados Supabase...");
     try {
       const payloads = cnhsToSave.map((r) => ({
-        id: r.id,
+        id: toValidUUID(r.id) || r.id,
         ordem: r.ordem,
         nome: r.nome,
         cpf: r.cpf,
@@ -2539,7 +2539,7 @@ export async function restoreResponsaveisInfoAndDatabase(
         gaveta: r.gaveta || "",
         reparticao: r.reparticao || "",
         situacao: r.situacao,
-        responsavel_id: r.responsavel_id || null,
+        responsavel_id: r.responsavel_id ? (toValidUUID(r.responsavel_id) || r.responsavel_id) : null,
         responsavel_nome: r.responsavel_nome || null,
         data_movimento: r.data_movimento || null,
         usuario_id: r.usuario_id || null,
@@ -2559,7 +2559,7 @@ export async function restoreResponsaveisInfoAndDatabase(
           for (const item of chunk) {
             const single = await supabase.from("geral_cnhs").upsert([item], { onConflict: "id" });
             if (single.error) {
-              const safeItem = { ...item, responsavel_id: null };
+              const safeItem = { ...item, id: toValidUUID(item.id) || item.id, responsavel_id: null, usuario_id: null };
               await supabase.from("geral_cnhs").upsert([safeItem], { onConflict: "id" });
             }
           }
@@ -3877,7 +3877,8 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
     await saveLocalGeralCNHsBulk(cnhsAtualizadas);
     if (isSupabaseConfigured()) {
       try {
-        await supabase.from("geral_cnhs").upsert(cnhsAtualizadas, { onConflict: "id" });
+        const safeAtualizadas = cnhsAtualizadas.map(c => sanitizeGeralCnhForSupabase(c));
+        await supabase.from("geral_cnhs").upsert(safeAtualizadas, { onConflict: "id" });
       } catch (e) {
         console.warn("Aviso ao atualizar CNHs existentes do memorando no Supabase:", e);
       }
@@ -3891,7 +3892,8 @@ export async function remeterMemorando(memorando_id: string, userId: string, use
 
     if (isSupabaseConfigured()) {
       try {
-        await supabase.from("geral_cnhs").upsert(novasCNHs, { onConflict: "id" });
+        const safeNovas = novasCNHs.map(c => sanitizeGeralCnhForSupabase(c));
+        await supabase.from("geral_cnhs").upsert(safeNovas, { onConflict: "id" });
       } catch (e) {
         console.warn("Aviso ao salvar novas CNHs do memorando no Supabase:", e);
       }
@@ -4135,7 +4137,8 @@ export async function remeterCandidatosFaltantesAoGeral(
 
     if (isSupabaseConfigured()) {
       try {
-        await supabase.from("geral_cnhs").upsert(novasCNHs, { onConflict: "id" });
+        const safeNovas = novasCNHs.map(c => sanitizeGeralCnhForSupabase(c));
+        await supabase.from("geral_cnhs").upsert(safeNovas, { onConflict: "id" });
       } catch (e) {
         console.warn("Aviso ao salvar novas CNHs no Supabase:", e);
       }
@@ -4193,7 +4196,7 @@ export async function sincronizarDataMovimentoComCriacao(): Promise<number> {
   if (isSupabaseConfigured() && listCorrigida.length > 0) {
     try {
       const payload = listCorrigida.map((g) => ({
-        id: g.id,
+        id: toValidUUID(g.id) || g.id,
         data_movimento: g.created_at || g.data_movimento,
         created_at: g.created_at || g.data_movimento
       }));
@@ -6449,7 +6452,8 @@ export async function cadastrarNovasCNHsRecebidas(
     await saveLocalGeralCNHsBulk(updatedCNHs);
     if (isSupabaseConfigured()) {
       try {
-        await supabase.from("geral_cnhs").upsert(updatedCNHs, { onConflict: "id" });
+        const safeUpdated = updatedCNHs.map(c => sanitizeGeralCnhForSupabase(c));
+        await supabase.from("geral_cnhs").upsert(safeUpdated, { onConflict: "id" });
       } catch (e) {
         console.warn("Aviso ao sincronizar atualizações de CNHs recebidas no Supabase:", e);
       }
@@ -6466,7 +6470,8 @@ export async function cadastrarNovasCNHsRecebidas(
 
     if (isSupabaseConfigured()) {
       try {
-        await supabase.from("geral_cnhs").upsert(insertedCNHs, { onConflict: "id" });
+        const safeInserted = insertedCNHs.map(c => sanitizeGeralCnhForSupabase(c));
+        await supabase.from("geral_cnhs").upsert(safeInserted, { onConflict: "id" });
       } catch (e) {
         console.warn("Aviso ao sincronizar novas CNHs recebidas no Supabase:", e);
       }
@@ -7638,7 +7643,7 @@ export async function importSpreadsheetData(
 
           // Upsert into geral_cnhs with exact columns from spreadsheet
           const payload = newItems.map(g => ({
-            id: g.id,
+            id: toValidUUID(g.id) || g.id,
             ordem: g.ordem,
             nome: g.nome,
             cpf: g.cpf,

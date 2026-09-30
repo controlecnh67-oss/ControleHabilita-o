@@ -4,7 +4,7 @@ import { supabase, isSupabaseConfigured } from "./supabase";
 import { trackEgress } from "./egressMonitorService";
 import { recordSyncTransaction } from "./syncPerformanceMonitor";
 import { recordSyncError } from "./syncErrorService";
-import { sanitizeGeralCnhForSupabase, getValidRemoteFkCache } from "./fkSanitizerService";
+import { sanitizeGeralCnhForSupabase, getValidRemoteFkCache, toValidUUID } from "./fkSanitizerService";
 import cnhSeedData from "../data/cnhSeedData.json";
 
 // Índices rápidos para recuperação de dados de semente (ground truth)
@@ -248,6 +248,8 @@ export function normalizeCNHRecord(item: any): GeralCNH {
       resolvedId = `cnh-anon-${finalNome ? finalNome.toLowerCase().replace(/\W/g, "") : Date.now()}`;
     }
   }
+
+  resolvedId = toValidUUID(resolvedId) || resolvedId;
 
   return {
     id: resolvedId,
@@ -1067,16 +1069,22 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
         let { error } = await supabase.from("geral_cnhs").upsert(chunk, { onConflict: "id" });
         trackEgress("geral_cnhs", "BATCH_UPSERT", chunk, false, 0, `Lote de ${chunk.length} CNHs salvas`);
         
-        // Se ocorreu erro de chave estrangeira (FK) ou unicidade
-        if (error && (error.code === "23503" || error.message?.includes("foreign key") || error.message?.includes("geral_cnhs_usuario_id_fkey"))) {
-          console.warn("Violação de FK detectada no lote de CNHs. Aplicando sanitização estrita e auto-recuperação...", error.message);
+        // Se ocorreu erro de chave estrangeira (FK), unicidade ou tipo UUID
+        if (error && (
+          error.code === "23503" || 
+          error.code === "22P02" || 
+          error.message?.includes("foreign key") || 
+          error.message?.includes("uuid") || 
+          error.message?.includes("geral_cnhs_usuario_id_fkey")
+        )) {
+          console.warn("Violação de FK ou formato UUID detectada no lote de CNHs. Aplicando sanitização estrita e auto-recuperação...", error.message);
           
           // 1. Assegura que responsáveis referenciados existam na tabela responsaveis
           const referencedResp = chunk.filter((c) => c.responsavel_id);
           if (referencedResp.length > 0) {
             try {
               const respUpserts = Array.from(new Map(referencedResp.map((c) => [c.responsavel_id!, {
-                id: c.responsavel_id!,
+                id: toValidUUID(c.responsavel_id!) || c.responsavel_id!,
                 nome: c.responsavel_nome || (c.responsavel_id === "a0000000-0000-0000-0000-000000000001" ? "PROPRIETÁRIO" : "RESPONSÁVEL"),
                 ativo: true
               }])).values());
@@ -1086,9 +1094,10 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
             }
           }
 
-          // 2. Tenta novamente com FKs duvidosas zeradas preservando 100% dos nomes
+          // 2. Tenta novamente com FKs duvidosas zeradas e IDs convertidos para UUID determinístico válido
           const safeChunk = chunk.map((item) => ({
             ...item,
+            id: toValidUUID(item.id) || item.id,
             usuario_id: null,
             responsavel_id: item.responsavel_id && validRespIds.has(item.responsavel_id) ? item.responsavel_id : null,
             memorando_id: null,
@@ -1096,7 +1105,7 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
           }));
           const retrySafe = await supabase.from("geral_cnhs").upsert(safeChunk, { onConflict: "id" });
           if (!retrySafe.error) {
-            console.info(`✅ Lote de ${chunk.length} CNHs salvo com sucesso com proteção de integridade referencial.`);
+            console.info(`✅ Lote de ${chunk.length} CNHs salvo com sucesso com proteção de integridade referencial e UUID.`);
             error = null;
           } else {
             error = retrySafe.error;
@@ -1108,12 +1117,16 @@ export async function saveLocalGeralCNHsBulk(records: GeralCNH[], skipRemote = f
           let anyItemFailed = false;
           let lastItemError: any = null;
 
-          // 3. Upsert item a item resiliente
+          // 3. Upsert item a item resiliente com ID UUID garantido
           for (const item of chunk) {
-            const single = await supabase.from("geral_cnhs").upsert([item], { onConflict: "id" });
+            const safeItemBase = {
+              ...item,
+              id: toValidUUID(item.id) || item.id
+            };
+            const single = await supabase.from("geral_cnhs").upsert([safeItemBase], { onConflict: "id" });
             if (single.error) {
               const safeItem = {
-                ...item,
+                ...safeItemBase,
                 responsavel_id: null,
                 usuario_id: null,
                 memorando_id: null,

@@ -91,64 +91,85 @@ END $$;
 -- 3. Garantia explícita e direta nas tabelas principais do sistema
 DO $$
 BEGIN
-    -- geral_cnhs
-    ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN id DROP DEFAULT;
-    ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
-    ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN memorando_id TYPE TEXT USING memorando_id::text;
-    ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN candidato_id TYPE TEXT USING candidato_id::text;
-    ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN responsavel_id TYPE TEXT USING responsavel_id::text;
-    ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN usuario_id TYPE TEXT USING usuario_id::text;
+    BEGIN
+        ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN id DROP DEFAULT;
+        ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN id TYPE TEXT USING id::text;
+        ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+        ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN memorando_id TYPE TEXT USING memorando_id::text;
+        ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN candidato_id TYPE TEXT USING candidato_id::text;
+        ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN responsavel_id TYPE TEXT USING responsavel_id::text;
+        ALTER TABLE IF EXISTS public.geral_cnhs ALTER COLUMN usuario_id TYPE TEXT USING usuario_id::text;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
 
-    -- candidatos
-    ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN id DROP DEFAULT;
-    ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
-    ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN memorando_id TYPE TEXT USING memorando_id::text;
+    BEGIN
+        ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN id DROP DEFAULT;
+        ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN id TYPE TEXT USING id::text;
+        ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+        ALTER TABLE IF EXISTS public.candidatos ALTER COLUMN memorando_id TYPE TEXT USING memorando_id::text;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
 
-    -- memorandos
-    ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN id DROP DEFAULT;
-    ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
-    ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN usuario_id TYPE TEXT USING usuario_id::text;
+    BEGIN
+        ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN id DROP DEFAULT;
+        ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN id TYPE TEXT USING id::text;
+        ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+        ALTER TABLE IF EXISTS public.memorandos ALTER COLUMN usuario_id TYPE TEXT USING usuario_id::text;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
 
-    -- usuarios
-    ALTER TABLE IF EXISTS public.usuarios ALTER COLUMN id DROP DEFAULT;
-    ALTER TABLE IF EXISTS public.usuarios ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.usuarios ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+    BEGIN
+        ALTER TABLE IF EXISTS public.usuarios ALTER COLUMN id DROP DEFAULT;
+        ALTER TABLE IF EXISTS public.usuarios ALTER COLUMN id TYPE TEXT USING id::text;
+        ALTER TABLE IF EXISTS public.usuarios ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
 
-    -- responsaveis
-    ALTER TABLE IF EXISTS public.responsaveis ALTER COLUMN id DROP DEFAULT;
-    ALTER TABLE IF EXISTS public.responsaveis ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.responsaveis ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+    BEGIN
+        ALTER TABLE IF EXISTS public.responsaveis ALTER COLUMN id DROP DEFAULT;
+        ALTER TABLE IF EXISTS public.responsaveis ALTER COLUMN id TYPE TEXT USING id::text;
+        ALTER TABLE IF EXISTS public.responsaveis ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
 
-    -- historico_movimentacoes
-    ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN id DROP DEFAULT;
-    ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
-    ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN geral_id TYPE TEXT USING geral_id::text;
-    ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN responsavel_id TYPE TEXT USING responsavel_id::text;
-    ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN usuario_id TYPE TEXT USING usuario_id::text;
+    BEGIN
+        ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN id DROP DEFAULT;
+        ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN id TYPE TEXT USING id::text;
+        ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+        ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN geral_id TYPE TEXT USING geral_id::text;
+        ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN responsavel_id TYPE TEXT USING responsavel_id::text;
+        ALTER TABLE IF EXISTS public.historico_movimentacoes ALTER COLUMN usuario_id TYPE TEXT USING usuario_id::text;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
 
-    -- auditoria
-    ALTER TABLE IF EXISTS public.auditoria ALTER COLUMN id DROP DEFAULT;
-    ALTER TABLE IF EXISTS public.auditoria ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.auditoria ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
-    ALTER TABLE IF EXISTS public.auditoria ALTER COLUMN usuario_id TYPE TEXT USING usuario_id::text;
+    BEGIN
+        ALTER TABLE IF EXISTS public.auditoria ALTER COLUMN id DROP DEFAULT;
+        ALTER TABLE IF EXISTS public.auditoria ALTER COLUMN id TYPE TEXT USING id::text;
+        ALTER TABLE IF EXISTS public.auditoria ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+        ALTER TABLE IF EXISTS public.auditoria ALTER COLUMN usuario_id TYPE TEXT USING usuario_id::text;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
 
-    -- mapeamento, declaracoes, lotes
-    ALTER TABLE IF EXISTS public.mapeamento_localizacao ALTER COLUMN id DROP DEFAULT;
-    ALTER TABLE IF EXISTS public.mapeamento_localizacao ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.mapeamento_localizacao ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+    BEGIN
+        ALTER TABLE IF EXISTS public.mapeamento_localizacao ALTER COLUMN id DROP DEFAULT;
+        ALTER TABLE IF EXISTS public.mapeamento_localizacao ALTER COLUMN id TYPE TEXT USING id::text;
+        ALTER TABLE IF EXISTS public.mapeamento_localizacao ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
 
-    ALTER TABLE IF EXISTS public.declaracoes ALTER COLUMN id DROP DEFAULT;
-    ALTER TABLE IF EXISTS public.declaracoes ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.declaracoes ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+    BEGIN
+        ALTER TABLE IF EXISTS public.declaracoes ALTER COLUMN id DROP DEFAULT;
+        ALTER TABLE IF EXISTS public.declaracoes ALTER COLUMN id TYPE TEXT USING id::text;
+        ALTER TABLE IF EXISTS public.declaracoes ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
 
-    ALTER TABLE IF EXISTS public.lotes ALTER COLUMN id DROP DEFAULT;
-    ALTER TABLE IF EXISTS public.lotes ALTER COLUMN id TYPE TEXT USING id::text;
-    ALTER TABLE IF EXISTS public.lotes ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
-EXCEPTION WHEN OTHERS THEN NULL;
+    BEGIN
+        ALTER TABLE IF EXISTS public.lotes ALTER COLUMN id DROP DEFAULT;
+        ALTER TABLE IF EXISTS public.lotes ALTER COLUMN id TYPE TEXT USING id::text;
+        ALTER TABLE IF EXISTS public.lotes ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
 END $$;
 
 -- ==============================================================================
@@ -166,7 +187,7 @@ $$ LANGUAGE plpgsql;
 -- 2. TABELA DE USUÁRIOS
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.usuarios (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     nome VARCHAR(255) NOT NULL,
     nome_completo VARCHAR(255),
     nome_curto VARCHAR(100) NOT NULL,
@@ -240,22 +261,36 @@ BEGIN
         ) AS t(id, nome, nome_completo, nome_curto, cpf, fone, email, funcao, setor, login, perfil, permissoes)
     ) LOOP
         BEGIN
-            INSERT INTO public.usuarios (
-                id, nome, nome_completo, nome_curto, cpf, fone, email, funcao, setor, login, perfil, permissoes, ativo
-            )
-            VALUES (
-                u.id, u.nome, u.nome_completo, u.nome_curto, u.cpf, u.fone, u.email, u.funcao, u.setor, u.login, u.perfil, u.permissoes, true
-            )
-            ON CONFLICT (id) DO UPDATE SET
-                nome = EXCLUDED.nome,
-                nome_completo = EXCLUDED.nome_completo,
-                nome_curto = EXCLUDED.nome_curto,
-                email = EXCLUDED.email,
-                login = EXCLUDED.login,
-                perfil = EXCLUDED.perfil,
-                permissoes = EXCLUDED.permissoes,
-                ativo = true,
-                updated_at = timezone('utc'::text, now());
+            IF EXISTS (SELECT 1 FROM public.usuarios WHERE id = u.id) THEN
+                UPDATE public.usuarios SET
+                    nome = u.nome,
+                    nome_completo = u.nome_completo,
+                    nome_curto = u.nome_curto,
+                    email = u.email,
+                    login = u.login,
+                    perfil = u.perfil,
+                    permissoes = u.permissoes,
+                    ativo = true,
+                    updated_at = timezone('utc'::text, now())
+                WHERE id = u.id;
+            ELSIF EXISTS (SELECT 1 FROM public.usuarios WHERE email = u.email OR login = u.login) THEN
+                UPDATE public.usuarios SET
+                    nome = u.nome,
+                    nome_completo = u.nome_completo,
+                    nome_curto = u.nome_curto,
+                    perfil = u.perfil,
+                    permissoes = u.permissoes,
+                    ativo = true,
+                    updated_at = timezone('utc'::text, now())
+                WHERE email = u.email OR login = u.login;
+            ELSE
+                INSERT INTO public.usuarios (
+                    id, nome, nome_completo, nome_curto, cpf, fone, email, funcao, setor, login, perfil, permissoes, ativo
+                )
+                VALUES (
+                    u.id, u.nome, u.nome_completo, u.nome_curto, u.cpf, u.fone, u.email, u.funcao, u.setor, u.login, u.perfil, u.permissoes, true
+                );
+            END IF;
         EXCEPTION WHEN OTHERS THEN
             NULL;
         END;
@@ -267,7 +302,7 @@ END $$;
 -- 3. TABELA DE RESPONSÁVEIS PELA RETIRADA DE CNHS (Despachantes, CFCs, Terceiros)
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.responsaveis (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     nome VARCHAR(255) NOT NULL,
     tipo VARCHAR(100) DEFAULT 'Terceiro',
     cpf VARCHAR(14) UNIQUE NOT NULL,
@@ -334,7 +369,7 @@ END $$;
 -- 4. TABELA DE MAPEAMENTO DE LOCALIZAÇÃO (Gavetas e Repartições por Inicial)
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.mapeamento_localizacao (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     inicial VARCHAR(5) UNIQUE NOT NULL,
     gaveta VARCHAR(50) NOT NULL,
     reparticao VARCHAR(50) NOT NULL,
@@ -391,7 +426,7 @@ END $$;
 -- 5. TABELA DE MEMORANDOS
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.memorandos (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     numero VARCHAR(100) NOT NULL,
     usuario_id TEXT,
     usuario_nome VARCHAR(255),
@@ -421,7 +456,7 @@ FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 -- 6. TABELA DE CANDIDATOS (Filha de Memorandos)
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.candidatos (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     memorando_id TEXT,
     numero VARCHAR(50),
     pa VARCHAR(100),
@@ -452,7 +487,7 @@ FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 CREATE SEQUENCE IF NOT EXISTS public.geral_cnhs_ordem_seq START 1;
 
 CREATE TABLE IF NOT EXISTS public.geral_cnhs (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     ordem INTEGER NOT NULL DEFAULT nextval('public.geral_cnhs_ordem_seq'),
     memorando_id TEXT,
     candidato_id TEXT,
@@ -506,7 +541,7 @@ FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 -- 8. TABELA DE HISTÓRICO DE MOVIMENTAÇÕES (Auditoria de CNHs)
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.historico_movimentacoes (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     geral_id TEXT,
     geral_ordem INTEGER,
     geral_nome VARCHAR(255),
@@ -549,7 +584,7 @@ FOR EACH ROW EXECUTE FUNCTION public.impedir_exclusao_historico();
 -- 9. TABELA DE AUDITORIA DO SISTEMA
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.auditoria (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     tabela VARCHAR(100) NOT NULL,
     registro_id VARCHAR(100) NOT NULL,
     acao VARCHAR(50) NOT NULL CHECK (acao IN ('Inclusão', 'Alteração', 'Exclusão', 'Login', 'Logout', 'Remessa', 'Recebimento', 'Entrega', 'Reabertura', 'Importação', 'Backup')),
@@ -686,7 +721,7 @@ ALTER TABLE public.imagens_sync ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ 
 -- 13. TABELA DE DECLARAÇÕES DE ENTREGA DE CNH
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.declaracoes (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     numero VARCHAR(50) NOT NULL UNIQUE,
     ano INTEGER NOT NULL DEFAULT EXTRACT(YEAR FROM CURRENT_DATE),
     data_emissao DATE NOT NULL DEFAULT CURRENT_DATE,
@@ -734,7 +769,7 @@ FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 -- 14. TABELA DE LOTES DE CNHs (CNHs RECEBIDAS)
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.lotes (
-    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     numero INTEGER NOT NULL,
     data_recebimento DATE NOT NULL DEFAULT CURRENT_DATE,
     documentos_impressos INTEGER NOT NULL DEFAULT 0,
@@ -951,13 +986,25 @@ END $$;
 -- ==============================================================================
 -- 18. PERMISSÕES DE ACESSO (GRANTS) PARA ROLES SUPABASE
 -- ==============================================================================
-GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
-GRANT ALL ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, anon, authenticated, service_role;
+DO $$
+BEGIN
+    GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+    GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+    GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+    BEGIN
+        GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO postgres, anon, authenticated, service_role;
+        GRANT ALL ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+    BEGIN
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, anon, authenticated, service_role;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
 
 -- ==============================================================================
 -- 19. CONFIGURAÇÃO DE STORAGE DO SUPABASE (Buckets para Logos e Anexos)
@@ -984,23 +1031,23 @@ END $$;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'storage' AND table_name = 'objects') THEN
-        DROP POLICY IF EXISTS "orgao_logos_public_read" ON storage.objects;
-        CREATE POLICY "orgao_logos_public_read" ON storage.objects FOR SELECT TO public USING (bucket_id = 'orgao_logos');
+        BEGIN
+            EXECUTE 'DROP POLICY IF EXISTS "orgao_logos_public_read" ON storage.objects';
+            EXECUTE 'CREATE POLICY "orgao_logos_public_read" ON storage.objects FOR SELECT TO public USING (bucket_id = ''orgao_logos'')';
+            EXECUTE 'DROP POLICY IF EXISTS "orgao_logos_auth_insert" ON storage.objects';
+            EXECUTE 'CREATE POLICY "orgao_logos_auth_insert" ON storage.objects FOR INSERT TO public WITH CHECK (bucket_id = ''orgao_logos'')';
+            EXECUTE 'DROP POLICY IF EXISTS "orgao_logos_auth_update" ON storage.objects';
+            EXECUTE 'CREATE POLICY "orgao_logos_auth_update" ON storage.objects FOR UPDATE TO public USING (bucket_id = ''orgao_logos'')';
 
-        DROP POLICY IF EXISTS "orgao_logos_auth_insert" ON storage.objects;
-        CREATE POLICY "orgao_logos_auth_insert" ON storage.objects FOR INSERT TO public WITH CHECK (bucket_id = 'orgao_logos');
-
-        DROP POLICY IF EXISTS "orgao_logos_auth_update" ON storage.objects;
-        CREATE POLICY "orgao_logos_auth_update" ON storage.objects FOR UPDATE TO public USING (bucket_id = 'orgao_logos');
-
-        DROP POLICY IF EXISTS "app_images_public_read" ON storage.objects;
-        CREATE POLICY "app_images_public_read" ON storage.objects FOR SELECT TO public USING (bucket_id = 'app_images');
-
-        DROP POLICY IF EXISTS "app_images_public_insert" ON storage.objects;
-        CREATE POLICY "app_images_public_insert" ON storage.objects FOR INSERT TO public WITH CHECK (bucket_id = 'app_images');
-
-        DROP POLICY IF EXISTS "app_images_public_update" ON storage.objects;
-        CREATE POLICY "app_images_public_update" ON storage.objects FOR UPDATE TO public USING (bucket_id = 'app_images');
+            EXECUTE 'DROP POLICY IF EXISTS "app_images_public_read" ON storage.objects';
+            EXECUTE 'CREATE POLICY "app_images_public_read" ON storage.objects FOR SELECT TO public USING (bucket_id = ''app_images'')';
+            EXECUTE 'DROP POLICY IF EXISTS "app_images_public_insert" ON storage.objects';
+            EXECUTE 'CREATE POLICY "app_images_public_insert" ON storage.objects FOR INSERT TO public WITH CHECK (bucket_id = ''app_images'')';
+            EXECUTE 'DROP POLICY IF EXISTS "app_images_public_update" ON storage.objects';
+            EXECUTE 'CREATE POLICY "app_images_public_update" ON storage.objects FOR UPDATE TO public USING (bucket_id = ''app_images'')';
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
     END IF;
 EXCEPTION WHEN OTHERS THEN
     NULL;
